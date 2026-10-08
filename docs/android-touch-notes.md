@@ -111,23 +111,27 @@ goes through mouse emulation in touchscreen (absolute) mode.
   selected enemy's outline pulses with the palette's "bobber" (index 254,
   cycle.cc) instead of the red bands (`objectSetTargetOutline`, set by map
   hints). Autotest `behindcritter`.
-- Combat's tactical view (2026-10-09, `tactical_view.cc`, drawn by map
-  hints): a HUD button over End turn / End combat. On the player's turns
-  critters and items are drawn half see-through (`objectSetSeeThrough`: a
-  256x256 table of palette colors halfway between two, built from the
-  game's palette once; drawing only, objects' flags - saved - untouched),
-  every critter the game sees keeps its outline on the see-through figure
-  (target highlight aside; their sight is updated when the dude moves).
-  Over the map: the tiles the dude can walk to with the action points left
-  (a breadth-first walk around what blocks, as `_make_path`) lightly
-  filled with their grid - no grid elsewhere; everyone's tile in the
-  game's combat outline colors read from the cycling palette (friendly
-  229, hostile 243, blocked line of fire 61, the selected enemy 254 - they
-  pulse as the outlines do), the dude's thicker; the move tile and the hit
-  chance above the enemy as in normal combat. Taps and long presses pick
-  tiles: a critter by the tile it stands on (`tacticalViewCritterAt`),
-  items and corpses not at all. Hidden on others' turns, off when the
-  combat ends. Autotest `tactical`.
+- Combat's tactical view (2026-10-09, `tactical_view.cc`): a HUD button
+  over End turn / End combat, kept on across combats and starts
+  (`[touch] tactical_view`) until switched again; shown on the player's
+  turns. Critters and items are drawn half see-through
+  (`objectSetSeeThrough`: a 256x256 table of palette colors halfway
+  between two, built from the game's palette once; drawing only, objects'
+  flags - saved - untouched); every critter the game sees keeps its outline
+  on the see-through figure (target highlight aside; their sight is updated
+  when the dude moves). Everyone's tile is drawn into the game's buffer over
+  the floor and under every object (`objectSetSeeThroughUnderlay`), with
+  the palette entries of the game's combat outlines (friendly 229, hostile
+  243, blocked line of fire 61, the selected enemy 254 - cycled by the
+  palette, so they pulse as the outlines do; the dude's thicker), so the
+  critters' outlines go over them; the map is drawn again when who stands
+  where, how the game sees them or the selection changes. The map hints
+  draw the border of where the dude can walk with the action points left
+  (a breadth-first walk around what blocks, as `_make_path`), clear inside,
+  the move tile and the hit chance above the enemy as in normal combat.
+  Taps and long presses pick tiles: a critter by the tile it stands on
+  (`tacticalViewCritterAt`), items and corpses not at all. Autotest
+  `tactical`.
 - Combat outlines with touch controls (2026-10-09,
   `combatOutlinesFollowTurn`): the game outlines critters only while the
   cursor is a crosshair; touch controls have no cursor (a move selection

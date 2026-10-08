@@ -159,7 +159,7 @@ enum DevAutotestAction {
     // many frames (a long press).
     DEV_AUTOTEST_ACTION_TOUCH_CRITTER_TILE,
     // Logs the tactical view (on, shown, the walk's tiles); FAIL when shown
-    // isn't `a`.
+    // isn't `a` (or, `b` 1, it isn't on).
     DEV_AUTOTEST_ACTION_CHECK_TACTICAL,
     // World map: open it (the script continues from its loop); log its
     // state; drag from view center by (a, b); tap at party position + (a, b).
@@ -538,7 +538,8 @@ static const DevAutotestStep kDevAutotestMagnetSteps[] = {
 // Combat's tactical view: the HUD button turns it on (grid, tiles, the
 // walk); a tap where the critter's sprite covers a tile picks the tile, a
 // tap on the critter's tile picks the critter, a long press there opens its
-// menu; the button turns it off; on again it goes off with the combat.
+// menu; the button turns it off; on again it hides after the combat and
+// shows in the next one (kept until switched).
 static const DevAutotestStep kDevAutotestTacticalSteps[] = {
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "v00_map" },
     { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "v01_combat" },
@@ -558,12 +559,14 @@ static const DevAutotestStep kDevAutotestTacticalSteps[] = {
     { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "v13_off" },
     { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 0, 0, 0, 1, "v14_hidden" },
     // On again, then the turn ends - and the combat with it (the critter is
-    // far): the view goes off with the combat.
+    // far): hidden, but kept on for the next combat.
     { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "v15_on_again" },
     { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 1, 0, 0, 1, "v16_shown" },
     { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(EndTurn), 0, 0, 120, "v17_end_turn" },
     { DEV_AUTOTEST_ACTION_LOG_COMBAT, 0, 0, 0, 1, "v18_combat_over" },
-    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 0, 0, 0, 1, "v19_off" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 0, 1, 0, 1, "v19_hidden_kept" },
+    { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "v20_next_combat" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 1, 1, 0, 1, "v21_shown_again" },
 };
 
 // Combat: the critter picked (its outline pulses: two frames apart), then a
@@ -3434,8 +3437,10 @@ void devAutotestTick()
         case DEV_AUTOTEST_ACTION_CHECK_TACTICAL: {
             bool shown = tacticalViewIsShown();
             const TacticalViewReach& reach = tacticalViewGetReach();
+            // `b` 1 - also on (switched on, whatever shows).
+            bool ok = shown == (step->a != 0) && (step->b == 0 || tacticalViewIsOn());
             devAutotestLog("  tactical view: on %d, shown %d, walk %d tiles: %s\n", tacticalViewIsOn() ? 1 : 0, shown ? 1 : 0,
-                static_cast<int>(reach.reachable.size()), shown == (step->a != 0) ? "PASS" : "FAIL");
+                static_cast<int>(reach.reachable.size()), ok ? "PASS" : "FAIL");
             break;
         }
         case DEV_AUTOTEST_ACTION_CHECK_SELECTION: {

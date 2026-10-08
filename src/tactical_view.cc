@@ -3,7 +3,9 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <deque>
+#include <functional>
 #include <unordered_map>
 
 #include "art.h"
@@ -13,6 +15,7 @@
 #include "game_config.h"
 #include "game_mouse.h"
 #include "map.h"
+#include "map_hints.h"
 #include "object.h"
 #include "settings.h"
 #include "tile.h"
@@ -25,8 +28,6 @@ namespace {
     // Picked again this often while nothing it depends on changes (critters
     // and doors move on their own).
     constexpr unsigned int kReachRefreshMs = 250;
-
-    bool gOn = false;
 
     // The outlines' colors are the game's sight of each critter, kept up to
     // date while shown: from the dude's tile when it changes.
@@ -49,6 +50,155 @@ namespace {
             return tile == other.tile && elevation == other.elevation && actionPoints == other.actionPoints && freeMove == other.freeMove;
         }
     };
+
+    // Palette entries of the game's combat outlines (object.cc), cycled by
+    // the palette (cycle.cc): tiles drawn with them pulse as outlines do.
+    const Color kFriendlyColor = Color(229); // slime
+    const Color kHostileColor = Color(243); // fire_fast
+    const Color kBlockedColor = Color(61);
+    const Color kTargetColor = Color(254); // bobber
+
+    // What the tiles drawn under the objects show; the map is drawn again
+    // when it changes.
+    std::size_t gTilesSignature = 0;
+
+    // A critter's tile color and line width (world pixels); false - not
+    // drawn (the game doesn't see it: no outline).
+    bool tileLook(Object* critter, Color* color, int* width)
+    {
+        *width = 2;
+        if (critter == gDude) {
+            *color = kFriendlyColor;
+            *width = 3;
+            return true;
+        }
+        if (critter == mapHintsGetAttackTarget()) {
+            *color = kTargetColor;
+            *width = 3;
+            return true;
+        }
+        switch (critter->outline & OUTLINE_TYPE_MAX) {
+        case OUTLINE_TYPE_HOSTILE:
+            *color = kHostileColor;
+            return true;
+        case OUTLINE_TYPE_FRIENDLY:
+        case OUTLINE_TYPE_SAME_TEAM:
+            *color = kFriendlyColor;
+            return true;
+        case OUTLINE_TYPE_BLOCKED:
+            *color = kBlockedColor;
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool isShownCritter(Object* object, int elevation)
+    {
+        return FrmId(object).objectType() == OBJ_TYPE_CRITTER
+            && object->elevation == elevation
+            && (object->flags & OBJECT_HIDDEN) == 0
+            && !critterIsDead(object);
+    }
+
+    // A line [width] pixels thick (thickened down: the edges are mostly
+    // across) clipped to [rect].
+    void drawLine(unsigned char* buffer, int pitch, const Rect& rect, int x0, int y0, int x1, int y1, int width, Color color)
+    {
+        int dx = std::abs(x1 - x0);
+        int dy = -std::abs(y1 - y0);
+        int stepX = x0 < x1 ? 1 : -1;
+        int stepY = y0 < y1 ? 1 : -1;
+        int error = dx + dy;
+        while (true) {
+            for (int offset = 0; offset < width; offset++) {
+                int y = y0 + offset - width / 2;
+                if (x0 >= rect.left && x0 <= rect.right && y >= rect.top && y <= rect.bottom) {
+                    buffer[pitch * y + x0] = color;
+                }
+            }
+            if (x0 == x1 && y0 == y1) {
+                break;
+            }
+            int doubled = 2 * error;
+            if (doubled >= dy) {
+                error += dy;
+                x0 += stepX;
+            }
+            if (doubled <= dx) {
+                error += dx;
+                y0 += stepY;
+            }
+        }
+    }
+
+    // Center of [tile] in the game's buffer.
+    bool tileCenter(int tile, int* x, int* y)
+    {
+        if (!tileIsValid(tile) || tileToScreenXY(tile, x, y) != 0) {
+            return false;
+        }
+        *x += 16;
+        *y += 8;
+        return true;
+    }
+
+    // Everyone's tile under them (`objectSetSeeThroughUnderlay`): a corner
+    // of a hex is the middle of its center and two neighbours' (as the map
+    // hints' outlines).
+    void drawTiles(unsigned char* buffer, int pitch, const Rect& rect, int elevation)
+    {
+        for (Object* object = objectFindFirstAtElevation(elevation); object != nullptr; object = objectFindNextAtElevation()) {
+            Color color;
+            int width;
+            if (!isShownCritter(object, elevation) || !tileLook(object, &color, &width)) {
+                continue;
+            }
+
+            int centerX;
+            int centerY;
+            if (!tileCenter(object->tile, &centerX, &centerY)) {
+                continue;
+            }
+
+            int neighbourX[ROTATION_COUNT];
+            int neighbourY[ROTATION_COUNT];
+            bool complete = true;
+            for (int rotation = 0; rotation < ROTATION_COUNT && complete; rotation++) {
+                complete = tileCenter(tileGetTileInDirection(object->tile, static_cast<Rotation>(rotation), 1), &(neighbourX[rotation]), &(neighbourY[rotation]));
+            }
+            if (!complete) {
+                continue;
+            }
+
+            int cornerX[ROTATION_COUNT];
+            int cornerY[ROTATION_COUNT];
+            for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                int next = (rotation + 1) % ROTATION_COUNT;
+                cornerX[rotation] = (centerX + neighbourX[rotation] + neighbourX[next]) / 3;
+                cornerY[rotation] = (centerY + neighbourY[rotation] + neighbourY[next]) / 3;
+            }
+            for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                int next = (rotation + 1) % ROTATION_COUNT;
+                drawLine(buffer, pitch, rect, cornerX[rotation], cornerY[rotation], cornerX[next], cornerY[next], width, color);
+            }
+        }
+    }
+
+    // What the tiles show now (who stands where, how the game sees them,
+    // the selected enemy).
+    std::size_t tilesSignature()
+    {
+        std::size_t signature = std::hash<const void*>()(mapHintsGetAttackTarget());
+        for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
+            Color color;
+            int width;
+            if (isShownCritter(object, gElevation) && tileLook(object, &color, &width)) {
+                signature = signature * 31 + static_cast<std::size_t>(object->tile) * 7 + color * 3 + width;
+            }
+        }
+        return signature;
+    }
 
     TacticalViewReach gReach;
     ReachKey gReachKey;
@@ -114,17 +264,17 @@ namespace {
 
 void tacticalViewToggle()
 {
-    gOn = !gOn && isInCombat();
+    settings.touch.tactical_view = !settings.touch.tactical_view;
 }
 
 bool tacticalViewIsOn()
 {
-    return gOn;
+    return settings.touch.tactical_view;
 }
 
 bool tacticalViewIsShown()
 {
-    return gOn
+    return settings.touch.tactical_view
         && gDude != nullptr
         && isInCombat()
         && (GameMode::getCurrentGameMode() & GameMode::kPlayerTurn) != 0
@@ -133,9 +283,7 @@ bool tacticalViewIsShown()
 
 void tacticalViewUpdate()
 {
-    if (!isInCombat()) {
-        gOn = false;
-    }
+    objectSetSeeThroughUnderlay(drawTiles);
 
     bool shown = tacticalViewIsShown();
     if (!shown) {
@@ -149,7 +297,22 @@ void tacticalViewUpdate()
         combatForEachCritter(updateOutline);
     }
 
+    bool wasShown = gTilesSignature != 0;
     objectSetSeeThrough(shown);
+    if (!shown) {
+        gTilesSignature = 0;
+        return;
+    }
+
+    // The tiles drawn with the map change: the map is drawn again (when it
+    // just showed, `objectSetSeeThrough` did).
+    std::size_t signature = tilesSignature() | 1;
+    if (signature != gTilesSignature) {
+        if (wasShown) {
+            tileWindowRefresh();
+        }
+        gTilesSignature = signature;
+    }
 }
 
 Object* tacticalViewCritterAt(int tile)

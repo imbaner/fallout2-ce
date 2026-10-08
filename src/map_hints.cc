@@ -1,6 +1,7 @@
 #include "map_hints.h"
 
 #include <algorithm>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -140,76 +141,34 @@ namespace {
 
     // MARK: Tactical view
 
-    // Palette entries of the game's combat outlines (object.cc): they cycle
-    // (cycle.cc), the tiles' outlines read them every frame, so they pulse
-    // with the critters' outlines.
-    constexpr int kFriendlyColor = 229; // slime
-    constexpr int kHostileColor = 243; // fire_fast
-    constexpr int kBlockedColor = 61;
-    constexpr int kTargetColor = 254; // bobber
-
-    MuiColor paletteColor(int index, Uint8 alpha = 255)
-    {
-        const unsigned char* palette = directDrawGetPalette();
-        return { static_cast<Uint8>(palette[index * 3] << 2), static_cast<Uint8>(palette[index * 3 + 1] << 2), static_cast<Uint8>(palette[index * 3 + 2] << 2), alpha };
-    }
-
+    // Where the dude can walk (tactical_view.h): the border of the area,
+    // edges of its tiles with a neighbour outside it - inside it stays
+    // clear. Everyone's tile is drawn under the objects (the critters'
+    // outlines go over it), see `objectSetSeeThroughUnderlay`.
     void drawTacticalView(MuiContext& ui, float scale)
     {
-        MuiRect screen = ui.screenRect();
-        auto onScreen = [&](const std::vector<SDL_FPoint>& outline) {
-            return !outline.empty() && outline[0].x > screen.x - screen.w * 0.1f && outline[0].x < screen.right() + screen.w * 0.1f
-                && outline[0].y > screen.y - screen.h * 0.1f && outline[0].y < screen.bottom() + screen.h * 0.1f;
-        };
-
-        // Where the dude can walk: each tile lightly filled, its grid.
         const TacticalViewReach& reach = tacticalViewGetReach();
-        MuiColor fill = muiTheme().accent.withAlpha(34);
-        MuiColor grid = muiTheme().accent.withAlpha(70);
-        for (int tile : reach.reachable) {
-            std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
-            if (onScreen(outline)) {
-                muiFillConvex(outline, fill);
-                muiDrawPolyline(outline, ui.dp(1.0f), grid, true);
-            }
+        if (reach.reachable.empty()) {
+            return;
         }
 
-        // Everyone's tile in the color the game outlines them with in
-        // combat; the dude's thicker, the selected enemy pulsing.
-        for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
-            if (FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0 || critterIsDead(object)) {
+        std::unordered_set<int> area(reach.reachable.begin(), reach.reachable.end());
+        area.insert(gDude->tile);
+        MuiColor border = muiTheme().accent.withAlpha(190);
+        for (int tile : area) {
+            std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
+            if (outline.empty()) {
                 continue;
             }
-
-            int index;
-            float width = 1.6f;
-            if (object == gDude) {
-                index = kFriendlyColor;
-                width = 2.6f;
-            } else if (object == gAttackTarget) {
-                index = kTargetColor;
-                width = 2.6f;
-            } else {
-                switch (object->outline & OUTLINE_TYPE_MAX) {
-                case OUTLINE_TYPE_HOSTILE:
-                    index = kHostileColor;
-                    break;
-                case OUTLINE_TYPE_FRIENDLY:
-                case OUTLINE_TYPE_SAME_TEAM:
-                    index = kFriendlyColor;
-                    break;
-                case OUTLINE_TYPE_BLOCKED:
-                    index = kBlockedColor;
-                    break;
-                default:
-                    // Not seen (no outline in the game either).
-                    continue;
+            // Corner `k` is between the neighbours `k` and `k + 1`, the edge
+            // towards neighbour `d` from corner `d - 1` to `d`.
+            for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                int neighbour = tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1);
+                if (area.count(neighbour) == 0) {
+                    const SDL_FPoint& from = outline[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
+                    const SDL_FPoint& to = outline[rotation];
+                    muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.6f), border);
                 }
-            }
-
-            std::vector<SDL_FPoint> outline = tileOutline(object->tile, scale);
-            if (onScreen(outline)) {
-                muiDrawPolyline(outline, ui.dp(width), paletteColor(index), true);
             }
         }
     }
@@ -450,6 +409,11 @@ void mapHintsSetDestination(int tile)
 int mapHintsGetDestination()
 {
     return gDestination;
+}
+
+Object* mapHintsGetAttackTarget()
+{
+    return gAttackTarget;
 }
 
 void mapHintsClearSelection()

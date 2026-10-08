@@ -342,6 +342,8 @@ struct TouchSettings {
     int hud_scale = 100;
     // Screen density (Android dp scale). 0 - detect (Android), 1.0 elsewhere.
     double hud_density = 0.0;
+    // Combat's tactical view (its HUD button), kept until switched again.
+    bool tactical_view = false;
 };
 
 struct MapperSettings {

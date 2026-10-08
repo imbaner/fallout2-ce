@@ -405,6 +405,7 @@ void initSettingsRegistry(bool isMapper)
     SETTING(mobile_ui);
     SETTING_P(hud_scale, clamp(50, 200));
     SETTING_P(hud_density, clamp(0.0, 8.0));
+    SETTING(tactical_view);
 #undef SECT
 
 #define SECT world_view

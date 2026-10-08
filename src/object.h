@@ -100,6 +100,10 @@ void objectSetTargetOutline(Object* obj);
 // with an outline shows it (target highlight aside). Drawing only - objects aren't changed (their flags
 // are saved). Redraws the map when it changes.
 void objectSetSeeThrough(bool seeThrough);
+// Drawn into the game's buffer over the floor, under every object, while
+// see-through (the tactical view's tiles): [rect] - the part redrawn.
+typedef void ObjectUnderlayProc(unsigned char* buffer, int pitch, const Rect& rect, int elevation);
+void objectSetSeeThroughUnderlay(ObjectUnderlayProc* proc);
 ObjectFlags _obj_intersects_with(Object* object, int x, int y);
 int _obj_create_intersect_list(int x, int y, int elevation, ObjectType objectType, ObjectWithFlags** entriesPtr);
 void _obj_delete_intersect_list(ObjectWithFlags** a1);

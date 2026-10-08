@@ -32,6 +32,9 @@ int mapHintsGetDestination();
 
 void mapHintsClearSelection();
 
+// The enemy selected for an attack, nullptr - none.
+Object* mapHintsGetAttackTarget();
+
 } // namespace fallout
 
 #endif /* FALLOUT_MAP_HINTS_H_ */
