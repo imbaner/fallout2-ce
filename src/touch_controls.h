@@ -6,6 +6,8 @@
 
 namespace fallout {
 
+struct Object;
+
 // CE: Touch-first controls on the map (enabled with `[touch] controls`).
 //
 // Instead of emulating mouse cursor, gestures over the map act directly:
@@ -68,6 +70,10 @@ void touchControlsReset();
 // Shows action menu items (`GAME_MOUSE_ACTION_MENU_ITEM_*`) in radial menu
 // around the point and waits for selection. Returns index of the selected
 // item or -1 if the menu was cancelled.
+// The combat selection waiting for confirmation (autotests): its action
+// (TouchAction), tile and target.
+void touchControlsGetSelection(int* action, int* tile, Object** target);
+
 int touchControlsChooseActionMenuItem(const GameMouseActionMenuItem* items, int itemsLength, int x, int y);
 
 // Returns true if hex cursor and cursor arrow should be visible: always

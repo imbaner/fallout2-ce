@@ -101,6 +101,16 @@ goes through mouse emulation in touchscreen (absolute) mode.
   pixel hit needed - thin spears), also for long press. Without highlight
   items are picked by pixels as in the game, so dude can walk next to them.
   Taps on objects are never changed. Autotest: `--dev-autotest-scenario=magnet`.
+- Combat confirmation sticks to the selection (2026-10-09,
+  `touchControlsStickToSelection`): a critter's sprite covers tiles behind
+  it, so the confirming tap often landed on it and picked the critter. Now
+  a tap within the selected tile's magnet confirms the move even under a
+  sprite (a critter's own tile still picks the critter, to switch to it);
+  a tap on the selected enemy's pixels confirms the attack even under
+  another sprite (no margin: tiles next to it stay easy to pick). The
+  selected enemy's outline pulses with the palette's "bobber" (index 254,
+  cycle.cc) instead of the red bands (`objectSetTargetOutline`, set by map
+  hints). Autotest `behindcritter`.
   In combat a ground tap picks an enemy standing on that tile or on its body
   column (`touchControlsFindEnemyNear`: +-12 world px around its tile center,
   from the sprite top to the feet); sprite boxes of wide critters cover

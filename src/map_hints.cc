@@ -62,6 +62,26 @@ namespace {
         return false;
     }
 
+    // The attack target: its outline pulses (`objectSetTargetOutline`), the
+    // game's buffer is drawn again where it changes.
+    void setAttackTarget(Object* target)
+    {
+        if (target == gAttackTarget) {
+            return;
+        }
+
+        Object* previous = gAttackTarget;
+        gAttackTarget = target;
+        objectSetTargetOutline(target);
+        for (Object* object : { previous, target }) {
+            if (object != nullptr && objectExists(object)) {
+                Rect rect;
+                objectGetRect(object, &rect);
+                tileWindowRefreshRect(&rect, object->elevation);
+            }
+        }
+    }
+
     void clearInteraction()
     {
         if (gInteraction != nullptr && objectExists(gInteraction)) {
@@ -196,7 +216,7 @@ namespace {
         }
 
         if (gAttackTarget != nullptr && (!objectExists(gAttackTarget) || critterIsDead(gAttackTarget))) {
-            gAttackTarget = nullptr;
+            setAttackTarget(nullptr);
         }
 
         if (gUseTarget != nullptr && !objectExists(gUseTarget)) {
@@ -283,7 +303,7 @@ void mapHintsInit()
 void mapHintsSetAttackTarget(Object* target)
 {
     clearInteraction();
-    gAttackTarget = target;
+    setAttackTarget(target);
     gUseTarget = nullptr;
     gMoveTile = -1;
 }
@@ -291,7 +311,7 @@ void mapHintsSetAttackTarget(Object* target)
 void mapHintsSetUseTarget(Object* target)
 {
     gUseTarget = target;
-    gAttackTarget = nullptr;
+    setAttackTarget(nullptr);
     gMoveTile = -1;
     mapHintsSetInteraction(target);
 }
@@ -328,7 +348,7 @@ void mapHintsSetMoveTile(int tile)
 {
     clearInteraction();
     gMoveTile = tile;
-    gAttackTarget = nullptr;
+    setAttackTarget(nullptr);
     gUseTarget = nullptr;
 }
 
@@ -344,7 +364,7 @@ int mapHintsGetDestination()
 
 void mapHintsClearSelection()
 {
-    gAttackTarget = nullptr;
+    setAttackTarget(nullptr);
     gUseTarget = nullptr;
     gMoveTile = -1;
 }

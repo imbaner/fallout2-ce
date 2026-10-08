@@ -2938,6 +2938,17 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 }
 
 // 0x48C2B4 obj_outline_object
+// The palette's pulsing red (`colorCycleTicker`'s bobber).
+static const Color kTargetOutlineColor = Color(254);
+
+// See `objectSetTargetOutline`.
+static Object* gObjectTargetOutline = nullptr;
+
+void objectSetTargetOutline(Object* obj)
+{
+    gObjectTargetOutline = obj;
+}
+
 int objectSetOutline(Object* obj, OutlineType outlineType, Rect* rect)
 {
     if (obj == nullptr) {
@@ -4856,6 +4867,13 @@ static void objectDrawOutline(Object* object, Rect* rect)
             isOutlinePalleted = 0;
             animatedColorBandHeight = 0;
             break;
+        }
+
+        // CE: The picked target pulses (see `objectSetTargetOutline`).
+        if (object == gObjectTargetOutline && outlineType == OUTLINE_TYPE_HOSTILE) {
+            color = kTargetOutlineColor;
+            isOutlinePalleted = 0;
+            animatedColorBandHeight = 0;
         }
 
         Color outlineColor = color;

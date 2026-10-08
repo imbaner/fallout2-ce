@@ -146,6 +146,14 @@ enum DevAutotestAction {
     // Tap on the tile next to dude on the side opposite to the nearest
     // critter.
     DEV_AUTOTEST_ACTION_TOUCH_TAP_AWAY_FROM_CRITTER,
+    // Taps a free tile next to the nearest critter that its sprite partly
+    // covers (north-east or north-west of it): `b` 0 - where the tile shows
+    // (off the critter's body column), 1 - where the critter's sprite is over
+    // it; the dude's tile is the start for CHECK_TOUCH_MOVED.
+    DEV_AUTOTEST_ACTION_TOUCH_TAP_BEHIND_CRITTER,
+    // Logs the combat selection (touch controls); FAIL when its action isn't
+    // `a` (1 move, 3 attack).
+    DEV_AUTOTEST_ACTION_CHECK_SELECTION,
     // World map: open it (the script continues from its loop); log its
     // state; drag from view center by (a, b); tap at party position + (a, b).
     DEV_AUTOTEST_ACTION_OPEN_WORLDMAP,
@@ -518,6 +526,23 @@ static const DevAutotestStep kDevAutotestMagnetSteps[] = {
     // Dude walks to the item: it's outlined green (map hints).
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 190, "m25b_walked" },
     { DEV_AUTOTEST_ACTION_LOG_PLACED_ITEM, 0, 0, 0, 1, "m26_picked" },
+};
+
+// Combat: the critter picked (its outline pulses: two frames apart), then a
+// tile behind it, partly covered by its sprite, chosen by a tap where it
+// shows (the critter's selection doesn't keep it) and confirmed by a tap
+// where the sprite covers it - the dude walks there.
+static const DevAutotestStep kDevAutotestBehindCritterSteps[] = {
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "c00_map" },
+    { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "c01_combat" },
+    { DEV_AUTOTEST_ACTION_CENTER_CRITTER, 0, 0, 0, 10, "c02_center" },
+    { DEV_AUTOTEST_ACTION_TOUCH_TAP_CRITTER, 0, 0, 0, 30, "c03_pick_critter" },
+    { DEV_AUTOTEST_ACTION_CHECK_SELECTION, 3, 0, 0, 1, "c04_critter_selected" },
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 15, "c05_pulse_later" },
+    { DEV_AUTOTEST_ACTION_TOUCH_TAP_BEHIND_CRITTER, 0, 0, 0, 30, "c06_select_tile" },
+    { DEV_AUTOTEST_ACTION_CHECK_SELECTION, 1, 0, 0, 1, "c07_tile_selected" },
+    { DEV_AUTOTEST_ACTION_TOUCH_TAP_BEHIND_CRITTER, 0, 1, 0, 150, "c08_confirm_over_critter" },
+    { DEV_AUTOTEST_ACTION_CHECK_TOUCH_MOVED, 0, 0, 0, 1, "c09_moved" },
 };
 
 static const DevAutotestStep kDevAutotestUiSteps[] = {
@@ -2158,6 +2183,9 @@ void devAutotestSetScenario(const char* name)
     } else if (strcmp(name, "ui") == 0) {
         gDevAutotestSteps = kDevAutotestUiSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestUiSteps) / sizeof(kDevAutotestUiSteps[0]);
+    } else if (strcmp(name, "behindcritter") == 0) {
+        gDevAutotestSteps = kDevAutotestBehindCritterSteps;
+        gDevAutotestStepCount = sizeof(kDevAutotestBehindCritterSteps) / sizeof(kDevAutotestBehindCritterSteps[0]);
     } else if (strcmp(name, "magnet") == 0) {
         gDevAutotestSteps = kDevAutotestMagnetSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestMagnetSteps) / sizeof(kDevAutotestMagnetSteps[0]);
@@ -3299,6 +3327,66 @@ void devAutotestTick()
                 devAutotestStartTouch(x, y, x, y, 1, 0);
             }
             break;
+        case DEV_AUTOTEST_ACTION_TOUCH_TAP_BEHIND_CRITTER: {
+            Object* critter = devAutotestFindNearestCritter();
+            bool covered = step->b != 0;
+            bool tapped = false;
+            int footX = 0;
+            int footY = 0;
+            if (critter != nullptr) {
+                tileToScreenXY(critter->tile, &footX, &footY);
+                footX += 16;
+            }
+            for (Rotation rotation : { ROTATION_NE, ROTATION_NW }) {
+                if (critter == nullptr || tapped) {
+                    break;
+                }
+                int tile = tileGetTileInDirection(critter->tile, rotation, 1);
+                if (_obj_blocking_at(nullptr, tile, gElevation) != nullptr) {
+                    continue;
+                }
+
+                int tileX;
+                int tileY;
+                tileToScreenXY(tile, &tileX, &tileY);
+                // A point of the tile (world pixels) with or without the
+                // critter's sprite over it.
+                for (int y = tileY + 2; y <= tileY + 14 && !tapped; y += 2) {
+                    for (int x = tileX + 4; x <= tileX + 28 && !tapped; x += 2) {
+                        if (tileFromScreenXY(x, y) != tile) {
+                            continue;
+                        }
+                        bool overCritter = playerObjectAt(x, y, OBJ_TYPE_INVALID, true, gElevation) == critter;
+                        if (overCritter != covered || (!covered && std::abs(x - footX) <= 14)) {
+                            continue;
+                        }
+                        int screenX;
+                        int screenY;
+                        worldViewWorldToScreen(x, y, &screenX, &screenY);
+                        if (covered) {
+                            gDevAutotestTouchStartTile = gDude->tile;
+                        }
+                        devAutotestLog("  tap tile %d (%s of critter at %d) where %s\n", tile, rotation == ROTATION_NE ? "NE" : "NW", critter->tile,
+                            covered ? "the critter covers it" : "it shows");
+                        devAutotestStartTouch(static_cast<float>(screenX), static_cast<float>(screenY), static_cast<float>(screenX), static_cast<float>(screenY), 1, 0);
+                        tapped = true;
+                    }
+                }
+            }
+            if (!tapped) {
+                devAutotestLog("FAIL: no free tile behind the critter %s\n", covered ? "under its sprite" : "showing");
+            }
+            break;
+        }
+        case DEV_AUTOTEST_ACTION_CHECK_SELECTION: {
+            int action;
+            int tile;
+            Object* target;
+            touchControlsGetSelection(&action, &tile, &target);
+            devAutotestLog("  selection: action %d, tile %d, target %s: %s\n", action, tile, target != nullptr ? "yes" : "no",
+                action == static_cast<int>(step->a) ? "PASS" : "FAIL");
+            break;
+        }
         case DEV_AUTOTEST_ACTION_CENTER_CRITTER: {
             Object* critter = devAutotestFindNearestCritter();
             if (critter != nullptr) {

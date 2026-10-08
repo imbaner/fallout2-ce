@@ -90,6 +90,11 @@ void _dark_translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int sr
 void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destPitch, unsigned char* mask, int maskPitch, int light);
 int objectSetOutline(Object* obj, OutlineType outlineType, Rect* rect);
 int objectClearOutline(Object* obj, Rect* rect);
+// CE: The enemy picked as the target (touch controls); its hostile outline
+// pulses with the palette's "bobber" color (cycle.cc) instead of the moving
+// red bands, so it stands out among the others. nullptr - none. Only
+// compared with, never read (it may be gone).
+void objectSetTargetOutline(Object* obj);
 ObjectFlags _obj_intersects_with(Object* object, int x, int y);
 int _obj_create_intersect_list(int x, int y, int elevation, ObjectType objectType, ObjectWithFlags** entriesPtr);
 void _obj_delete_intersect_list(ObjectWithFlags** a1);

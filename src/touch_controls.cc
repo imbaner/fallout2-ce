@@ -131,6 +131,8 @@ static void touchControlsSetGameMouseMode(GameMouseMode mode);
 static TouchAction touchControlsGetActionAt(int worldX, int worldY, Object** targetPtr);
 static void touchControlsHandleTap(int x, int y);
 static void touchControlsSnapTap(int x, int y, int* tile, TouchAction* action, Object** target);
+static void touchControlsStickToSelection(int x, int y, int worldX, int worldY, int* tile, TouchAction* action, Object** target);
+static bool touchControlsGetBodyColumn(Object* critter, Rect* rect);
 static Object* touchControlsFindItemNear(int x, int y);
 static Object* touchControlsFindEnemyNear(int x, int y, int tile);
 static bool touchControlsObjectExists(Object* object);
@@ -163,6 +165,12 @@ static constexpr float kItemSnapRadiusDp = 24.0f;
 //   cover them).
 static constexpr int kEnemyBodyHalfWidth = 12;
 static constexpr int kEnemyBodyBelowFeet = 4;
+// - in combat a second tap near the selection confirms it, before anything
+//   else under the finger (`touchControlsStickToSelection`): the selected
+//   tile within the tile magnet even under a critter's sprite (but not on a
+//   critter's own tile - tapping it picks the critter); the selected enemy
+//   on its pixels even under another one's sprite (no margin around it:
+//   tiles next to it stay easy to pick).
 
 static bool gPanActive = false;
 static int gPanPrevX = 0;
@@ -607,6 +615,9 @@ static void touchControlsHandleTap(int x, int y)
     TouchAction action = touchControlsGetActionAt(worldX, worldY, &target);
     int tile = tileFromScreenXY(worldX, worldY);
     touchControlsSnapTap(x, y, &tile, &action, &target);
+    if (isInCombat()) {
+        touchControlsStickToSelection(x, y, worldX, worldY, &tile, &action, &target);
+    }
 
     if (!isInCombat()) {
         touchControlsClearSelection();
@@ -717,6 +728,50 @@ static void touchControlsSnapTap(int x, int y, int* tile, TouchAction* action, O
     }
 }
 
+void touchControlsGetSelection(int* action, int* tile, Object** target)
+{
+    *action = gPendingAction;
+    *tile = gPendingTile;
+    *target = gPendingTarget;
+}
+
+// In combat a tap near the selection (tile or enemy) confirms it, whatever
+// else is drawn under the finger (see magnets above).
+static void touchControlsStickToSelection(int x, int y, int worldX, int worldY, int* tile, TouchAction* action, Object** target)
+{
+    int fingerTile = tileFromScreenXY(worldX, worldY);
+    if (gPendingAction == TOUCH_ACTION_MOVE && gPendingTile != -1) {
+        // A critter's own tile picks the critter (to switch to it).
+        if (*action == TOUCH_ACTION_ATTACK && *target != nullptr && (*target)->tile == fingerTile) {
+            return;
+        }
+
+        bool near = fingerTile == gPendingTile;
+        if (!near) {
+            int tileX;
+            int tileY;
+            touchControlsGetTileScreenCenter(gPendingTile, &tileX, &tileY);
+            float radius = kTileSnapRadiusDp * hudGetPixelsPerDp();
+            float dx = static_cast<float>(tileX - x);
+            float dy = static_cast<float>(tileY - y);
+            near = dx * dx + dy * dy <= radius * radius;
+        }
+        if (near) {
+            *action = TOUCH_ACTION_MOVE;
+            *tile = gPendingTile;
+            *target = nullptr;
+        }
+        return;
+    }
+
+    if (gPendingAction == TOUCH_ACTION_ATTACK && *target != gPendingTarget && gPendingTarget != nullptr
+        && touchControlsObjectExists(gPendingTarget) && !critterIsDead(gPendingTarget)
+        && _obj_intersects_with(gPendingTarget, worldX, worldY) != OBJECT_NONE) {
+        *action = TOUCH_ACTION_ATTACK;
+        *target = gPendingTarget;
+    }
+}
+
 // Nearest item on the ground whose sprite box on screen is within magnet
 // radius. Box, not pixels: thin items (spear, knife) are hard to hit.
 static Object* touchControlsFindItemNear(int x, int y)
@@ -745,6 +800,25 @@ static Object* touchControlsFindItemNear(int x, int y)
     return nearest;
 }
 
+// Screen rect of [critter]'s body column (see magnets above): from the top
+// of its sprite to just below its feet, narrower than a tile.
+static bool touchControlsGetBodyColumn(Object* critter, Rect* rect)
+{
+    int footX;
+    int footY;
+    if (tileToScreenXY(critter->tile, &footX, &footY) != 0) {
+        return false;
+    }
+    footX += 16;
+    footY += 8;
+
+    Rect worldRect;
+    objectGetRect(critter, &worldRect);
+    worldViewWorldToScreen(footX - kEnemyBodyHalfWidth, worldRect.top, &(rect->left), &(rect->top));
+    worldViewWorldToScreen(footX + kEnemyBodyHalfWidth, footY + kEnemyBodyBelowFeet, &(rect->right), &(rect->bottom));
+    return true;
+}
+
 // Enemy (as `touchControlsGetActionAt` attacks) standing on [tile] or whose
 // body column (see magnets above) contains ([x], [y]).
 static Object* touchControlsFindEnemyNear(int x, int y, int tile)
@@ -762,27 +836,12 @@ static Object* touchControlsFindEnemyNear(int x, int y, int tile)
 
         int distance = 0;
         if (object->tile != tile) {
-            int footX;
-            int footY;
-            if (tileToScreenXY(object->tile, &footX, &footY) != 0) {
+            Rect body;
+            if (!touchControlsGetBodyColumn(object, &body)
+                || x < body.left || x > body.right || y < body.top || y > body.bottom) {
                 continue;
             }
-            footX += 16;
-            footY += 8;
-
-            Rect worldRect;
-            objectGetRect(object, &worldRect);
-
-            int left;
-            int top;
-            int right;
-            int bottom;
-            worldViewWorldToScreen(footX - kEnemyBodyHalfWidth, worldRect.top, &left, &top);
-            worldViewWorldToScreen(footX + kEnemyBodyHalfWidth, footY + kEnemyBodyBelowFeet, &right, &bottom);
-            if (x < left || x > right || y < top || y > bottom) {
-                continue;
-            }
-            distance = std::abs(x - (left + right) / 2);
+            distance = std::abs(x - (body.left + body.right) / 2);
         }
 
         if (nearest == nullptr || distance < nearestDistance) {
