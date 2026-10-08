@@ -376,6 +376,12 @@ Steps, most gain first:
 
 ## Future ideas (decide later)
 
+- **View rotation** (2026-10-08, postponed: one of the hardest possible
+  changes): turning the map's view in 60 degree steps - floor, roofs and
+  critters can turn, walls are the hard part (faces, back sides). The
+  arguments and a prototype plan (offline renders of a few maps first):
+  [view-rotation-idea.md](view-rotation-idea.md).
+
 - **Pointer to the party off screen** (considered 2026-09-29, not added): a
   round mark at the screen's edge pointing to the party, a tap brings the
   camera back. It changes no balance (only the player's own position), but
