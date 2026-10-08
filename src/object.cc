@@ -2938,6 +2938,62 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 }
 
 // 0x48C2B4 obj_outline_object
+// See `objectSetSeeThrough`; [source][destination] - the palette color
+// halfway between them (built from the game's palette once).
+static bool gObjectsSeeThrough = false;
+static std::vector<Color> gSeeThroughMix;
+
+static bool objectIsSeeThrough(Object* object, ObjectType type)
+{
+    return gObjectsSeeThrough && object != gEgg && (type == OBJ_TYPE_CRITTER || type == OBJ_TYPE_ITEM);
+}
+
+void objectSetSeeThrough(bool seeThrough)
+{
+    if (seeThrough == gObjectsSeeThrough) {
+        return;
+    }
+
+    if (seeThrough && gSeeThroughMix.empty()) {
+        // The palette's 6-bit components averaged, the nearest color by the
+        // game's 15-bit lookup.
+        gSeeThroughMix.resize(COLOR_COUNT * COLOR_COUNT);
+        for (int source = 0; source < COLOR_COUNT; source++) {
+            for (int destination = 0; destination < COLOR_COUNT; destination++) {
+                int red = (_cmap[source * 3] + _cmap[destination * 3]) / 2;
+                int green = (_cmap[source * 3 + 1] + _cmap[destination * 3 + 1]) / 2;
+                int blue = (_cmap[source * 3 + 2] + _cmap[destination * 3 + 2]) / 2;
+                gSeeThroughMix[source * COLOR_COUNT + destination] = _colorTable[((red >> 1) << 10) | ((green >> 1) << 5) | (blue >> 1)];
+            }
+        }
+    }
+
+    gObjectsSeeThrough = seeThrough;
+    tileWindowRefresh();
+}
+
+// As `_dark_trans_buf_to_buf` (the object's light), then halfway to what is
+// under it.
+static void objectDrawSeeThrough(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destX, int destY, int destPitch, int intensity)
+{
+    unsigned char* sp = src;
+    unsigned char* dp = dest + destPitch * destY + destX;
+    int intensityIndex = intensity / 512;
+    for (int y = 0; y < srcHeight; y++) {
+        for (int x = 0; x < srcWidth; x++) {
+            Color color = static_cast<Color>(sp[x]);
+            if (color != COLOR_FIRST) {
+                if (color < 0xE5) {
+                    color = intensityColorTable[color][intensityIndex];
+                }
+                dp[x] = gSeeThroughMix[color * COLOR_COUNT + dp[x]];
+            }
+        }
+        sp += srcPitch;
+        dp += destPitch;
+    }
+}
+
 // The palette's pulsing red (`colorCycleTicker`'s bobber).
 static const Color kTargetOutlineColor = Color(254);
 
@@ -4742,6 +4798,11 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect)
 // 0x48EABC obj_render_outline
 static void objectDrawOutline(Object* object, Rect* rect)
 {
+    // CE: The tactical view outlines critters' tiles instead.
+    if (gObjectsSeeThrough && FrmId(object).objectType() == OBJ_TYPE_CRITTER) {
+        return;
+    }
+
     CacheEntry* cacheEntry;
     Art* art = artLock(FrmId(object), &cacheEntry);
     if (art == nullptr) {
@@ -5203,6 +5264,13 @@ static void _obj_render_object(Object* object, Rect* rect, int light)
                 artUnlock(eggHandle);
             }
         }
+    }
+
+    // CE: The tactical view (`objectSetSeeThrough`).
+    if (objectIsSeeThrough(object, type)) {
+        objectDrawSeeThrough(src, objectWidth, objectHeight, frameWidth, gObjectsWindowBuffer, objectRect.left, objectRect.top, gObjectsWindowPitch, light);
+        artUnlock(cacheEntry);
+        return;
     }
 
     switch (object->flags & OBJECT_FLAG_0xFC000) {

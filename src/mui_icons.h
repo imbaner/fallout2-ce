@@ -85,6 +85,9 @@ enum class MuiIcon {
     Expand,
     Collapse,
 
+    // Combat's tactical view: three tiles.
+    TacticalView,
+
     Count,
 };
 

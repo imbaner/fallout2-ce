@@ -32,6 +32,7 @@
 #include "mui_notify.h"
 #include "object.h"
 #include "settings.h"
+#include "tactical_view.h"
 #include "mui_screens.h"
 #include "party_member.h"
 #include "pipboy.h"
@@ -55,6 +56,7 @@ namespace {
     constexpr int kEventQuickLoad = 1;
     constexpr int kEventHighlight = 2;
     constexpr int kEventCancelTarget = 3;
+    constexpr int kEventTacticalView = 4;
     // Attack mode chip `index` - `kEventModeBase + index`.
     constexpr int kEventModeBase = 100;
 
@@ -107,6 +109,7 @@ namespace {
         { { GameCommandType::UseItem }, MuiIcon::Count, kNoText }, // Weapon (same as the bar item button)
         { {}, MuiIcon::Count, kNoText }, // Indicators
         { {}, MuiIcon::PartyOrders, { 160, "Party orders" } }, // PartyOrders (HUD state only)
+        { { GameCommandType::Hud, kEventTacticalView }, MuiIcon::TacticalView, { 373, "Tactical view" } }, // TacticalView
     };
 
     // Orders of the Party Orders mod: the button presses the mod's hotkeys
@@ -342,6 +345,8 @@ namespace {
         case HudElementId::EndTurn:
         case HudElementId::EndCombat:
             return gCombatButtonsEnabled ? ButtonLook::Normal : ButtonLook::Disabled;
+        case HudElementId::TacticalView:
+            return tacticalViewIsOn() ? ButtonLook::Active : ButtonLook::Normal;
         default:
             return ButtonLook::Normal;
         }
@@ -1538,6 +1543,9 @@ bool touchHudHandleEvent(int eventCode)
         return true;
     case kEventCancelTarget:
         gameMouseSetMode(GAME_MOUSE_MODE_MOVE);
+        return true;
+    case kEventTacticalView:
+        tacticalViewToggle();
         return true;
     }
 

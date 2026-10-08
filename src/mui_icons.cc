@@ -236,6 +236,19 @@ namespace {
         pen.line(0.32f, -0.34f, 0.32f, 0.34f);
     }
 
+    // Three tiles of the hex grid (flat as the game's).
+    void drawTacticalView(const Pen& pen)
+    {
+        auto hex = [&](float x, float y) {
+            const float w = 0.24f;
+            const float h = 0.14f;
+            pen.poly({ { x - w, y }, { x - w / 2.0f, y - h }, { x + w / 2.0f, y - h }, { x + w, y }, { x + w / 2.0f, y + h }, { x - w / 2.0f, y + h } }, true);
+        };
+        hex(-0.18f, 0.0f);
+        hex(0.18f, -0.14f);
+        hex(0.18f, 0.14f);
+    }
+
     // Truce flag.
     void drawEndCombat(const Pen& pen)
     {
@@ -730,6 +743,9 @@ static void drawIconShapes(MuiIcon icon, float x, float y, float size, float thi
         break;
     case MuiIcon::PartyOrders:
         drawPartyOrders(pen);
+        break;
+    case MuiIcon::TacticalView:
+        drawTacticalView(pen);
         break;
     case MuiIcon::Holster:
         drawHolster(pen);

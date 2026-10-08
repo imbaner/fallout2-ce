@@ -26,6 +26,7 @@
 #include "settings.h"
 #include "svga.h"
 #include "tile.h"
+#include "tactical_view.h"
 #include "touch_hud.h"
 #include "action_log.h"
 #include "touch_log.h"
@@ -129,6 +130,7 @@ static RadialMenuScreen gRadialMenuScreen;
 
 static void touchControlsSetGameMouseMode(GameMouseMode mode);
 static TouchAction touchControlsGetActionAt(int worldX, int worldY, Object** targetPtr);
+static TouchAction touchControlsGetActionFor(Object* target, Object** targetPtr);
 static void touchControlsHandleTap(int x, int y);
 static void touchControlsSnapTap(int x, int y, int* tile, TouchAction* action, Object** target);
 static void touchControlsStickToSelection(int x, int y, int worldX, int worldY, int* tile, TouchAction* action, Object** target);
@@ -240,6 +242,8 @@ static void touchControlsNotifyScripts(bool pressed)
 
 void touchControlsProcessGestures()
 {
+    tacticalViewUpdate();
+
     if (!touchControlsIsNative()) {
         return;
     }
@@ -553,9 +557,14 @@ static void touchControlsClearSelection()
 // are attacked.
 static TouchAction touchControlsGetActionAt(int worldX, int worldY, Object** targetPtr)
 {
+    return touchControlsGetActionFor(playerPrimaryTargetAt(worldX, worldY, gElevation), targetPtr);
+}
+
+// What a tap on [target] does (nullptr - the ground: a walk).
+static TouchAction touchControlsGetActionFor(Object* target, Object** targetPtr)
+{
     *targetPtr = nullptr;
 
-    Object* target = playerPrimaryTargetAt(worldX, worldY, gElevation);
     if (target == nullptr) {
         return TOUCH_ACTION_MOVE;
     }
@@ -596,10 +605,14 @@ static void touchControlsHandleTap(int x, int y)
     // Skill or item waiting for a target (chosen in skilldex, HUD or
     // inventory): tap on an object uses it on the object, elsewhere cancels,
     // as the game's mouse code does.
+    // The tactical view picks tiles: a critter by the tile it stands on.
+    bool tactical = tacticalViewIsShown();
     int mode = gameMouseGetMode();
     if (mode >= GAME_MOUSE_MODE_USE_CROSSHAIR) {
         touchControlsClearSelection();
-        Object* object = playerObjectAt(worldX, worldY, OBJ_TYPE_INVALID, true, gElevation);
+        Object* object = tactical
+            ? tacticalViewCritterAt(tileFromScreenXY(worldX, worldY))
+            : playerObjectAt(worldX, worldY, OBJ_TYPE_INVALID, true, gElevation);
         mapHintsSetDestination(-1);
         mapHintsSetInteraction(object);
         if (mode == GAME_MOUSE_MODE_USE_CROSSHAIR) {
@@ -612,11 +625,16 @@ static void touchControlsHandleTap(int x, int y)
     }
 
     Object* target;
-    TouchAction action = touchControlsGetActionAt(worldX, worldY, &target);
+    TouchAction action;
     int tile = tileFromScreenXY(worldX, worldY);
-    touchControlsSnapTap(x, y, &tile, &action, &target);
-    if (isInCombat()) {
-        touchControlsStickToSelection(x, y, worldX, worldY, &tile, &action, &target);
+    if (tactical) {
+        action = touchControlsGetActionFor(tacticalViewCritterAt(tile), &target);
+    } else {
+        action = touchControlsGetActionAt(worldX, worldY, &target);
+        touchControlsSnapTap(x, y, &tile, &action, &target);
+        if (isInCombat()) {
+            touchControlsStickToSelection(x, y, worldX, worldY, &tile, &action, &target);
+        }
     }
 
     if (!isInCombat()) {
@@ -906,10 +924,15 @@ static bool radialMenuOpen(int x, int y)
     int worldX;
     int worldY;
     worldViewScreenToWorld(x, y, &worldX, &worldY);
-    Object* target = playerObjectAt(worldX, worldY, OBJ_TYPE_INVALID, true, gElevation);
+
+    // The tactical view: the menu of the critter standing on the tile.
+    bool tactical = tacticalViewIsShown();
+    Object* target = tactical
+        ? tacticalViewCritterAt(tileFromScreenXY(worldX, worldY))
+        : playerObjectAt(worldX, worldY, OBJ_TYPE_INVALID, true, gElevation);
 
     // Item magnet (with highlight on), as for taps.
-    if (touchHudIsHighlightActive()) {
+    if (!tactical && touchHudIsHighlightActive()) {
         Object* actionTarget;
         if (touchControlsGetActionAt(worldX, worldY, &actionTarget) == TOUCH_ACTION_MOVE) {
             Object* item = touchControlsFindItemNear(x, y);

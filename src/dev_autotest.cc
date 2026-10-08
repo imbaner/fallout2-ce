@@ -46,6 +46,7 @@
 #include "perf_monitor.h"
 #include "perk.h"
 #include "player_commands.h"
+#include "tactical_view.h"
 #include "preferences.h"
 #include "settings.h"
 #include "skill.h"
@@ -154,6 +155,12 @@ enum DevAutotestAction {
     // Logs the combat selection (touch controls); FAIL when its action isn't
     // `a` (1 move, 3 attack).
     DEV_AUTOTEST_ACTION_CHECK_SELECTION,
+    // Taps the center of the nearest critter's tile; `b` > 0 - holds that
+    // many frames (a long press).
+    DEV_AUTOTEST_ACTION_TOUCH_CRITTER_TILE,
+    // Logs the tactical view (on, shown, the walk's tiles); FAIL when shown
+    // isn't `a`.
+    DEV_AUTOTEST_ACTION_CHECK_TACTICAL,
     // World map: open it (the script continues from its loop); log its
     // state; drag from view center by (a, b); tap at party position + (a, b).
     DEV_AUTOTEST_ACTION_OPEN_WORLDMAP,
@@ -526,6 +533,37 @@ static const DevAutotestStep kDevAutotestMagnetSteps[] = {
     // Dude walks to the item: it's outlined green (map hints).
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 190, "m25b_walked" },
     { DEV_AUTOTEST_ACTION_LOG_PLACED_ITEM, 0, 0, 0, 1, "m26_picked" },
+};
+
+// Combat's tactical view: the HUD button turns it on (grid, tiles, the
+// walk); a tap where the critter's sprite covers a tile picks the tile, a
+// tap on the critter's tile picks the critter, a long press there opens its
+// menu; the button turns it off; on again it goes off with the combat.
+static const DevAutotestStep kDevAutotestTacticalSteps[] = {
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "v00_map" },
+    { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "v01_combat" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 0, 0, 0, 1, "v02_off" },
+    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "v03_on" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 1, 0, 0, 1, "v04_shown" },
+    { DEV_AUTOTEST_ACTION_CENTER_CRITTER, 0, 0, 0, 10, "v05_center" },
+    { DEV_AUTOTEST_ACTION_TOUCH_TAP_BEHIND_CRITTER, 0, 1, 0, 20, "v06_tap_over_critter" },
+    { DEV_AUTOTEST_ACTION_CHECK_SELECTION, 1, 0, 0, 1, "v07_tile_selected" },
+    { DEV_AUTOTEST_ACTION_TOUCH_CRITTER_TILE, 0, 0, 0, 20, "v08_tap_critter_tile" },
+    { DEV_AUTOTEST_ACTION_CHECK_SELECTION, 3, 0, 0, 1, "v09_critter_selected" },
+    { DEV_AUTOTEST_ACTION_TOUCH_CRITTER_TILE, 0, 45, 0, 50, "v10_long_press_critter_tile" },
+    { DEV_AUTOTEST_ACTION_CHECK_WIDGET, 1, 0, 0, 1, "v11_menu", "radial.3" },
+    // A tap beside the menu closes it (and taps nothing else).
+    { DEV_AUTOTEST_ACTION_TOUCH_TAP_SCREEN, 300, 150, 0, 20, "v12_menu_closed" },
+    { DEV_AUTOTEST_ACTION_CHECK_WIDGET, 0, 0, 0, 1, "v12b_no_menu", "radial.3" },
+    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "v13_off" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 0, 0, 0, 1, "v14_hidden" },
+    // On again, then the turn ends - and the combat with it (the critter is
+    // far): the view goes off with the combat.
+    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "v15_on_again" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 1, 0, 0, 1, "v16_shown" },
+    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(EndTurn), 0, 0, 120, "v17_end_turn" },
+    { DEV_AUTOTEST_ACTION_LOG_COMBAT, 0, 0, 0, 1, "v18_combat_over" },
+    { DEV_AUTOTEST_ACTION_CHECK_TACTICAL, 0, 0, 0, 1, "v19_off" },
 };
 
 // Combat: the critter picked (its outline pulses: two frames apart), then a
@@ -2183,6 +2221,9 @@ void devAutotestSetScenario(const char* name)
     } else if (strcmp(name, "ui") == 0) {
         gDevAutotestSteps = kDevAutotestUiSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestUiSteps) / sizeof(kDevAutotestUiSteps[0]);
+    } else if (strcmp(name, "tactical") == 0) {
+        gDevAutotestSteps = kDevAutotestTacticalSteps;
+        gDevAutotestStepCount = sizeof(kDevAutotestTacticalSteps) / sizeof(kDevAutotestTacticalSteps[0]);
     } else if (strcmp(name, "behindcritter") == 0) {
         gDevAutotestSteps = kDevAutotestBehindCritterSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestBehindCritterSteps) / sizeof(kDevAutotestBehindCritterSteps[0]);
@@ -3376,6 +3417,25 @@ void devAutotestTick()
             if (!tapped) {
                 devAutotestLog("FAIL: no free tile behind the critter %s\n", covered ? "under its sprite" : "showing");
             }
+            break;
+        }
+        case DEV_AUTOTEST_ACTION_TOUCH_CRITTER_TILE: {
+            Object* critter = devAutotestFindNearestCritter();
+            if (critter != nullptr) {
+                float x;
+                float y;
+                devAutotestGetTileScreenPosition(critter->tile, &x, &y);
+                int hold = step->b > 0 ? static_cast<int>(step->b) : 1;
+                devAutotestLog("  %s the tile %d of the critter\n", step->b > 0 ? "long press" : "tap", critter->tile);
+                devAutotestStartTouch(x, y, x, y, hold, 0);
+            }
+            break;
+        }
+        case DEV_AUTOTEST_ACTION_CHECK_TACTICAL: {
+            bool shown = tacticalViewIsShown();
+            const TacticalViewReach& reach = tacticalViewGetReach();
+            devAutotestLog("  tactical view: on %d, shown %d, walk %d tiles, blocked %d: %s\n", tacticalViewIsOn() ? 1 : 0, shown ? 1 : 0,
+                static_cast<int>(reach.reachable.size()), static_cast<int>(reach.blocked.size()), shown == (step->a != 0) ? "PASS" : "FAIL");
             break;
         }
         case DEV_AUTOTEST_ACTION_CHECK_SELECTION: {

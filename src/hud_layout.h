@@ -71,6 +71,8 @@ enum class HudElementId {
     Indicators,
     // Party Orders mod: list of its orders.
     PartyOrders,
+    // Combat's tactical view (tactical_view.h).
+    TacticalView,
     Count,
 };
 

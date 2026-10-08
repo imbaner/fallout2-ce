@@ -281,3 +281,4 @@
 {370}{}{Source and changes:}
 {371}{}{Open the source page}
 {372}{}{Licenses}
+{373}{}{Tactical view}

@@ -396,6 +396,8 @@ set(FALLOUT_PLATFORM_SOURCES
     "src/world_texture.cc"
     "src/world_texture.h"
     "src/map_hints.cc"
+    "src/tactical_view.cc"
+    "src/tactical_view.h"
     "src/map_hints.h"
     "src/player_commands.cc"
     "src/player_commands.h"

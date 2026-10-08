@@ -52,7 +52,7 @@ static const HudLayout kLandscapeLayout = {
             { { { HudElementId::Indicators, 300.0f, 22.0f } } },
             true },
         { HudGroupId::Combat, HudAnchor::Right, HudFlow::Columns, HudAlign::Start,
-            { { { HudElementId::EndTurn, 96.0f, 40.0f }, { HudElementId::EndCombat, 96.0f, 40.0f } } },
+            { { { HudElementId::TacticalView, 96.0f, 40.0f }, { HudElementId::EndTurn, 96.0f, 40.0f }, { HudElementId::EndCombat, 96.0f, 40.0f } } },
             true },
     },
 };

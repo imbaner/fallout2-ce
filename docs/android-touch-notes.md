@@ -111,6 +111,23 @@ goes through mouse emulation in touchscreen (absolute) mode.
   selected enemy's outline pulses with the palette's "bobber" (index 254,
   cycle.cc) instead of the red bands (`objectSetTargetOutline`, set by map
   hints). Autotest `behindcritter`.
+- Combat's tactical view (2026-10-09, `tactical_view.cc`, drawn by map
+  hints): a HUD button over End turn / End combat. On the player's turns
+  critters and items are drawn half see-through (`objectSetSeeThrough`: a
+  256x256 table of palette colors halfway between two, built from the
+  game's palette once; drawing only, objects' flags - saved - untouched;
+  critters' outlines aren't drawn), over the map: a faint grid over the
+  screen (each shared edge once, fainter zoomed out), the walk with the
+  action points left (a breadth-first walk around what blocks, as
+  `_make_path`; its border; tiles something stands on inside it grey),
+  everyone's tile in the game's combat outline colors read from the
+  cycling palette (friendly 229, hostile 243, blocked line of fire 61, the
+  selected enemy 254 - they pulse as the critters' outlines do), the dude's
+  thicker; the move tile and the hit chance as in normal combat, the hit
+  chance inside the enemy's tile. Taps and long presses pick tiles: a
+  critter by the tile it stands on (`tacticalViewCritterAt`), items and
+  corpses not at all. Hidden on others' turns, off when the combat ends.
+  Autotest `tactical`.
   In combat a ground tap picks an enemy standing on that tile or on its body
   column (`touchControlsFindEnemyNear`: +-12 world px around its tile center,
   from the sprite top to the feet); sprite boxes of wide critters cover
