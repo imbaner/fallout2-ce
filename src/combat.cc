@@ -2002,7 +2002,6 @@ static UnarmedHitDescription gUnarmedHitDescriptions[HIT_MODE_COUNT];
 static int gDamageCalculationType;
 static bool gBonusHthDamageFix;
 static bool gRemoveCriticalTimeLimits;
-static bool gDisplayBonusDamage;
 
 // combat_init
 // 0x420CC0
@@ -6875,7 +6874,6 @@ static void damageModInit()
     gBonusHthDamageFix = true;
     configGetBool(&gContentConfig, CONTENT_CONFIG_COMBAT_SECTION, "bonus_hth_damage_fix", &gBonusHthDamageFix);
 
-    gDisplayBonusDamage = settings.ui.display_bonus_damage;
 }
 
 bool damageModGetBonusHthDamageFix()
@@ -6883,9 +6881,10 @@ bool damageModGetBonusHthDamageFix()
     return gBonusHthDamageFix;
 }
 
+// CE: Read when shown, so the settings screen's change applies at once.
 bool damageModGetDisplayBonusDamage()
 {
-    return gDisplayBonusDamage;
+    return settings.ui.display_bonus_damage;
 }
 
 static void damageModCalculateGlovz(DamageCalculationContext* context)

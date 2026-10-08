@@ -264,3 +264,7 @@
 {353}{}{Import}
 {354}{}{Export}
 {355}{}{Delete}
+{356}{}{Karma change messages}
+{357}{}{In the log: "You gained 5 karma."}
+{358}{}{Bonus damage in the stats}
+{359}{}{Weapon damage with the bonus damage perks}

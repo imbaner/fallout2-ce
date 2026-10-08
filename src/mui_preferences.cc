@@ -113,6 +113,10 @@ namespace {
     constexpr int kTextImportButton = 353;
     constexpr int kTextExportButton = 354;
     constexpr int kTextDeleteButton = 355;
+    constexpr int kTextKarmaChanges = 356;
+    constexpr int kTextKarmaChangesNote = 357;
+    constexpr int kTextBonusDamage = 358;
+    constexpr int kTextBonusDamageNote = 359;
 
     const MuiColor kDanger = muiRgb(0xFF8E72);
     const MuiColor kDangerFill = muiRgb(0x1B100E);
@@ -154,6 +158,8 @@ namespace {
         bool partyTradeFromMenu;
         bool partyLootAndBarter;
         bool partyMemberExtraInfo;
+        bool karmaChanges;
+        bool bonusDamage;
     };
 
     Values currentValues()
@@ -172,6 +178,8 @@ namespace {
         values.partyTradeFromMenu = settings.qol.party_trade_from_menu;
         values.partyLootAndBarter = settings.qol.party_loot_and_barter;
         values.partyMemberExtraInfo = settings.ui.party_member_extra_info;
+        values.karmaChanges = settings.ui.display_karma_changes;
+        values.bonusDamage = settings.ui.display_bonus_damage;
         return values;
     }
 
@@ -192,7 +200,10 @@ namespace {
         values.fastAmmoLoad = qol.fast_ammo_load;
         values.partyTradeFromMenu = qol.party_trade_from_menu;
         values.partyLootAndBarter = qol.party_loot_and_barter;
-        values.partyMemberExtraInfo = UISettings().party_member_extra_info;
+        UISettings ui;
+        values.partyMemberExtraInfo = ui.party_member_extra_info;
+        values.karmaChanges = ui.display_karma_changes;
+        values.bonusDamage = ui.display_bonus_damage;
         return values;
     }
 
@@ -213,6 +224,10 @@ namespace {
         settings.qol.party_trade_from_menu = values.partyTradeFromMenu;
         settings.qol.party_loot_and_barter = values.partyLootAndBarter;
         settings.ui.party_member_extra_info = values.partyMemberExtraInfo;
+        // Both read when shown (the karma message, the damage line), so they
+        // apply at once.
+        settings.ui.display_karma_changes = values.karmaChanges;
+        settings.ui.display_bonus_damage = values.bonusDamage;
 
         // Writes the settings file too.
         preferencesApply(values.preferences);
@@ -406,6 +421,12 @@ namespace {
         toggle(Section::Game, kTextAutoOpenDoors, "Open unlocked doors on the way", Origin::Ce, &Values::autoOpenDoors);
         toggle(Section::Game, kTextWalkWhenSneaking, "Walk instead of leaving sneak", Origin::Ce, &Values::walkWhenSneaking);
         toggle(Section::Game, kTextFastAmmoLoad, "Fast ammo loading", Origin::Ce, &Values::fastAmmoLoad);
+        {
+            Row row { Section::Game, RowKind::Toggle, kTextKarmaChanges, "Karma change messages", Origin::Ce, kTextKarmaChangesNote, "In the log: \"You gained 5 karma.\"" };
+            row.get = [](const Values& values) { return values.karmaChanges ? 1.0f : 0.0f; };
+            row.set = [](Values& values, float value) { values.karmaChanges = value != 0.0f; };
+            rows.push_back(row);
+        }
         header(Section::Game, kTextPartyMembers, "Party members");
         toggle(Section::Game, kTextPartyTradeFromMenu, "Trade from the action menu", Origin::Ce, &Values::partyTradeFromMenu);
         toggle(Section::Game, kTextPartyLootAndBarter, "Their items when looting and bartering", Origin::Ce, &Values::partyLootAndBarter);
@@ -433,6 +454,12 @@ namespace {
         choice(Section::Combat, kTextCombatMessages, "Combat messages", { kMessageVerbose, kMessageBrief }, &PreferenceValues::combatMessages);
         preferenceToggle(Section::Combat, kTextCombatTaunts, "Combat taunts", &PreferenceValues::combatTaunts);
         choice(Section::Combat, kTextTargetHighlight, "Target highlight", { kMessageOff, kMessageOn, kMessageTargetingOnly }, &PreferenceValues::targetHighlight);
+        {
+            Row row { Section::Combat, RowKind::Toggle, kTextBonusDamage, "Bonus damage in the stats", Origin::Ce, kTextBonusDamageNote, "Weapon damage with the bonus damage perks" };
+            row.get = [](const Values& values) { return values.bonusDamage ? 1.0f : 0.0f; };
+            row.set = [](Values& values, float value) { values.bonusDamage = value != 0.0f; };
+            rows.push_back(row);
+        }
 
         // Sound.
         volume(kTextMasterVolume, "Master volume", &PreferenceValues::masterVolume, Sample::SoundEffect);

@@ -91,9 +91,11 @@ Revised 2026-09-29. Technical notes: `android-touch-notes.md`.
      not growing with the zoom (mui_floating_text.cc): the game's color,
      a thin outline, our font, wrapped about as wide as the game's, kept on
      screen. Autotest `floattext`.
-3. **Maps**
-   - World map zoom (needs its renderer rewritten).
-   - Automap and town maps for fingers.
+3. **Maps** (done)
+   - World map: mobile screen (mui_worldmap.cc), drag and pinch zoom,
+     towns list, camera following the party.
+   - Automap (Pip-Boy maps, MuiMapView: drag, pinch) and town maps
+     (entrances as marks) for fingers.
 4. **Controls and settings**
    - In-game touch settings: touch mode on/off (cursor fallback),
      sensitivity, zoom limits.
@@ -316,6 +318,10 @@ Agreed while designing the settings screen:
 
 ## Map rendering towards 60 fps (postponed, 2026-09-29)
 
+2026-10-08: the release build (no diagnostics) runs close to 60 fps on
+the Redmi 15C; the user finds it good. The steps below stay as a plan for
+weaker phones, not as current work.
+
 Where it stands: needless redraws are gone (only the view is drawn, roofs
 redraw their tiles, pinches recenter once, animation refreshes merged; see
 `android-touch-notes.md`). The phone (Redmi 15C) is playable, but fast
@@ -410,8 +416,9 @@ Steps, most gain first:
   by one (original behavior). Existing alternatives: Party Orders "pick up
   items" (3 hexes, one per game second), Auto Loot mod.
 
-- **More view gestures** (2026-09-27): inertia after dragging and double
-  tap (zoom in / whole map) — for the world view and the Pip-Boy / automap
+- **More view gestures** (2026-09-27): double tap rejected by the user
+  after the mockups (2026-10-08: "точно нет"); inertia after dragging
+  undecided — for the world view and the Pip-Boy / automap
   maps together, so gestures stay the same everywhere (today: drag and pinch
   only).
 

@@ -44,7 +44,7 @@ static const HudLayout kLandscapeLayout = {
         { HudGroupId::Weapon, HudAnchor::BottomRight, HudFlow::Rows, HudAlign::End,
             {
                 { { HudElementId::Status, kHudFill, 22.0f } },
-                { { HudElementId::Modes, kHudFill, 36.0f } },
+                { { HudElementId::Modes, kHudFill, 41.0f } },
                 { { HudElementId::SwapHands, kButton, 60.0f }, { HudElementId::Weapon, 168.0f, 60.0f } },
             },
             false, 6.0f },

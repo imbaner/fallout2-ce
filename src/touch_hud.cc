@@ -793,7 +793,7 @@ namespace {
         // Chips over the top, the position bar's place under them always
         // (the group keeps its height whatever the weapon).
         float barHeight = ui.dp(3.0f);
-        float barGap = ui.dp(3.0f);
+        float barGap = ui.dp(8.0f);
         MuiRect strip = { rect.x, rect.y, rect.w, rect.h - barHeight - barGap };
         bool overflow = total > strip.w;
 
@@ -860,15 +860,29 @@ namespace {
             }
             gModeChips.push_back(modeChip);
         }
+
+        // The edges with modes beyond them fade into the panel.
+        if (overflow) {
+            float fade = ui.dp(28.0f);
+            MuiColor clear = kPanelColor.withAlpha(0);
+            MuiColor solid = kPanelColor.withAlpha(235);
+            if (offset > 0.5f) {
+                muiFillHorizontalGradient({ strip.x, strip.y, fade, strip.h }, solid, clear);
+            }
+            if (offset < total - strip.w - 0.5f) {
+                muiFillHorizontalGradient({ strip.right() - fade, strip.y, fade, strip.h }, clear, solid);
+            }
+        }
         muiPopClip();
 
-        // Where the visible part is in the whole list (not touchable).
+        // Where the visible part is in the whole list (not touchable): the
+        // track always, its thumb when the modes don't fit.
+        MuiRect track = { strip.x, strip.bottom() + barGap, strip.w, barHeight };
+        muiFillRoundRect(track, barHeight / 2.0f, theme.buttonBorder.withAlpha(70));
         if (overflow) {
-            MuiRect track = { strip.x, strip.bottom() + barGap, strip.w, barHeight };
             float thumbWidth = std::max(track.w * strip.w / total, ui.dp(16.0f));
             float maxOffset = total - strip.w;
             float thumbX = track.x + (track.w - thumbWidth) * std::clamp(offset / maxOffset, 0.0f, 1.0f);
-            muiFillRoundRect(track, barHeight / 2.0f, theme.button);
             muiFillRoundRect({ thumbX, track.y, thumbWidth, track.h }, barHeight / 2.0f, theme.accent);
         }
     }
