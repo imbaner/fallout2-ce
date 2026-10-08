@@ -39,6 +39,12 @@ void tileExit();
 void tileDisable();
 void tileEnable();
 void tileWindowRefreshRect(Rect* rect, int elevation);
+
+// CE: Between these, refreshes are collected (touching ones merged) and
+// drawn once at the end: animations advancing several frames at a time
+// draw only where things end up.
+void tileBeginDeferredRefresh();
+void tileEndDeferredRefresh();
 void tileWindowRefresh();
 int tileSetCenter(int tile, int flags);
 void tile_toggle_roof(bool refresh);
@@ -65,7 +71,8 @@ int squareTileFromScreenXY(int screenX, int screenY, int elevation);
 void squareTileScreenToCoord(int screenX, int screenY, int elevation, int* coordX, int* coordY);
 void squareTileScreenToCoordRoof(int screenX, int screenY, int elevation, int* coordX, int* coordY);
 void tileRenderRoofsInRect(Rect* rect, int elevation);
-void tile_fill_roof(int x, int y, int elevation, bool on);
+// [changed] (optional) - where on screen the roofs changed (empty - nowhere).
+void tile_fill_roof(int x, int y, int elevation, bool on, Rect* changed = nullptr);
 void tileRenderFloorsInRect(Rect* rect, int elevation);
 void tileRenderEdgeBlackSquares(Rect* rect, int elevation, bool drawOnTop);
 bool _square_roof_intersect(int x, int y, int elevation);

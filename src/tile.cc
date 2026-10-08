@@ -5,7 +5,9 @@
 #include <string.h>
 
 #include <algorithm>
+#include <limits.h>
 #include <stack>
+#include <vector>
 
 #include "art.h"
 #include "color.h"
@@ -16,10 +18,12 @@
 #include "map.h"
 #include "map_edge.h"
 #include "object.h"
+#include "perf_monitor.h"
 #include "platform_compat.h"
 #include "settings.h"
 #include "svga.h"
 #include "tile_hires_stencil.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -60,7 +64,7 @@ static void tileSetBorder(int windowWidth, int windowHeight, int hexGridWidth, i
 static void tileRefreshMapper(Rect* rect, int elevation);
 static void tileRefreshGame(Rect* rect, int elevation);
 static void roof_fill_push_task_if_in_bounds(std::stack<roof_fill_task>& tasks_stack, int x, int y);
-static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, int elevation, bool on);
+static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, int elevation, bool on, Rect* changed);
 static void tileRenderRoof(const TileFrmId& frmId, int x, int y, Rect* rect, int light);
 static void _draw_grid(int tile, int elevation, Rect* rect);
 static void tileRenderFloor(const TileFrmId& frmId, int x, int y, Rect* rect);
@@ -534,8 +538,83 @@ void tileEnable()
 }
 
 // 0x4B12C0 tile_refresh_rect
+// CE: Refreshes collected by `tileBeginDeferredRefresh`.
+static bool gTileRefreshDeferred = false;
+static std::vector<Rect> gTileDeferredRects;
+
+// Past this many separate rects a new one joins the nearest.
+static constexpr size_t kTileDeferredRectsMax = 48;
+
+static bool tileRectsTouch(const Rect& a, const Rect& b)
+{
+    return a.left <= b.right + 1 && b.left <= a.right + 1 && a.top <= b.bottom + 1 && b.top <= a.bottom + 1;
+}
+
+static void tileDeferRefresh(const Rect& rect)
+{
+    Rect merged = rect;
+    for (size_t index = 0; index < gTileDeferredRects.size();) {
+        if (tileRectsTouch(merged, gTileDeferredRects[index])) {
+            rectUnion(&merged, &(gTileDeferredRects[index]), &merged);
+            gTileDeferredRects.erase(gTileDeferredRects.begin() + index);
+            index = 0;
+        } else {
+            index++;
+        }
+    }
+
+    if (gTileDeferredRects.size() >= kTileDeferredRectsMax) {
+        size_t nearest = 0;
+        long long nearestArea = LLONG_MAX;
+        for (size_t index = 0; index < gTileDeferredRects.size(); index++) {
+            Rect joined;
+            rectUnion(&merged, &(gTileDeferredRects[index]), &joined);
+            long long area = static_cast<long long>(rectGetWidth(&joined)) * rectGetHeight(&joined);
+            if (area < nearestArea) {
+                nearestArea = area;
+                nearest = index;
+            }
+        }
+        rectUnion(&(gTileDeferredRects[nearest]), &merged, &(gTileDeferredRects[nearest]));
+        return;
+    }
+
+    gTileDeferredRects.push_back(merged);
+}
+
+void tileBeginDeferredRefresh()
+{
+    gTileRefreshDeferred = true;
+}
+
+// Draws the collected refreshes (still collecting afterwards if it was).
+static void tileFlushDeferredRefresh()
+{
+    bool deferred = gTileRefreshDeferred;
+    gTileRefreshDeferred = false;
+
+    std::vector<Rect> rects;
+    rects.swap(gTileDeferredRects);
+    for (Rect& rect : rects) {
+        tileWindowRefreshRect(&rect, gElevation);
+    }
+
+    gTileRefreshDeferred = deferred;
+}
+
+void tileEndDeferredRefresh()
+{
+    tileFlushDeferredRefresh();
+    gTileRefreshDeferred = false;
+}
+
 void tileWindowRefreshRect(Rect* rect, int elevation)
 {
+    if (gTileEnabled && gTileRefreshDeferred && elevation == gElevation) {
+        tileDeferRefresh(*rect);
+        return;
+    }
+
     if (gTileEnabled) {
         if (elevation == gElevation) {
             gTileWindowRefreshElevationProc(rect, elevation);
@@ -621,6 +700,12 @@ int tileSetCenter(int tile, int flags)
         }
     }
 
+    // CE: Collected refreshes are where things are now, draw them before
+    // the map moves.
+    if (!gTileDeferredRects.empty()) {
+        tileFlushDeferredRefresh();
+    }
+
     _tile_y = tile_y;
     _tile_offx = mapEdgeGetTileXAlignment() + (gTileWindowWidth - 32) / 2;
     _tile_x = tile_x;
@@ -642,6 +727,9 @@ int tileSetCenter(int tile, int flags)
     }
 
     gCenterTile = tile;
+
+    // CE: Let world view know view position was set by the game.
+    worldViewHandleCenterChanged();
 
     tile_hires_stencil_on_center_tile_or_elevation_change();
 
@@ -674,6 +762,11 @@ static void tileRefreshMapper(Rect* rect, int elevation)
         return;
     }
 
+    // CE: Only what's in view is drawn (see world_view.h).
+    if (!worldViewClipRender(&rectToUpdate)) {
+        return;
+    }
+
     Rect visArea;
     bool hasVisArea = mapEdgeComputeVisibleArea(elevation, &visArea);
 
@@ -693,6 +786,7 @@ static void tileRefreshMapper(Rect* rect, int elevation)
         if (didClear) {
             gTileWindowRefreshProc(&rectToUpdate);
         }
+        worldViewRendered(&rectToUpdate);
         return;
     }
 
@@ -709,6 +803,7 @@ static void tileRefreshMapper(Rect* rect, int elevation)
     tileMapperOverlayRender(gTileWindowBuffer, gTileWindowPitch, elevation, &renderRect);
 
     gTileWindowRefreshProc(didClear ? &rectToUpdate : &renderRect);
+    worldViewRendered(&rectToUpdate);
 }
 
 // 0x4B15E8 refresh_game
@@ -719,6 +814,13 @@ static void tileRefreshGame(Rect* rect, int elevation)
     if (rectIntersection(rect, &gTileWindowRect, &rectToUpdate) == -1) {
         return;
     }
+
+    // CE: Only what's in view is drawn (see world_view.h).
+    if (!worldViewClipRender(&rectToUpdate)) {
+        return;
+    }
+
+    perfMonitorCount(PerfCount::WorldDrawnPixels, static_cast<long long>(rectGetWidth(&rectToUpdate)) * rectGetHeight(&rectToUpdate));
 
     Rect visArea;
     bool hasVisArea = mapEdgeComputeVisibleArea(elevation, &visArea);
@@ -739,6 +841,7 @@ static void tileRefreshGame(Rect* rect, int elevation)
         if (didClear) {
             gTileWindowRefreshProc(&rectToUpdate);
         }
+        worldViewRendered(&rectToUpdate);
         return;
     }
 
@@ -752,6 +855,7 @@ static void tileRefreshGame(Rect* rect, int elevation)
     }
 
     gTileWindowRefreshProc(didClear ? &rectToUpdate : &renderRect);
+    worldViewRendered(&rectToUpdate);
 }
 
 // 0x4B1634 tile_toggle_roof
@@ -1339,7 +1443,7 @@ static void roof_fill_push_task_if_in_bounds(std::stack<roof_fill_task>& tasks_s
     };
 };
 
-static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, int elevation, bool on)
+static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, int elevation, bool on, Rect* changed)
 {
     auto [x, y] = tasks_stack.top();
     tasks_stack.pop();
@@ -1372,6 +1476,25 @@ static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, 
         if (updateFid) {
             gTileSquares[elevation]->tileFid[squareTileIndex] = floorTileFid | (roofFrameId | flag);
 
+            // CE: Where the roof tile is on screen.
+            if (changed != nullptr) {
+                CacheEntry* handle;
+                Art* art = artLock(TileFrmId(roofFrameId), &handle);
+                if (art != nullptr) {
+                    Rect roofRect;
+                    squareTileToRoofScreenXY(squareTileIndex, &(roofRect.left), &(roofRect.top), elevation);
+                    roofRect.right = roofRect.left + artGetWidth(art) - 1;
+                    roofRect.bottom = roofRect.top + artGetHeight(art) - 1;
+                    artUnlock(handle);
+
+                    if (changed->right < changed->left) {
+                        *changed = roofRect;
+                    } else {
+                        rectUnion(changed, &roofRect, changed);
+                    }
+                }
+            }
+
             roof_fill_push_task_if_in_bounds(tasks_stack, x - 1, y);
             roof_fill_push_task_if_in_bounds(tasks_stack, x + 1, y);
             roof_fill_push_task_if_in_bounds(tasks_stack, x, y - 1);
@@ -1381,14 +1504,18 @@ static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, 
 }
 
 // 0x4B23D4 tile_fill_roof
-void tile_fill_roof(int x, int y, int elevation, bool on)
+void tile_fill_roof(int x, int y, int elevation, bool on, Rect* changed)
 {
     std::stack<roof_fill_task> tasks_stack;
+
+    if (changed != nullptr) {
+        *changed = { 0, 0, -1, -1 };
+    }
 
     roof_fill_push_task_if_in_bounds(tasks_stack, x, y);
 
     while (!tasks_stack.empty()) {
-        roof_fill_off_process_task(tasks_stack, elevation, on);
+        roof_fill_off_process_task(tasks_stack, elevation, on, changed);
     }
 }
 

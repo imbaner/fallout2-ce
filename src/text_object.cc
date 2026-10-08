@@ -8,12 +8,14 @@
 #include "draw.h"
 #include "input.h"
 #include "memory.h"
+#include "mui.h"
 #include "object.h"
 #include "settings.h"
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
 #include "word_wrap.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -38,10 +40,16 @@ typedef struct TextObject {
     int width;
     int height;
     unsigned char* data;
+    // CE: The text and its colors for the mobile UI's overlay (see
+    // `textObjectsDrawnOverMap`).
+    char* text;
+    ColorWithFlags color;
+    ColorWithFlags outlineColor;
 } TextObject;
 
 static void textObjectsTicker();
 static void textObjectFindPlacement(TextObject* textObject);
+static void textObjectFree(TextObject* textObject);
 
 // 0x51D944 text_object_index
 static int gTextObjectsCount = 0;
@@ -101,8 +109,7 @@ int textObjectsReset()
     }
 
     for (int index = 0; index < gTextObjectsCount; index++) {
-        internal_free(gTextObjects[index]->data);
-        internal_free(gTextObjects[index]);
+        textObjectFree(gTextObjects[index]);
     }
 
     gTextObjectsCount = 0;
@@ -181,6 +188,10 @@ int textObjectAdd(Object* object, char* string, int font, ColorWithFlags color, 
 
     memset(textObject, 0, sizeof(*textObject));
 
+    textObject->text = internal_strdup(string);
+    textObject->color = color;
+    textObject->outlineColor = outlineColor;
+
     int oldFont = fontGetCurrent();
     fontSetCurrent(font);
 
@@ -188,6 +199,7 @@ int textObjectAdd(Object* object, char* string, int font, ColorWithFlags color, 
     short count;
     if (wordWrap(string, 200, beginnings, &count) != 0) {
         fontSetCurrent(oldFont);
+        textObjectFree(textObject);
         return -1;
     }
 
@@ -225,6 +237,7 @@ int textObjectAdd(Object* object, char* string, int font, ColorWithFlags color, 
     textObject->data = (unsigned char*)internal_malloc(size);
     if (textObject->data == nullptr) {
         fontSetCurrent(oldFont);
+        textObjectFree(textObject);
         return -1;
     }
 
@@ -291,7 +304,8 @@ int textObjectAdd(Object* object, char* string, int font, ColorWithFlags color, 
 // 0x4B06E8 text_object_render
 void textObjectsRenderInRect(Rect* rect)
 {
-    if (!gTextObjectsInitialized) {
+    // CE: The mobile UI draws them over the map instead.
+    if (!gTextObjectsInitialized || textObjectsDrawnOverMap()) {
         return;
     }
 
@@ -355,8 +369,7 @@ static void textObjectsTicker()
                 textObjectsRemoved = true;
             }
 
-            internal_free(textObject->data);
-            internal_free(textObject);
+            textObjectFree(textObject);
 
             memmove(&(gTextObjects[index]), &(gTextObjects[index + 1]), sizeof(*gTextObjects) * (gTextObjectsCount - index - 1));
 
@@ -375,9 +388,29 @@ static void textObjectsTicker()
 // 0x4B0954 text_object_get_offset
 static void textObjectFindPlacement(TextObject* textObject)
 {
+    // CE: With the zoomable world view the buffer is bigger than what is on
+    // screen, keep texts in its visible part.
+    Rect bounds;
+    worldViewGetVisibleRect(&bounds);
+    bounds.left = std::max(bounds.left, 0);
+    bounds.top = std::max(bounds.top, 0);
+    bounds.right = std::min(bounds.right, gTextObjectsWindowWidth - 1);
+    bounds.bottom = std::min(bounds.bottom, gTextObjectsWindowHeight - 1);
+
     int tileScreenX;
     int tileScreenY;
     tileToScreenXY(textObject->tile, &tileScreenX, &tileScreenY);
+
+    auto fits = [&]() {
+        return textObject->x >= bounds.left && textObject->x + textObject->width - 1 <= bounds.right
+            && textObject->y >= bounds.top && textObject->y + textObject->height - 1 <= bounds.bottom;
+    };
+
+    auto place = [&]() {
+        textObject->sx = textObject->x - tileScreenX;
+        textObject->sy = textObject->y - tileScreenY;
+    };
+
     textObject->x = tileScreenX + 16 - textObject->width / 2;
     textObject->y = tileScreenY;
 
@@ -385,75 +418,89 @@ static void textObjectFindPlacement(TextObject* textObject)
         textObject->y -= textObject->height + 60;
     }
 
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x -= textObject->width / 2;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x += textObject->width;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x = tileScreenX - 16 - textObject->width;
     textObject->y = tileScreenY - 16 - textObject->height;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x += textObject->width + 64;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x = tileScreenX + 16 - textObject->width / 2;
     textObject->y = tileScreenY;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x -= textObject->width / 2;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x += textObject->width;
-    if ((textObject->x >= 0 && textObject->x + textObject->width - 1 < gTextObjectsWindowWidth)
-        && (textObject->y >= 0 && textObject->y + textObject->height - 1 < gTextObjectsWindowHeight)) {
-        textObject->sx = textObject->x - tileScreenX;
-        textObject->sy = textObject->y - tileScreenY;
+    if (fits()) {
+        place();
         return;
     }
 
     textObject->x = tileScreenX + 16 - textObject->width / 2;
     textObject->y = tileScreenY - (textObject->height + 60);
-    textObject->sx = textObject->x - tileScreenX;
-    textObject->sy = textObject->y - tileScreenY;
+    place();
+}
+
+static void textObjectFree(TextObject* textObject)
+{
+    if (textObject->text != nullptr) {
+        internal_free(textObject->text);
+    }
+    if (textObject->data != nullptr) {
+        internal_free(textObject->data);
+    }
+    internal_free(textObject);
+}
+
+bool textObjectsDrawnOverMap()
+{
+    return muiIsEnabled() && worldViewIsEnabled();
+}
+
+bool textObjectGetView(int index, TextObjectView* view)
+{
+    if (index < 0 || index >= gTextObjectsCount) {
+        return false;
+    }
+
+    TextObject* textObject = gTextObjects[index];
+    view->text = textObject->text;
+    view->tile = textObject->tile;
+    view->aboveTile = (textObject->flags & TEXT_OBJECT_UNBOUNDED) == 0;
+    view->color = textObject->color;
+    view->outlineColor = textObject->outlineColor;
+    return textObject->text != nullptr;
 }
 
 // Marks text objects attached to [object] for removal.

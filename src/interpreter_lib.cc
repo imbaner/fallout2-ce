@@ -14,6 +14,7 @@
 #include "sound.h"
 #include "svga.h"
 #include "text_font.h"
+#include "touch.h"
 #include "window.h"
 #include "window_manager_private.h"
 
@@ -247,6 +248,14 @@ void opSelectFileList(Program* program)
 
     char* pattern = programStackPopString(program);
     char* title = programStackPopString(program);
+
+#if FALLOUT_TOUCH_ONLY
+    // CE: The game's list window isn't supported in the touch-only build
+    // (touch.h): nothing is chosen, as when the player cancels.
+    debugPrint("\nselectfilelist: the game's list window isn't supported (%s)\n", title);
+    programStackPushInteger(program, 0);
+    return;
+#endif
 
     int fileListLength;
     char** fileList = _getFileList(_interpretMangleName(pattern), &fileListLength);

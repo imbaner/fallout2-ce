@@ -49,6 +49,21 @@ void _combat_anim_finished();
 CombatBadShot _combat_check_bad_shot(Object* attacker, Object* defender, HitMode hitMode, bool aiming);
 bool _combat_to_hit(Object* target, int* accuracy);
 void _combat_attack_this(Object* target);
+
+// CE: Screen position of the hit location button (0-7) of the called shot
+// window (for automated tests).
+// CE: Mobile UI called shot panel (mui_called_shot.cc): the hit locations as
+// the game's window lists them (its left column, then the right one), their
+// names for [critter] and hit chances with [hitMode].
+struct CalledShotTarget {
+    HitLocation location;
+    const char* name;
+    int chance;
+};
+
+constexpr int kCalledShotTargetCount = 8;
+
+void calledShotGetTargets(Object* critter, HitMode hitMode, CalledShotTarget* targets);
 void _combat_outline_on();
 void _combat_outline_off();
 void _combat_highlight_change();

@@ -88,8 +88,9 @@ int speechLoad(const char* fileName, GameSoundReadLimitMode readLimitMode, GameS
 int _gsound_speech_play_preloaded();
 void speechDelete();
 int _gsound_play_sfx_file_volume(const char* name, int volume);
-Sound* soundEffectLoad(const char* name, Object* object);
-Sound* soundEffectLoadWithVolume(const char* name, Object* object, int volume);
+// CE: [tempo] - plays that many times as fast, same pitch (`soundSetTempo`).
+Sound* soundEffectLoad(const char* name, Object* object, double tempo = 1.0);
+Sound* soundEffectLoadWithVolume(const char* name, Object* object, int volume, double tempo = 1.0);
 void soundEffectDelete(Sound* sound);
 int _gsnd_anim_sound(Sound* sound, void* objectPtr);
 int soundEffectPlay(Sound* sound);

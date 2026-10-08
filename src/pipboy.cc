@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "art.h"
+#include "mui.h"
 #include "automap.h"
 #include "color.h"
 #include "combat.h"
@@ -16,6 +17,7 @@
 #include "cycle.h"
 #include "dbox.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "delay.h"
 #include "draw.h"
 #include "game.h"
@@ -39,6 +41,7 @@
 #include "settings.h"
 #include "sfall_script_hooks.h"
 #include "stat.h"
+#include "string_utils.h"
 #include "svga.h"
 #include "text_font.h"
 #include "touch.h"
@@ -128,25 +131,6 @@ typedef enum PipboyTextOptions {
     // Specifies that text should be rendered with no (minimal) indentation.
     PIPBOY_TEXT_NO_INDENT = 0x80,
 } PipboyTextOptions;
-
-typedef enum PipboyRestDuration {
-    PIPBOY_REST_DURATION_TEN_MINUTES,
-    PIPBOY_REST_DURATION_THIRTY_MINUTES,
-    PIPBOY_REST_DURATION_ONE_HOUR,
-    PIPBOY_REST_DURATION_TWO_HOURS,
-    PIPBOY_REST_DURATION_THREE_HOURS,
-    PIPBOY_REST_DURATION_FOUR_HOURS,
-    PIPBOY_REST_DURATION_FIVE_HOURS,
-    PIPBOY_REST_DURATION_SIX_HOURS,
-    PIPBOY_REST_DURATION_UNTIL_MORNING,
-    PIPBOY_REST_DURATION_UNTIL_NOON,
-    PIPBOY_REST_DURATION_UNTIL_EVENING,
-    PIPBOY_REST_DURATION_UNTIL_MIDNIGHT,
-    PIPBOY_REST_DURATION_UNTIL_HEALED,
-    PIPBOY_REST_DURATION_UNTIL_PARTY_HEALED,
-    PIPBOY_REST_DURATION_COUNT,
-    PIPBOY_REST_DURATION_COUNT_WITHOUT_PARTY = PIPBOY_REST_DURATION_COUNT - 1,
-} PipboyRestDuration;
 
 static constexpr int PIPBOY_REST_DURATION_WAKE_HOUR_COUNT = PIPBOY_REST_DURATION_UNTIL_MIDNIGHT - PIPBOY_REST_DURATION_UNTIL_MORNING + 1;
 static constexpr int kDefaultPipboyRestDurationWakeHours[PIPBOY_REST_DURATION_WAKE_HOUR_COUNT] = {
@@ -240,6 +224,10 @@ static void pipboyHandleVideoArchive(int a1);
 static int pipboyRenderVideoArchive(int a1);
 static void pipboyHandleAlarmClock(int eventCode);
 static void pipboyWindowRenderRestOptions(int a1);
+static void pipboyRestWithOption(int duration);
+static int pipboyStateInit();
+static void pipboyStateFree();
+static int pipboyOpenMobile(int intent);
 static void pipboyDrawHitPoints();
 static void pipboyWindowCreateButtons(int a1, int a2, bool a3);
 static void pipboyWindowDestroyButtons();
@@ -343,7 +331,7 @@ MessageList gQuestsMessageList;
 int gPipboyQuestLocationsCount;
 
 // 0x66441C scrn_buf
-unsigned char* gPipboyWindowBuffer;
+unsigned char* gPipboyWindowBuffer = nullptr;
 
 // 0x66444C holocount
 int gPipboyWindowHolodisksCount;
@@ -513,13 +501,65 @@ static void renderNavigationButtons(int _view_page, int totalPages, bool isSubPa
 }
 
 // 0x497004
+static bool pipboyIsWorn()
+{
+    return wmMapPipboyActive() || pipboy_available_at_game_start;
+}
+
+PipboyUnavailable pipboyUnavailableReason()
+{
+    // In this order: the game checks combat before opening.
+    if (isInCombat()) {
+        return PipboyUnavailable::InCombat;
+    }
+
+    if (!pipboyIsWorn()) {
+        return PipboyUnavailable::NotWorn;
+    }
+
+    return PipboyUnavailable::None;
+}
+
+const char* pipboyUnavailableText(PipboyUnavailable reason)
+{
+    switch (reason) {
+    case PipboyUnavailable::InCombat:
+        // Pip-Boy not available in combat!
+        return getmsg(&gMiscMessageList, &gPipboyMessageListItem, 7);
+    case PipboyUnavailable::NotWorn:
+        // You aren't wearing the pipboy!
+        return getmsg(&gMiscMessageList, &gPipboyMessageListItem, 7000);
+    default:
+        return nullptr;
+    }
+}
+
+void pipboyShowUnavailable(PipboyUnavailable reason)
+{
+    const char* text = pipboyUnavailableText(reason);
+    if (text == nullptr) {
+        return;
+    }
+
+    char title[128];
+    stringCopy(title, text);
+    if (reason == PipboyUnavailable::InCombat) {
+        soundPlayFile("iisxxxx1");
+        showDialogBox(title, nullptr, 0, 192, 116, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
+    } else {
+        showDialogBox(title, nullptr, 0, 192, 135, COLOR_AMBER, nullptr, COLOR_AMBER, 1);
+    }
+}
+
 int pipboyOpen(int intent)
 {
-    if (!wmMapPipboyActive() && !pipboy_available_at_game_start) {
-        // You aren't wearing the pipboy!
-        const char* text = getmsg(&gMiscMessageList, &gPipboyMessageListItem, 7000);
-        showDialogBox(text, nullptr, 0, 192, 135, COLOR_AMBER, nullptr, COLOR_AMBER, 1);
+    if (!pipboyIsWorn()) {
+        pipboyShowUnavailable(PipboyUnavailable::NotWorn);
         return 0;
+    }
+
+    if (muiIsEnabled()) {
+        return pipboyOpenMobile(intent);
     }
 
     intent = pipboyWindowInit(intent);
@@ -539,6 +579,7 @@ int pipboyOpen(int intent)
         sharedFpsLimiter.mark();
 
         int keyCode = inputGetInput();
+        devAutotestTick();
 
         if (intent == PIPBOY_OPEN_INTENT_REST) {
             keyCode = 504;
@@ -632,14 +673,14 @@ void pipboyMessageListFree()
 }
 
 // 0x497228
-static int pipboyWindowInit(int intent)
+// State the game's window and the mobile screen work over: rest options,
+// texts, holodisks, quests.
+static int pipboyStateInit()
 {
     gPipboyWindowIsoWasEnabled = isoDisable();
 
     colorCycleDisable();
     gameMouseObjectsHide();
-    indicatorBarHide();
-    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
 
     gPipboyRestOptionsCount = PIPBOY_REST_DURATION_COUNT_WITHOUT_PARTY;
 
@@ -647,16 +688,8 @@ static int pipboyWindowInit(int intent)
         gPipboyRestOptionsCount = PIPBOY_REST_DURATION_COUNT;
     }
 
-    gPipboyWindowOldFont = fontGetCurrent();
-    fontSetCurrent(101);
-
     _proc_bail_flag = 0;
     _rest_time = 0;
-    gPipboyCurrentLine = 0;
-    gPipboyWindowButtonCount = 0;
-    gPipboyLinesCount = PIPBOY_WINDOW_CONTENT_VIEW_HEIGHT / fontGetLineHeight() - 1;
-    gPipboyWindowButtonStart = 0;
-    _hot_back_line = 0;
 
     if (holodiskInit() == -1) {
         return -1;
@@ -665,6 +698,56 @@ static int pipboyWindowInit(int intent)
     if (pipboyMessageListInit() == -1) {
         return -1;
     }
+
+    if (questInit() == -1) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static void pipboyStateFree()
+{
+    if (settings.debug.show_script_messages) {
+        debugPrint("\nScript <Map Update>");
+    }
+
+    scriptsExecMapUpdateProc();
+
+    pipboyMessageListFree();
+
+    // NOTE: Uninline.
+    holodiskFree();
+
+    if (gPipboyWindowIsoWasEnabled) {
+        isoEnable();
+    }
+
+    colorCycleEnable();
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+    interfaceBarRefresh();
+
+    // NOTE: Uninline.
+    questFree();
+}
+
+static int pipboyWindowInit(int intent)
+{
+    if (pipboyStateInit() == -1) {
+        return -1;
+    }
+
+    indicatorBarHide();
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+
+    gPipboyWindowOldFont = fontGetCurrent();
+    fontSetCurrent(101);
+
+    gPipboyCurrentLine = 0;
+    gPipboyWindowButtonCount = 0;
+    gPipboyLinesCount = PIPBOY_WINDOW_CONTENT_VIEW_HEIGHT / fontGetLineHeight() - 1;
+    gPipboyWindowButtonStart = 0;
+    _hot_back_line = 0;
 
     int index;
     for (index = 0; index < PIPBOY_FRM_COUNT; index++) {
@@ -830,10 +913,6 @@ static int pipboyWindowInit(int intent)
         windowRefresh(gPipboyWindow);
     }
 
-    if (questInit() == -1) {
-        return -1;
-    }
-
     soundPlayFile("pipon");
     windowRefresh(gPipboyWindow);
 
@@ -843,18 +922,9 @@ static int pipboyWindowInit(int intent)
 // 0x497828
 static void pipboyWindowFree()
 {
-    if (settings.debug.show_script_messages) {
-        debugPrint("\nScript <Map Update>");
-    }
-
-    scriptsExecMapUpdateProc();
-
     windowDestroy(gPipboyWindow);
-
-    pipboyMessageListFree();
-
-    // NOTE: Uninline.
-    holodiskFree();
+    gPipboyWindow = -1;
+    gPipboyWindowBuffer = nullptr;
 
     for (int index = 0; index < PIPBOY_FRM_COUNT; index++) {
         _pipboyFrmImages[index].unlock();
@@ -864,17 +934,9 @@ static void pipboyWindowFree()
 
     fontSetCurrent(gPipboyWindowOldFont);
 
-    if (gPipboyWindowIsoWasEnabled) {
-        isoEnable();
-    }
-
-    colorCycleEnable();
     indicatorBarShow();
-    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
-    interfaceBarRefresh();
 
-    // NOTE: Uninline.
-    questFree();
+    pipboyStateFree();
 }
 
 // NOTE: Collapsed.
@@ -915,6 +977,11 @@ void pipboyReset()
 // 0x49791C
 static void pipboyDrawNumber(int value, int digits, int x, int y)
 {
+    // Mobile UI: no window (the screen shows the time itself).
+    if (gPipboyWindowBuffer == nullptr) {
+        return;
+    }
+
     int offset = PIPBOY_WINDOW_WIDTH * y + x + 9 * (digits - 1);
 
     for (int index = 0; index < digits; index++) {
@@ -927,6 +994,10 @@ static void pipboyDrawNumber(int value, int digits, int x, int y)
 // 0x4979B4
 static void pipboyDrawDate()
 {
+    if (gPipboyWindowBuffer == nullptr) {
+        return;
+    }
+
     int day;
     int month;
     int year;
@@ -2077,10 +2148,21 @@ static void pipboyHandleAlarmClock(int eventCode)
 
         pipboyWindowRenderRestOptions(eventCode - 3);
 
-        int duration = eventCode - 4;
-        int minutes = 0;
-        int hours = 0;
+        pipboyRestWithOption(eventCode - 4);
 
+        soundPlayFile("ib2lu1x1");
+
+        pipboyWindowRenderRestOptions(0);
+    }
+}
+
+// Rests for rest option [duration] (`PipboyRestDuration`).
+static void pipboyRestWithOption(int duration)
+{
+    int minutes = 0;
+    int hours = 0;
+
+    {
         switch (duration) {
         case PIPBOY_REST_DURATION_TEN_MINUTES:
             pipboyRest(0, 10, 0);
@@ -2113,10 +2195,6 @@ static void pipboyHandleAlarmClock(int eventCode)
             pipboyRest(0, 0, duration);
             break;
         }
-
-        soundPlayFile("ib2lu1x1");
-
-        pipboyWindowRenderRestOptions(0);
     }
 }
 
@@ -2166,6 +2244,10 @@ static void pipboyWindowRenderRestOptions(int a1)
 // 0x4997B8
 static void pipboyDrawHitPoints()
 {
+    if (gPipboyWindowBuffer == nullptr) {
+        return;
+    }
+
     int max_hp;
     int cur_hp;
     char* text;
@@ -2260,8 +2342,17 @@ static bool pipboyRestSetGameTime(unsigned int newGameTime, RestEventType eventT
 }
 
 // 0x499A24
+// CE: The mobile UI's stop button (`pipboyStopRest`).
+static bool gPipboyRestStopRequested = false;
+
+void pipboyStopRest()
+{
+    gPipboyRestStopRequested = true;
+}
+
 static bool pipboyRest(int hours, int minutes, int duration)
 {
+    gPipboyRestStopRequested = false;
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_WATCH);
 
     bool rc = false;
@@ -2310,7 +2401,8 @@ static bool pipboyRest(int hours, int minutes, int duration)
 
                 if (!rc) {
                     int keyCode = inputGetInput();
-                    if (keyCode == KEY_ESCAPE) {
+                    if (keyCode == KEY_ESCAPE || gPipboyRestStopRequested) {
+                        gPipboyRestStopRequested = false;
                         rc = scriptHooks_RestTimer(lastRestTimerGameTime, REST_EVENT_TYPE_CANCEL, hours, minutes);
                     } else if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
                         rc = true;
@@ -2356,7 +2448,8 @@ static bool pipboyRest(int hours, int minutes, int duration)
                 unsigned int projectedGameTime = (unsigned int)((double)hour / hourRestIterations * (hours * GAME_TIME_TICKS_PER_HOUR) + gameTime);
                 if (!rc) {
                     int keyCode = inputGetInput();
-                    if (keyCode == KEY_ESCAPE) {
+                    if (keyCode == KEY_ESCAPE || gPipboyRestStopRequested) {
+                        gPipboyRestStopRequested = false;
                         rc = scriptHooks_RestTimer(lastRestTimerGameTime, REST_EVENT_TYPE_CANCEL, hours, minutes);
                     } else if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
                         rc = true;
@@ -2953,6 +3046,257 @@ static void holodiskFree()
     }
 
     gHolodisksCount = 0;
+}
+
+// CE: Mobile UI Pip-Boy screen over the Pip-Boy's state (see pipboy.h).
+
+static int pipboyOpenMobile(int intent)
+{
+    if (pipboyStateInit() == -1) {
+        debugPrint("\n** Error loading pipboy data! **\n");
+        pipboyStateFree();
+        return -1;
+    }
+
+    ScopedGameMode gm(GameMode::kPipboy);
+
+    soundPlayFile("pipon");
+
+    muiPipboyScreenRun(intent == PIPBOY_OPEN_INTENT_REST);
+
+    pipboyStateFree();
+
+    return 0;
+}
+
+const char* pipboyGetText(int id)
+{
+    return getmsg(&gPipboyMessageList, &gPipboyMessageListItem, id);
+}
+
+const char* pipboyGetHoliday()
+{
+    int month;
+    int day;
+    int year;
+    gameTimeGetDate(&month, &day, &year);
+
+    for (int holiday = 0; holiday < HOLIDAY_COUNT; holiday++) {
+        const HolidayDescription* description = &(gHolidayDescriptions[holiday]);
+        if (description->month == month && description->day == day) {
+            return getmsg(&gPipboyMessageList, &gPipboyMessageListItem, description->textId);
+        }
+    }
+
+    return nullptr;
+}
+
+std::vector<PipboyQuestLocation> pipboyGetQuests()
+{
+    std::vector<PipboyQuestLocation> locations;
+    std::vector<int> locationIds;
+    MessageListItem messageListItem;
+
+    for (int index = 0; index < gQuestsCount; index++) {
+        const QuestDescription* quest = &(gQuestDescriptions[index]);
+        int value = gGameGlobalVars[quest->gvar];
+        if (value < quest->displayThreshold) {
+            continue;
+        }
+
+        // Locations in the order of the quests list.
+        auto it = std::find(locationIds.begin(), locationIds.end(), quest->location);
+        size_t locationIndex = it - locationIds.begin();
+        if (it == locationIds.end()) {
+            PipboyQuestLocation location;
+            location.name = getmsg(&gMapMessageList, &messageListItem, quest->location);
+            locations.push_back(location);
+            locationIds.push_back(quest->location);
+        }
+
+        PipboyQuest entry;
+        entry.text = getmsg(&gQuestsMessageList, &messageListItem, quest->description);
+        entry.completed = value >= quest->completedThreshold;
+        locations[locationIndex].quests.push_back(entry);
+        if (!entry.completed) {
+            locations[locationIndex].activeCount++;
+        }
+    }
+
+    return locations;
+}
+
+std::vector<PipboyHolodisk> pipboyGetHolodisks()
+{
+    std::vector<PipboyHolodisk> holodisks;
+    for (int index = 0; index < gHolodisksCount; index++) {
+        const HolodiskDescription* holodisk = &(gHolodiskDescriptions[index]);
+        if (gGameGlobalVars[holodisk->gvar] != 0) {
+            holodisks.push_back({ index, getmsg(&gPipboyMessageList, &gPipboyMessageListItem, holodisk->name) });
+        }
+    }
+    return holodisks;
+}
+
+std::vector<std::string> pipboyGetHolodiskText(int index)
+{
+    std::vector<std::string> paragraphs;
+    if (index < 0 || index >= gHolodisksCount) {
+        return paragraphs;
+    }
+
+    const HolodiskDescription* holodisk = &(gHolodiskDescriptions[index]);
+    std::string paragraph;
+    for (int textId = holodisk->description; textId < holodisk->description + 500; textId++) {
+        const char* line = getmsg(&gPipboyMessageList, &gPipboyMessageListItem, textId);
+        if (strcmp(line, "**END-DISK**") == 0) {
+            break;
+        }
+
+        if (strcmp(line, "**END-PAR**") == 0) {
+            if (!paragraph.empty()) {
+                paragraphs.push_back(paragraph);
+                paragraph.clear();
+            }
+            continue;
+        }
+
+        // Lines were broken for the window's width.
+        if (!paragraph.empty()) {
+            paragraph += ' ';
+        }
+        paragraph += line;
+    }
+
+    if (!paragraph.empty()) {
+        paragraphs.push_back(paragraph);
+    }
+
+    return paragraphs;
+}
+
+std::vector<PipboyAutomapLocation> pipboyGetAutomaps()
+{
+    std::vector<PipboyAutomapLocation> locations;
+
+    AutomapHeader* automapHeader;
+    if (automapGetHeader(&automapHeader) == -1) {
+        return locations;
+    }
+
+    // Locations: maps with saved data, one per area (like the game's list).
+    std::vector<Map> locationMaps;
+    int mapCount = std::min(wmMapMaxCount(), AUTOMAP_MAP_COUNT);
+    for (Map map = MAP_FIRST; map < mapCount; map++) {
+        bool shown = false;
+        for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+            if (automapHeader->offsets[map][elevation] > 0 && _automapDisplayMap(map) == 0) {
+                shown = true;
+                break;
+            }
+        }
+
+        if (!shown) {
+            continue;
+        }
+
+        bool known = false;
+        for (Map other : locationMaps) {
+            if (mapAreSameArea(map, other)) {
+                known = true;
+                break;
+            }
+        }
+
+        if (!known) {
+            locationMaps.push_back(map);
+        }
+    }
+
+    for (Map locationMap : locationMaps) {
+        PipboyAutomapLocation location;
+        location.name = mapGetCityName(locationMap);
+
+        // Its own elevations, then other maps of the area.
+        for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+            if (automapHeader->offsets[locationMap][elevation] > 0) {
+                location.maps.push_back({ locationMap, elevation, mapGetName(locationMap, elevation) });
+            }
+        }
+
+        for (Map map = MAP_FIRST; map < mapCount; map++) {
+            if (map == locationMap || _get_map_idx_same(locationMap, map) == -1) {
+                continue;
+            }
+
+            for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+                if (automapHeader->offsets[map][elevation] > 0) {
+                    location.maps.push_back({ map, elevation, mapGetName(map, elevation) });
+                }
+            }
+        }
+
+        locations.push_back(location);
+    }
+
+    std::sort(locations.begin(), locations.end(), [](const PipboyAutomapLocation& a, const PipboyAutomapLocation& b) {
+        return compat_stricmp(a.name, b.name) < 0;
+    });
+
+    return locations;
+}
+
+std::vector<PipboyVideo> pipboyGetVideos()
+{
+    std::vector<PipboyVideo> videos;
+
+    // 502 - Elder Speech ... 516 - Credits.
+    for (int movie = 2; movie < 16; movie++) {
+        if (gameMovieIsSeen(movie)) {
+            videos.push_back({ movie, getmsg(&gPipboyMessageList, &gPipboyMessageListItem, 500 + movie) });
+        }
+    }
+
+    return videos;
+}
+
+bool pipboyCanRest()
+{
+    return critterCanDudeRest();
+}
+
+int pipboyGetRestOptionCount()
+{
+    return gPipboyRestOptionsCount;
+}
+
+const char* pipboyGetRestOptionText(int option)
+{
+    return getmsg(&gPipboyMessageList, &gPipboyMessageListItem, pipboyRestDurationBaseMessageId + option);
+}
+
+int pipboyGetRestOptionWakeHour(int option)
+{
+    if (option < PIPBOY_REST_DURATION_UNTIL_MORNING || option > PIPBOY_REST_DURATION_UNTIL_MIDNIGHT) {
+        return -1;
+    }
+
+    return pipboyRestOptionWakeHour(option);
+}
+
+bool pipboyRestFor(int option)
+{
+    if (option < 0 || option >= gPipboyRestOptionsCount) {
+        return false;
+    }
+
+    pipboyRestWithOption(option);
+    return _proc_bail_flag != 0;
+}
+
+bool pipboyShouldClose()
+{
+    return _proc_bail_flag != 0;
 }
 
 } // namespace fallout

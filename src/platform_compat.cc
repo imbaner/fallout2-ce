@@ -30,6 +30,7 @@
 
 #include <SDL.h>
 
+
 namespace fallout {
 
 static bool compatIsPathSeparator(char ch)
@@ -58,7 +59,7 @@ static std::string compatLowercase(std::string value)
     return value;
 }
 
-static void compatDirectoryEntryCacheClear()
+void compatDirectoryEntryCacheClear()
 {
     compatDirectoryEntryCache.clear();
 }
@@ -93,7 +94,7 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
     return &cacheEntry;
 }
 #else
-static void compatDirectoryEntryCacheClear()
+void compatDirectoryEntryCacheClear()
 {
 }
 #endif
@@ -383,6 +384,7 @@ FILE* compat_fopen(const char* path, const char* mode)
 
     char nativePath[COMPAT_MAX_PATH];
     compat_prepare_native_path(nativePath, path);
+
     FILE* stream = fopen(nativePath, mode);
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheClear();
@@ -399,6 +401,7 @@ gzFile compat_gzopen(const char* path, const char* mode)
 
     char nativePath[COMPAT_MAX_PATH];
     compat_prepare_native_path(nativePath, path);
+
     gzFile stream = gzopen(nativePath, mode);
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheClear();

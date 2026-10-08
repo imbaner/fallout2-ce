@@ -1,0 +1,4 @@
+<resources>
+    <!-- The build installed for testing (app id .debug), not the release. -->
+    <string name="app_name">Fallout 2 CE (dev)</string>
+</resources>

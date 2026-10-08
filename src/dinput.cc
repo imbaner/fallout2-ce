@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "sfall_kb_helpers.h"
 #include "svga.h"
+#include "touch.h"
 #include "win32.h"
 
 namespace fallout {
@@ -53,6 +54,12 @@ bool mouseDeviceUsesRelativeMode()
 
 bool mouseDeviceInitMode()
 {
+#if FALLOUT_TOUCH_ONLY
+    // CE: No mouse: the pointer isn't captured, no system cursor.
+    SDL_ShowCursor(SDL_DISABLE);
+    mouseRelativeMode = false;
+    return true;
+#else
     // "Relative mode" means cursor position is owned by the application, and we move based on mouse deltas
     // "Absolute mode" means cursor position is controlled by the OS, and we read it directly.
     // Mouse sensitivity settings can only apply in relative mode.
@@ -71,6 +78,7 @@ bool mouseDeviceInitMode()
     mouseRelativeMode = false;
     mouseDeviceRefreshWindowMapping();
     return true;
+#endif
 }
 
 // 0x4E04E8

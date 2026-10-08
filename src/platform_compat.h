@@ -31,6 +31,8 @@ void compat_splitpath(const char* path, char* drive, char* dir, char* fname, cha
 void compat_makepath(char* path, const char* drive, const char* dir, const char* fname, const char* ext);
 long compat_tell(int fileHandle);
 long compat_filelength(int fd);
+// Invalidate case-insensitive lookups after native save-directory transactions.
+void compatDirectoryEntryCacheClear();
 int compat_mkdir(const char* path);
 int compat_mkdir_recursive(const char* path);
 bool compat_is_dir(const char* path);

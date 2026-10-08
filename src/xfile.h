@@ -65,6 +65,9 @@ int xfileEof(XFile* stream);
 long xfileGetSize(XFile* stream);
 bool xbaseReopenAll(char* paths);
 bool xbaseOpen(const char* path);
+// CE: The open bases (.dat files and folders), the one searched first
+// first (save_compatibility.cc).
+const XBase* xbaseGetFirst();
 
 // Returns true if path is currently mounted as a directory-based VFS xbase
 // (comparison ignores case and a trailing path separator).

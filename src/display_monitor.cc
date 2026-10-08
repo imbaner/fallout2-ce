@@ -18,6 +18,8 @@
 #include "settings.h"
 #include "svga.h"
 #include "text_font.h"
+#include "mui_notify.h"
+#include "touch_hud.h"
 #include "window_manager.h"
 
 namespace fallout {
@@ -118,77 +120,82 @@ int displayMonitorInit()
         _disp_curr = 0;
         fontSetCurrent(oldFont);
 
-        gDisplayMonitorBackgroundFrmData = (unsigned char*)internal_malloc(DISPLAY_MONITOR_WIDTH * DISPLAY_MONITOR_HEIGHT);
-        if (gDisplayMonitorBackgroundFrmData == nullptr) {
-            return -1;
-        }
-
-        if (gInterfaceBarIsCustom) {
-            _intface_full_width = gInterfaceBarWidth;
-            blitBufferToBuffer(customInterfaceBarGetBackgroundImageData() + gInterfaceBarWidth * DISPLAY_MONITOR_Y + DISPLAY_MONITOR_X,
-                DISPLAY_MONITOR_WIDTH,
-                DISPLAY_MONITOR_HEIGHT,
-                gInterfaceBarWidth,
-                gDisplayMonitorBackgroundFrmData,
-                DISPLAY_MONITOR_WIDTH);
-        } else {
-            FrmImage backgroundFrmImage;
-            if (!backgroundFrmImage.lock(InterfaceFrameId::MainInterface)) {
-                internal_free(gDisplayMonitorBackgroundFrmData);
+        // CE: The monitor's art and buttons are the interface bar window's;
+        // with the touch HUD there's none (the HUD's log shows the lines).
+        gDisplayMonitorBackgroundFrmData = nullptr;
+        if (!touchHudIsEnabled() && gInterfaceBarWindow != -1) {
+            gDisplayMonitorBackgroundFrmData = (unsigned char*)internal_malloc(DISPLAY_MONITOR_WIDTH * DISPLAY_MONITOR_HEIGHT);
+            if (gDisplayMonitorBackgroundFrmData == nullptr) {
                 return -1;
             }
 
-            unsigned char* backgroundFrmData = backgroundFrmImage.getData();
-            _intface_full_width = backgroundFrmImage.getWidth();
+            if (gInterfaceBarIsCustom) {
+                _intface_full_width = gInterfaceBarWidth;
+                blitBufferToBuffer(customInterfaceBarGetBackgroundImageData() + gInterfaceBarWidth * DISPLAY_MONITOR_Y + DISPLAY_MONITOR_X,
+                    DISPLAY_MONITOR_WIDTH,
+                    DISPLAY_MONITOR_HEIGHT,
+                    gInterfaceBarWidth,
+                    gDisplayMonitorBackgroundFrmData,
+                    DISPLAY_MONITOR_WIDTH);
+            } else {
+                FrmImage backgroundFrmImage;
+                if (!backgroundFrmImage.lock(InterfaceFrameId::MainInterface)) {
+                    internal_free(gDisplayMonitorBackgroundFrmData);
+                    return -1;
+                }
 
-            blitBufferToBuffer(backgroundFrmData + _intface_full_width * DISPLAY_MONITOR_Y + DISPLAY_MONITOR_X,
+                unsigned char* backgroundFrmData = backgroundFrmImage.getData();
+                _intface_full_width = backgroundFrmImage.getWidth();
+
+                blitBufferToBuffer(backgroundFrmData + _intface_full_width * DISPLAY_MONITOR_Y + DISPLAY_MONITOR_X,
+                    DISPLAY_MONITOR_WIDTH,
+                    DISPLAY_MONITOR_HEIGHT,
+                    _intface_full_width,
+                    gDisplayMonitorBackgroundFrmData,
+                    DISPLAY_MONITOR_WIDTH);
+            }
+
+            gDisplayMonitorScrollUpButton = buttonCreate(gInterfaceBarWindow,
+                DISPLAY_MONITOR_X,
+                DISPLAY_MONITOR_Y,
                 DISPLAY_MONITOR_WIDTH,
-                DISPLAY_MONITOR_HEIGHT,
-                _intface_full_width,
-                gDisplayMonitorBackgroundFrmData,
-                DISPLAY_MONITOR_WIDTH);
-        }
+                DISPLAY_MONITOR_HALF_HEIGHT,
+                -1,
+                -1,
+                -1,
+                -1,
+                nullptr,
+                nullptr,
+                nullptr,
+                0);
+            if (gDisplayMonitorScrollUpButton != -1) {
+                buttonSetMouseCallbacks(gDisplayMonitorScrollUpButton,
+                    displayMonitorScrollUpOnMouseEnter,
+                    displayMonitorOnMouseExit,
+                    displayMonitorScrollUpOnMouseDown,
+                    nullptr);
+            }
 
-        gDisplayMonitorScrollUpButton = buttonCreate(gInterfaceBarWindow,
-            DISPLAY_MONITOR_X,
-            DISPLAY_MONITOR_Y,
-            DISPLAY_MONITOR_WIDTH,
-            DISPLAY_MONITOR_HALF_HEIGHT,
-            -1,
-            -1,
-            -1,
-            -1,
-            nullptr,
-            nullptr,
-            nullptr,
-            0);
-        if (gDisplayMonitorScrollUpButton != -1) {
-            buttonSetMouseCallbacks(gDisplayMonitorScrollUpButton,
-                displayMonitorScrollUpOnMouseEnter,
-                displayMonitorOnMouseExit,
-                displayMonitorScrollUpOnMouseDown,
-                nullptr);
-        }
-
-        gDisplayMonitorScrollDownButton = buttonCreate(gInterfaceBarWindow,
-            DISPLAY_MONITOR_X,
-            DISPLAY_MONITOR_Y + DISPLAY_MONITOR_HALF_HEIGHT,
-            DISPLAY_MONITOR_WIDTH,
-            DISPLAY_MONITOR_HEIGHT - DISPLAY_MONITOR_HALF_HEIGHT,
-            -1,
-            -1,
-            -1,
-            -1,
-            nullptr,
-            nullptr,
-            nullptr,
-            0);
-        if (gDisplayMonitorScrollDownButton != -1) {
-            buttonSetMouseCallbacks(gDisplayMonitorScrollDownButton,
-                displayMonitorScrollDownOnMouseEnter,
-                displayMonitorOnMouseExit,
-                displayMonitorScrollDownOnMouseDown,
-                nullptr);
+            gDisplayMonitorScrollDownButton = buttonCreate(gInterfaceBarWindow,
+                DISPLAY_MONITOR_X,
+                DISPLAY_MONITOR_Y + DISPLAY_MONITOR_HALF_HEIGHT,
+                DISPLAY_MONITOR_WIDTH,
+                DISPLAY_MONITOR_HEIGHT - DISPLAY_MONITOR_HALF_HEIGHT,
+                -1,
+                -1,
+                -1,
+                -1,
+                nullptr,
+                nullptr,
+                nullptr,
+                0);
+            if (gDisplayMonitorScrollDownButton != -1) {
+                buttonSetMouseCallbacks(gDisplayMonitorScrollDownButton,
+                    displayMonitorScrollDownOnMouseEnter,
+                    displayMonitorOnMouseExit,
+                    displayMonitorScrollDownOnMouseDown,
+                    nullptr);
+            }
         }
 
         gDisplayMonitorEnabled = true;
@@ -223,7 +230,10 @@ void displayMonitorExit()
         // SFALL
         consoleFileExit();
 
-        internal_free(gDisplayMonitorBackgroundFrmData);
+        if (gDisplayMonitorBackgroundFrmData != nullptr) {
+            internal_free(gDisplayMonitorBackgroundFrmData);
+            gDisplayMonitorBackgroundFrmData = nullptr;
+        }
         gDisplayMonitorInitialized = false;
     }
 }
@@ -237,6 +247,9 @@ void displayMonitorAddMessage(const char* str)
 
     // SFALL
     consoleFileAddMessage(str);
+
+    touchHudAddMessage(str);
+    muiNotify(str, MuiNoticeKind::Log);
 
     int oldFont = fontGetCurrent();
     fontSetCurrent(DISPLAY_MONITOR_FONT);
@@ -340,6 +353,9 @@ static void display_clear()
         _disp_curr = 0;
         displayMonitorRefresh();
     }
+
+    touchHudClearMessages();
+    muiNotifyClear();
 }
 
 // 0x431A78 display_redraw
@@ -349,8 +365,13 @@ static void displayMonitorRefresh()
         return;
     }
 
+    // The touch HUD's log shows the lines (the bar has no window then).
+    if (touchHudIsEnabled()) {
+        return;
+    }
+
     unsigned char* buf = windowGetBuffer(gInterfaceBarWindow);
-    if (buf == nullptr) {
+    if (buf == nullptr || gDisplayMonitorBackgroundFrmData == nullptr) {
         return;
     }
 

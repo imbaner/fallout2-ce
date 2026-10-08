@@ -37,6 +37,12 @@ void _GNW95_process_message();
 void _GNW95_clear_time_stamps();
 void _GNW95_lost_focus();
 
+// CE: sfall `HOOK_MOUSECLICK` for [sdlButton] pressed or released (a real
+// mouse, or touch-native input's taps and long presses on the map).
+void inputRunMouseClickHook(int sdlButton, bool pressed);
+// CE: How many times `HOOK_MOUSECLICK` ran (automated tests).
+int inputGetMouseClickHookCalls();
+
 void beginTextInput();
 void endTextInput();
 

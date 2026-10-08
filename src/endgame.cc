@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <vector>
+
 #include "art.h"
 #include "color.h"
 #include "content_config.h"
@@ -16,6 +18,7 @@
 #include "db.h"
 #include "dbox.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "draw.h"
 #include "game.h"
 #include "game_mouse.h"
@@ -26,6 +29,7 @@
 #include "map.h"
 #include "memory.h"
 #include "mouse.h"
+#include "mui.h"
 #include "object.h"
 #include "palette.h"
 #include "pipboy.h"
@@ -211,10 +215,30 @@ static unsigned char* gEndgameEndingSlideshowWindowBuffer;
 // 0x570BF4 endgame_window
 static int gEndgameEndingSlideshowWindow;
 
+// CE: Mobile UI: the slides are composed here (screen sized, as the window)
+// and shown by its scene screen, the subtitles in its font.
+static std::vector<unsigned char> gEndgameEndingMobileFrame;
+
 static int gEndgameEndingOverlay;
 static Rect gEndgameEndingFrameBounds;
 
 // 0x43F788 endgame_slideshow
+// The slide composed in the window's buffer is shown.
+static void endgameEndingPresentFrame()
+{
+    if (muiIsEnabled()) {
+        muiSceneSetFrame(gEndgameEndingSlideshowWindowBuffer, screenGetWidth(), screenGetHeight());
+    } else {
+        endgameEndingPresentFrame();
+    }
+}
+
+// A key, or a tap on the mobile scene screen, skips the slide.
+static bool endgameEndingSkipRequested(int keyCode)
+{
+    return keyCode != -1 || (muiIsEnabled() && muiSceneTakeTap());
+}
+
 void endgamePlaySlideshow()
 {
     if (endgameEndingSlideshowWindowInit() == -1) {
@@ -381,7 +405,7 @@ static void endgameEndingRenderPanningScene(int direction, const char* narratorF
         if (panDistance <= 0) {
             paletteSetEntries(palette);
             endgameEndingRenderFrame(backgroundData, sourceViewportWidth, height, width);
-            windowRefresh(gEndgameEndingSlideshowWindow);
+            endgameEndingPresentFrame();
         }
 
         unsigned int frameDelay = 16;
@@ -428,7 +452,7 @@ static void endgameEndingRenderPanningScene(int direction, const char* narratorF
                     endgameEndingRefreshSubtitles();
                 }
 
-                windowRefresh(gEndgameEndingSlideshowWindow);
+                endgameEndingPresentFrame();
 
                 since = getTicks();
 
@@ -472,7 +496,9 @@ static void endgameEndingRenderPanningScene(int direction, const char* narratorF
 
             soundContinueAll();
 
-            if (inputGetInput() != -1) {
+            devAutotestTick();
+
+            if (endgameEndingSkipRequested(inputGetInput())) {
                 // NOTE: Uninline.
                 endgameEndingVoiceOverFree();
                 break;
@@ -487,7 +513,7 @@ static void endgameEndingRenderPanningScene(int direction, const char* narratorF
 
         paletteFadeTo(gPaletteBlack);
         bufferFill(gEndgameEndingSlideshowWindowBuffer, screenGetWidth(), screenGetHeight(), screenGetWidth(), COLOR_BLACK);
-        windowRefresh(gEndgameEndingSlideshowWindow);
+        endgameEndingPresentFrame();
     }
 
     while (mouseGetEvent() != 0) {
@@ -518,7 +544,7 @@ static void endgameEndingRenderStaticScene(const InterfaceFrmId& frmId, const ch
         endgameEndingUpdateOverlay();
 
         endgameEndingRenderFrame(backgroundData, width, height, width);
-        windowRefresh(gEndgameEndingSlideshowWindow);
+        endgameEndingPresentFrame();
 
         endgameEndingVoiceOverInit(narratorFileName);
 
@@ -543,8 +569,12 @@ static void endgameEndingRenderStaticScene(const InterfaceFrmId& frmId, const ch
         while (true) {
             sharedFpsLimiter.mark();
 
+            devAutotestTick();
+
             keyCode = inputGetInput();
-            if (keyCode != -1) {
+            if (endgameEndingSkipRequested(keyCode)) {
+                // A tap: as a key (no pause after the slide).
+                keyCode = keyCode != -1 ? keyCode : 0;
                 break;
             }
 
@@ -562,7 +592,7 @@ static void endgameEndingRenderStaticScene(const InterfaceFrmId& frmId, const ch
 
             endgameEndingRenderFrame(backgroundData, width, height, width);
             endgameEndingRefreshSubtitles();
-            windowRefresh(gEndgameEndingSlideshowWindow);
+            endgameEndingPresentFrame();
             soundContinueAll();
 
             renderPresent();
@@ -621,28 +651,36 @@ static int endgameEndingSlideshowWindowInit()
 
     paletteFadeTo(gPaletteBlack);
 
-    // CE: Every slide has a separate color palette which is incompatible with
-    // main color palette. Setup overlay to hide everything.
-    gEndgameEndingOverlay = windowCreate(0, 0, screenGetWidth(), screenGetHeight(), COLOR_BLACK, WINDOW_MOVE_ON_TOP);
-    if (gEndgameEndingOverlay == -1) {
-        return -1;
-    }
+    if (muiIsEnabled()) {
+        gEndgameEndingOverlay = -1;
+        gEndgameEndingSlideshowWindow = -1;
+        gEndgameEndingMobileFrame.assign(static_cast<size_t>(screenGetWidth()) * screenGetHeight(), COLOR_BLACK);
+        gEndgameEndingSlideshowWindowBuffer = gEndgameEndingMobileFrame.data();
+        muiSceneShow();
+    } else {
+        // CE: Every slide has a separate color palette which is incompatible with
+        // main color palette. Setup overlay to hide everything.
+        gEndgameEndingOverlay = windowCreate(0, 0, screenGetWidth(), screenGetHeight(), COLOR_BLACK, WINDOW_MOVE_ON_TOP);
+        if (gEndgameEndingOverlay == -1) {
+            return -1;
+        }
 
-    int windowEndgameEndingX = 0;
-    int windowEndgameEndingY = 0;
-    gEndgameEndingSlideshowWindow = windowCreate(windowEndgameEndingX,
-        windowEndgameEndingY,
-        screenGetWidth(),
-        screenGetHeight(),
-        COLOR_BLACK,
-        WINDOW_MOVE_ON_TOP);
-    if (gEndgameEndingSlideshowWindow == -1) {
-        return -1;
-    }
+        int windowEndgameEndingX = 0;
+        int windowEndgameEndingY = 0;
+        gEndgameEndingSlideshowWindow = windowCreate(windowEndgameEndingX,
+            windowEndgameEndingY,
+            screenGetWidth(),
+            screenGetHeight(),
+            COLOR_BLACK,
+            WINDOW_MOVE_ON_TOP);
+        if (gEndgameEndingSlideshowWindow == -1) {
+            return -1;
+        }
 
-    gEndgameEndingSlideshowWindowBuffer = windowGetBuffer(gEndgameEndingSlideshowWindow);
-    if (gEndgameEndingSlideshowWindowBuffer == nullptr) {
-        return -1;
+        gEndgameEndingSlideshowWindowBuffer = windowGetBuffer(gEndgameEndingSlideshowWindow);
+        if (gEndgameEndingSlideshowWindowBuffer == nullptr) {
+            return -1;
+        }
     }
 
     colorCycleDisable();
@@ -709,8 +747,14 @@ static void endgameEndingSlideshowWindowFree()
     fontSetCurrent(gEndgameEndingSlideshowOldFont);
 
     speechSetEndCallback(nullptr);
-    windowDestroy(gEndgameEndingSlideshowWindow);
-    windowDestroy(gEndgameEndingOverlay);
+    if (muiIsEnabled()) {
+        muiSceneHide();
+        gEndgameEndingMobileFrame.clear();
+        gEndgameEndingSlideshowWindowBuffer = nullptr;
+    } else {
+        windowDestroy(gEndgameEndingSlideshowWindow);
+        windowDestroy(gEndgameEndingOverlay);
+    }
 
     if (!_endgame_mouse_state) {
         mouseHideCursor();
@@ -879,6 +923,9 @@ static void endgameEndingRefreshSubtitles()
         if (gEndgameEndingVoiceOverSubtitlesLoaded) {
             gEndgameEndingSubtitlesEnded = true;
         }
+        if (muiIsEnabled()) {
+            muiSceneSetSubtitle(nullptr);
+        }
         return;
     }
 
@@ -888,6 +935,13 @@ static void endgameEndingRefreshSubtitles()
     }
 
     char* text = gEndgameEndingSubtitles[gEndgameEndingSubtitlesCurrentLine];
+
+    // Mobile UI: in its font over the slide.
+    if (muiIsEnabled()) {
+        muiSceneSetSubtitle(text);
+        return;
+    }
+
     if (text == nullptr) {
         return;
     }
@@ -942,6 +996,10 @@ static void endgameEndingSubtitlesFree()
     gEndgameEndingSubtitlesCurrentLine = 0;
     gEndgameEndingSubtitlesCharactersCount = 0;
     gEndgameEndingSubtitlesLength = 0;
+
+    if (muiIsEnabled()) {
+        muiSceneSetSubtitle(nullptr);
+    }
 }
 
 // 0x440728 endgame_movie_callback
@@ -1316,6 +1374,10 @@ char* endgameDeathEndingGetFileName()
 
 void endgameEndingUpdateOverlay()
 {
+    if (gEndgameEndingOverlay == -1) {
+        return;
+    }
+
     bufferFill(windowGetBuffer(gEndgameEndingOverlay),
         windowGetWidth(gEndgameEndingOverlay),
         windowGetHeight(gEndgameEndingOverlay),

@@ -1,6 +1,9 @@
 #ifndef AUTOMAP_H
 #define AUTOMAP_H
 
+#include <utility>
+#include <vector>
+
 #include "db.h"
 #include "map_defs.h"
 #include "worldmap.h"
@@ -73,6 +76,35 @@ int automapSave(File* stream);
 int _automapDisplayMap(int map);
 void automapShow(bool isInGame, bool isUsingScanner);
 int automapRenderInPipboyWindow(int win, Map map, int elevation);
+
+// Explored walls (1) and scenery (2) of [map]'s [elevation] as saved for the
+// Pip-Boy: HEX_GRID_WIDTH x HEX_GRID_HEIGHT tiles, rows top down, the way the
+// Pip-Boy draws them. False when there's no data.
+bool automapGetPipboyTiles(Map map, int elevation, std::vector<unsigned char>& tiles);
+
+// CE: Mobile UI map screen (mui_automap.cc) over the automap's state.
+
+// What the game's automap window shows of [elevation] now: walls and (with
+// high details) scenery of objects seen as tiles like
+// `automapGetPipboyTiles`, dude, exit grids, and critters with the motion
+// sensor.
+struct AutomapView {
+    std::vector<unsigned char> tiles;
+    int dudeX;
+    int dudeY;
+    std::vector<std::pair<int, int>> exits;
+    std::vector<std::pair<int, int>> critters;
+};
+
+void automapGetView(int elevation, AutomapView* view);
+
+bool automapGetHighDetails();
+void automapSetHighDetails(bool highDetails);
+
+// The motion sensor in dude's hands shows critters (uses a charge); returns
+// the game's message when it can't (not installed, no charges).
+const char* automapActivateScanner();
+bool automapIsScannerActive();
 int automapSaveCurrent();
 int automapGetHeader(AutomapHeader** automapHeaderPtr);
 int automapGetWindow();

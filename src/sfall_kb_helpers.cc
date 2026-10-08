@@ -6,8 +6,10 @@
 #include "sfall_script_hooks.h"
 #include "svga.h"
 
+#include <algorithm>
 #include <deque>
 #include <unordered_map>
+#include <vector>
 
 namespace fallout {
 
@@ -276,6 +278,9 @@ static constexpr SDL_Scancode kDiks[DIK_MAP_COUNT] = {
 static std::unordered_map<SDL_Scancode, int> kScanCodeToDik;
 static std::deque<std::pair<SDL_Scancode, bool>> syntheticKeyEvents;
 
+// CE: Key events of `sfall_kb_press_hotkey` not processed yet.
+static std::deque<std::pair<SDL_Scancode, bool>> gHotkeyEvents;
+
 // Translates Sfall key code (DIK or VK constant) to SDL scancode.
 static SDL_Scancode get_scancode_from_key(int key)
 {
@@ -299,8 +304,16 @@ static int get_key_from_scancode(SDL_Scancode scanCode)
     return dikIt->second;
 }
 
+// CE: Keys held by `sfall_kb_press_hotkey` until its key is released.
+static std::vector<int> gHotkeyHeldKeys;
+static SDL_Scancode gHotkeyScancode = SDL_SCANCODE_UNKNOWN;
+
 bool sfall_kb_is_key_pressed(int key)
 {
+    if (std::find(gHotkeyHeldKeys.begin(), gHotkeyHeldKeys.end(), key & 0xFF) != gHotkeyHeldKeys.end()) {
+        return true;
+    }
+
     // todo: sfall uses this condition to check for VK key instead of DIK:
     /* if ((key & 0x80000000) > 0) { // special flag to check by VK code directly
         return GetAsyncKeyState(key & 0xFFFF) & 0x8000;
@@ -344,6 +357,43 @@ void sfall_kb_press_key(int key)
     }
 }
 
+void sfall_kb_press_hotkey(const int* keys, int count)
+{
+    if (count <= 0) {
+        return;
+    }
+
+    SDL_Scancode scancode = get_scancode_from_key(keys[0]);
+    if (scancode == SDL_SCANCODE_UNKNOWN) {
+        return;
+    }
+
+    // Mods check the hotkey with `key_pressed` too.
+    gHotkeyHeldKeys.assign(keys, keys + count);
+    gHotkeyScancode = scancode;
+
+    SDL_Event event;
+    SDL_zero(event);
+
+    event.type = SDL_KEYDOWN;
+    event.key.timestamp = SDL_GetTicks();
+    event.key.windowID = gSdlWindow != nullptr ? SDL_GetWindowID(gSdlWindow) : 0;
+    event.key.state = SDL_PRESSED;
+    event.key.repeat = 0;
+    event.key.keysym.scancode = scancode;
+    event.key.keysym.sym = SDL_GetKeyFromScancode(scancode);
+    if (SDL_PushEvent(&event) == 1) {
+        gHotkeyEvents.emplace_back(scancode, true);
+    }
+
+    event.type = SDL_KEYUP;
+    event.key.timestamp = SDL_GetTicks();
+    event.key.state = SDL_RELEASED;
+    if (SDL_PushEvent(&event) == 1) {
+        gHotkeyEvents.emplace_back(scancode, false);
+    }
+}
+
 bool sfall_kb_consume_synthetic_key_event(int sdlScanCode, bool pressed)
 {
     if (syntheticKeyEvents.empty()) {
@@ -359,9 +409,25 @@ bool sfall_kb_consume_synthetic_key_event(int sdlScanCode, bool pressed)
     return true;
 }
 
+bool sfall_kb_consume_hotkey_event(int sdlScanCode, bool pressed)
+{
+    if (gHotkeyEvents.empty()) {
+        return false;
+    }
+
+    const auto& [expectedScanCode, expectedPressed] = gHotkeyEvents.front();
+    if (expectedScanCode != static_cast<SDL_Scancode>(sdlScanCode) || expectedPressed != pressed) {
+        return false;
+    }
+
+    gHotkeyEvents.pop_front();
+    return true;
+}
+
 void sfall_kb_clear_synthetic_key_events()
 {
     syntheticKeyEvents.clear();
+    gHotkeyEvents.clear();
 }
 
 int sfall_kb_handle_key_pressed(int sdlScanCode, bool pressed)
@@ -373,6 +439,12 @@ int sfall_kb_handle_key_pressed(int sdlScanCode, bool pressed)
                                               0 // TODO: sfall uses VK_ codes here; not sure any mod actually used it. If so, maybe it is better to use Key values from kb.h?
                                           });
     hook.call();
+
+    // The hotkey was pressed and released, its keys are up again.
+    if (!pressed && sdlScanCode == gHotkeyScancode) {
+        gHotkeyHeldKeys.clear();
+        gHotkeyScancode = SDL_SCANCODE_UNKNOWN;
+    }
 
     if (hook.numReturnValues() <= 0) {
         return -1;

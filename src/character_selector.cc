@@ -13,6 +13,7 @@
 #include "critter.h"
 #include "db.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "draw.h"
 #include "game.h"
 #include "game_sound.h"
@@ -20,6 +21,7 @@
 #include "kb.h"
 #include "memory.h"
 #include "message.h"
+#include "mui.h"
 #include "mouse.h"
 #include "object.h"
 #include "palette.h"
@@ -164,6 +166,10 @@ static std::vector<PremadeCharacterDescription> gCustomPremadeCharacterDescripti
 // 0x4A71D0 select_character
 int characterSelectorOpen()
 {
+    if (muiIsEnabled()) {
+        return muiCharacterSelectorRun();
+    }
+
 #if __APPLE__ && TARGET_OS_IOS
     touch_set_touchscreen_mode(true);
 #endif
@@ -259,6 +265,7 @@ int characterSelectorOpen()
             break;
         }
 
+        devAutotestTick();
         renderPresent();
         sharedFpsLimiter.throttle();
     }
@@ -565,12 +572,7 @@ static void characterSelectorWindowFree()
 // 0x4A7D58 select_update_display
 static bool characterSelectorWindowRefresh()
 {
-    char path[COMPAT_MAX_PATH];
-    snprintf(path, sizeof(path), "%s.gcd", gCustomPremadeCharacterDescriptions[gCurrentPremadeCharacter].fileName);
-    premadeCharactersLocalizePath(path);
-
-    if (_proto_dude_init(path) == -1) {
-        debugPrint("\n ** Error in dude init! **\n");
+    if (!premadeCharacterLoad(gCurrentPremadeCharacter)) {
         return false;
     }
 
@@ -983,6 +985,76 @@ void premadeCharactersInit()
 void premadeCharactersExit()
 {
     gCustomPremadeCharacterDescriptions.clear();
+}
+
+int premadeCharacterCount()
+{
+    return gPremadeCharacterCount;
+}
+
+int premadeCharacterSelected()
+{
+    return gCurrentPremadeCharacter;
+}
+
+void premadeCharacterSelect(int index)
+{
+    if (index >= 0 && index < gPremadeCharacterCount) {
+        gCurrentPremadeCharacter = static_cast<PremadeCharacter>(index);
+    }
+}
+
+bool premadeCharacterLoad(int index)
+{
+    if (index < 0 || index >= gPremadeCharacterCount) {
+        return false;
+    }
+
+    char path[COMPAT_MAX_PATH];
+    snprintf(path, sizeof(path), "%s.gcd", gCustomPremadeCharacterDescriptions[index].fileName);
+    premadeCharactersLocalizePath(path);
+
+    if (_proto_dude_init(path) == -1) {
+        debugPrint("\n ** Error in dude init! **\n");
+        return false;
+    }
+
+    return true;
+}
+
+InterfaceFrameId premadeCharacterFace(int index)
+{
+    if (index < 0 || index >= gPremadeCharacterCount) {
+        return InterfaceFrameId::Invalid;
+    }
+    return gCustomPremadeCharacterDescriptions[index].face;
+}
+
+std::vector<std::string> premadeCharacterBio(int index)
+{
+    std::vector<std::string> lines;
+    if (index < 0 || index >= gPremadeCharacterCount) {
+        return lines;
+    }
+
+    char path[COMPAT_MAX_PATH];
+    snprintf(path, sizeof(path), "%s.bio", gCustomPremadeCharacterDescriptions[index].fileName);
+    premadeCharactersLocalizePath(path);
+
+    File* stream = fileOpen(path, "rt");
+    if (stream != nullptr) {
+        char string[256];
+        while (fileReadString(string, sizeof(string), stream)) {
+            size_t length = strlen(string);
+            while (length > 0 && (string[length - 1] == '\n' || string[length - 1] == '\r')) {
+                string[--length] = '\0';
+            }
+            lines.push_back(string);
+        }
+        fileClose(stream);
+    }
+
+    return lines;
 }
 
 static void premadeCharactersLocalizePath(char* path)

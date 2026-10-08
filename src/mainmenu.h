@@ -14,6 +14,8 @@ typedef enum MainMenuOption {
     MAIN_MENU_EXIT,
     MAIN_MENU_SELFRUN,
     MAIN_MENU_OPTIONS,
+    // CE: mobile main menu, loads the save made last.
+    MAIN_MENU_CONTINUE,
 } MainMenuOption;
 
 int mainMenuWindowInit();

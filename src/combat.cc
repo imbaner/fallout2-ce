@@ -18,6 +18,7 @@
 #include "draw.h"
 #include "elevator.h"
 #include "game.h"
+#include "game_commands.h"
 #include "game_mouse.h"
 #include "game_sound.h"
 #include "input.h"
@@ -28,6 +29,7 @@
 #include "map.h"
 #include "memory.h"
 #include "message.h"
+#include "mui.h"
 #include "object.h"
 #include "party_member.h"
 #include "perk.h"
@@ -49,6 +51,8 @@
 #include "tile.h"
 #include "trait.h"
 #include "window_manager.h"
+#include "dev_autotest.h"
+#include "touch_controls.h"
 
 namespace fallout {
 
@@ -2798,6 +2802,9 @@ void _combat_update_critter_outline_for_los(Object* critter, bool enableOutline)
 // 0x421EFC
 static void _combat_over()
 {
+    // CE: Forget combat target selection of touch controls.
+    touchControlsReset();
+
     if (_game_user_wants_to_quit == GAME_QUIT_REQUEST_NONE
         || _game_user_wants_to_quit == GAME_QUIT_REQUEST_END_COMBAT) {
         for (int index = 0; index < _list_com; index++) {
@@ -3169,6 +3176,10 @@ void _combat_turn_run()
     while (_combat_turn_running > 0) {
         sharedFpsLimiter.mark();
 
+        // CE: Take system events while others act, so the map can be moved
+        // and zoomed (the game keeps scrolling allowed here); the game's own
+        // input stays disabled.
+        _GNW95_process_message();
         _process_bk();
 
         renderPresent();
@@ -3214,16 +3225,26 @@ static int _combat_input()
             break;
         }
 
-        if (keyCode == KEY_SPACE) {
+        // CE: Commands of the touch HUD and the mobile screens (end turn and
+        // end combat are the Space and Enter keys).
+        GameCommand command;
+        bool hasCommand = gameCommandTake(&command);
+
+        if (keyCode == KEY_SPACE || (hasCommand && command.type == GameCommandType::EndTurn)) {
             break;
         }
 
-        if (keyCode == KEY_RETURN) {
+        if (keyCode == KEY_RETURN || (hasCommand && command.type == GameCommandType::EndCombat)) {
             combatAttemptEnd();
         } else {
             _scripts_check_state_in_combat();
             gameHandleKey(keyCode, true);
+            if (hasCommand) {
+                gameCommandExecute(command, true);
+            }
         }
+
+        devAutotestTick();
 
         renderPresent();
         sharedFpsLimiter.throttle();
@@ -3440,6 +3461,8 @@ static void waitForGorisAnimation(Object* critter)
 {
     while (animationIsBusy(critter)) {
         sharedFpsLimiter.mark();
+        // CE: See `_combat_turn_run`.
+        _GNW95_process_message();
         _process_bk();
         renderPresent();
         sharedFpsLimiter.throttle();
@@ -5646,7 +5669,14 @@ static void _draw_loc_(int eventCode, Color color)
     }
 }
 
-// 0x426218
+void calledShotGetTargets(Object* critter, HitMode hitMode, CalledShotTarget* targets)
+{
+    for (int index = 0; index < 4; index++) {
+        targets[index] = { _hit_loc_left[index], hitLocationGetName(critter, _hit_loc_left[index]), _determine_to_hit(gDude, critter, _hit_loc_left[index], hitMode) };
+        targets[index + 4] = { _hit_loc_right[index], hitLocationGetName(critter, _hit_loc_right[index]), _determine_to_hit(gDude, critter, _hit_loc_right[index], hitMode) };
+    }
+}
+
 static int calledShotSelectHitLocation(Object* critter, HitLocation* hitLocation, HitMode hitMode)
 {
     *hitLocation = HIT_LOCATION_TORSO;
@@ -5658,6 +5688,25 @@ static int calledShotSelectHitLocation(Object* critter, HitLocation* hitLocation
 
     if (objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
         return 0;
+    }
+
+    // CE: Mobile UI: its panel over the map instead of the game's window.
+    if (muiIsEnabled()) {
+        bool gameUiWasDisabled = gameUiIsDisabled();
+        if (gameUiWasDisabled) {
+            gameUiEnable();
+        }
+
+        int rc = muiSelectCalledShot(critter, hitMode, hitLocation);
+
+        if (gameUiWasDisabled) {
+            gameUiDisable(0);
+        }
+
+        if (rc == 0) {
+            soundPlayFile("icsxxxx1");
+        }
+        return rc;
     }
 
     gCalledShotCritter = critter;
@@ -5772,6 +5821,8 @@ static int calledShotSelectHitLocation(Object* critter, HitLocation* hitLocation
         sharedFpsLimiter.mark();
 
         eventCode = inputGetInput();
+
+        devAutotestTick();
 
         if (eventCode == KEY_ESCAPE) {
             break;

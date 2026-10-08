@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Back to the game: the arrow of the game's own back buttons (the mobile
+     UI's back icon). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M20,12 L4.5,12 M10.5,5.5 L4,12 L10.5,18.5"
+        android:strokeColor="@color/import_accent"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

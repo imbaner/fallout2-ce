@@ -6,6 +6,13 @@
 #include <time.h>
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include <lodepng.h>
+
+#include "action_log.h"
+#include <SDL.h>
 
 #include "art.h"
 #include "automap.h"
@@ -36,6 +43,7 @@
 #include "map.h"
 #include "memory.h"
 #include "message.h"
+#include "mui.h"
 #include "mouse.h"
 #include "object.h"
 #include "palette.h"
@@ -47,6 +55,10 @@
 #include "proto.h"
 #include "queue.h"
 #include "random.h"
+#include "save_catalog.h"
+#include "save_compatibility.h"
+#include "save_records.h"
+#include "save_storage.h"
 #include "scripts.h"
 #include "settings.h"
 #include "sfall_callbacks.h"
@@ -59,11 +71,13 @@
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
+#include "touch_controls.h"
 #include "trait.h"
 #include "version.h"
 #include "window_manager.h"
 #include "word_wrap.h"
 #include "worldmap.h"
+#include "world_view.h"
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #endif
@@ -164,6 +178,16 @@ static int _QuickSnapShot();
 static int lsgWindowInit(int windowType);
 static int lsgWindowFree(int windowType);
 static int lsgPerformSaveGame();
+static int lsgWriteGameFiles();
+static bool loadSaveMessageListLoad();
+static void lsgShowError(int titleMessageId, int bodyMessageId);
+static void lsgSetDescription(int slot, const char* description);
+static int lsgSaveInSlot(int slot);
+static int lsgNextQuickSaveSlot();
+static void lsgInvalidateSlotCache();
+static int lsgMobileScreenRun(bool saving, bool fromMainMenu);
+static int lsgMobileDevLoad(int slot);
+static bool lsgMobileWriteWidePreview(int slot);
 static int lsgLoadGameInSlot(int slot);
 static int lsgSaveHeaderInSlot(int slot);
 static int lsgLoadHeaderInSlot(int slot);
@@ -345,6 +369,23 @@ static void loadSaveMessageListReset()
     messageListFree(&gLoadSaveMessageList);
 }
 
+// CE: Loads LSGAME.MSG (freed by `loadSaveMessageListReset`).
+static bool loadSaveMessageListLoad()
+{
+    if (!messageListInit(&gLoadSaveMessageList)) {
+        return false;
+    }
+
+    char path[COMPAT_MAX_PATH];
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, LSGAME_MSG_NAME);
+    if (!messageListLoad(&gLoadSaveMessageList, path)) {
+        return false;
+    }
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_LSGAME, &gLoadSaveMessageList);
+    return true;
+}
+
 // 0x614700 lsgbuf
 static unsigned char* gLoadSaveWindowBuffer;
 
@@ -363,7 +404,12 @@ static int gLoadSaveWindowOldFont;
 static FrmImage _loadsaveFrmImages[LOAD_SAVE_FRM_COUNT];
 
 static int quickSaveSlots = 0;
+static int quickSaveFirstSlot = 0;
 static bool autoQuickSaveSlots = false;
+
+// CE: Which slots hold saves, their order, where quick and new saves go and
+// what quick load loads (save_catalog.h).
+static SaveCatalog gSaveCatalog;
 
 static constexpr char kLoadSaveSlotDataSection[] = "POSITION";
 static constexpr char kLoadSaveSlotDataKey[] = "CurrentSlot";
@@ -480,6 +526,23 @@ static void loadSavePersistSelectedSlot()
     configWrite(config.get(), path, false);
 }
 
+// CE: The save catalog and records are set up (_InitLoadSave).
+static bool gLoadSaveReady = false;
+
+// CE: The port's own data on saves (save_records.h, save_compatibility.h):
+// in the app's private folder on Android (its import and export of saves
+// use it there), else next to the game ("ce-" names).
+static std::string portDataPath(const char* name)
+{
+#ifdef __ANDROID__
+    const char* internal = SDL_AndroidGetInternalStoragePath();
+    if (internal != nullptr) {
+        return std::string(internal) + "/" + name;
+    }
+#endif
+    return std::string("ce-") + name;
+}
+
 // 0x47B7E4
 void _InitLoadSave()
 {
@@ -491,18 +554,131 @@ void _InitLoadSave()
     MapDirErase(PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME "\\", PROTO_FILE_EXT);
     MapDirErase(PROTO_DIR_NAME "\\" ITEMS_DIR_NAME "\\", PROTO_FILE_EXT);
 
-    quickSaveSlots = settings.ui.auto_quick_save;
-    if (quickSaveSlots > 0 && quickSaveSlots <= saveLoadTotalSlots) {
-        autoQuickSaveSlots = true;
+    // SFALL: AutoQuickSave pages starting at AutoQuickSavePage.
+    quickSaveSlots = settings.ui.auto_quick_save * slotsPerPage;
+    quickSaveFirstSlot = settings.ui.auto_quick_save_page * slotsPerPage;
+    quickSaveSlots = std::min(quickSaveSlots, saveLoadTotalSlots - quickSaveFirstSlot);
+    autoQuickSaveSlots = quickSaveSlots > 0;
+    char saveRoot[COMPAT_MAX_PATH];
+    snprintf(saveRoot, sizeof(saveRoot), "%s\\SAVEGAME", _patches);
+    compat_windows_path_to_native(saveRoot);
+    compat_resolve_path(saveRoot);
+    gameSaveRecords().configure(portDataPath("saves.txt"));
+    gLoadSaveReady = true;
+    gSaveCatalog.configure(saveRoot, saveLoadTotalSlots, quickSaveFirstSlot, quickSaveSlots, &gameSaveRecords());
+
+    // What the game is made of now, for the app's import of saves (its
+    // compatibility marks).
+    saveStorage::writeFile(portDataPath("game-composition.txt"), saveCompatibilityCurrent() + "\n");
+    if (!gSaveCatalog.refresh()) {
+        debugPrint("\nLOADSAVE: ** Interrupted save writes not recovered! **\n");
     }
 }
 
 // 0x47B85C
 void _ResetLoadSave()
 {
+    // A new game starts a new session (loading a save resets the game too).
+    if (!_loadingGame) {
+        gSaveCatalog.resetSession();
+    }
+
     MapDirErase("MAPS\\", "SAV");
     MapDirErase(PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME "\\", PROTO_FILE_EXT);
     MapDirErase(PROTO_DIR_NAME "\\" ITEMS_DIR_NAME "\\", PROTO_FILE_EXT);
+}
+
+int lsgSaveGameToSlot(int slot, const char* description)
+{
+    ScopedGameMode gm(GameMode::kSaveGame);
+
+    if (slot < 0 || slot >= saveLoadTotalSlots) {
+        return -1;
+    }
+
+    _ls_error_code = 0;
+    _patches = settings.system.master_patches_path.c_str();
+
+    if (!loadSaveMessageListLoad()) {
+        return -1;
+    }
+
+    lsgSetDescription(slot, description);
+    int rc = lsgSaveInSlot(slot);
+
+    loadSaveMessageListReset();
+    return rc;
+}
+
+int lsgLoadGameFromSlot(int slot)
+{
+    ScopedGameMode gm(GameMode::kLoadGame);
+
+    if (slot < 0 || slot >= saveLoadTotalSlots) {
+        return -1;
+    }
+
+    _ls_error_code = 0;
+    _patches = settings.system.master_patches_path.c_str();
+    _slot_cursor = slot;
+    return lsgLoadGameInSlot(slot);
+}
+
+// CE: The game's error box: [titleMessageId] and [bodyMessageId] of
+// LSGAME.MSG (loaded).
+static void lsgShowError(int titleMessageId, int bodyMessageId)
+{
+    MessageListItem messageListItem;
+    soundPlayFile("iisxxxx1");
+    stringCopy(_str0, getmsg(&gLoadSaveMessageList, &messageListItem, titleMessageId));
+    stringCopy(_str1, getmsg(&gLoadSaveMessageList, &messageListItem, bodyMessageId));
+
+    const char* body[] = {
+        _str1,
+    };
+    showDialogBox(_str0, body, 1, 169, 116, COLOR_AMBER, nullptr, COLOR_AMBER, DIALOG_BOX_LARGE);
+}
+
+static void lsgSetDescription(int slot, const char* description)
+{
+    strncpy(_LSData[slot].description, description, LOAD_SAVE_DESCRIPTION_LENGTH - 1);
+    _LSData[slot].description[LOAD_SAVE_DESCRIPTION_LENGTH - 1] = '\0';
+}
+
+// CE: Saves the game to [slot] with the description set in `_LSData` and the
+// preview taken from the map (as the quick save does), LSGAME.MSG loaded.
+static int lsgSaveInSlot(int slot)
+{
+    _slot_cursor = slot;
+    _snapshotBuf = nullptr;
+
+    int rc = -1;
+    if (_QuickSnapShot() == 1) {
+        rc = lsgPerformSaveGame();
+    }
+
+    if (_snapshotBuf != nullptr) {
+        internal_free(_snapshot);
+    }
+
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+    return rc;
+}
+
+// CE: Slot of the next automatic quick save: a free quick slot or the oldest
+// quick save (save_catalog.h), -1 - none can be written.
+static int lsgNextQuickSaveSlot()
+{
+    // Also finds out when a write was interrupted: nothing is written then.
+    if (!gSaveCatalog.refresh()) {
+        return -1;
+    }
+
+    lsgInvalidateSlotCache();
+    return gSaveCatalog.nextQuick([](int slot) {
+        MobileSaveSlotInfo info;
+        return lsgMobileGetSlotInfo(slot, &info) && info.state == MobileSaveSlotState::Occupied;
+    });
 }
 
 // SaveGame
@@ -521,68 +697,46 @@ int lsgSaveGame(int mode)
         _quick_done = true;
     }
 
-    if (mode == LOAD_SAVE_MODE_QUICK && _quick_done) {
-        // SFALL: cycle through first N slots for quicksaving
+    // CE: The mobile UI has no slot picked by a previous quick save (saves
+    // aren't overwritten from it): without automatic quick saves every quick
+    // save opens the save screen.
+    if (mode == LOAD_SAVE_MODE_QUICK && (autoQuickSaveSlots || (!muiIsEnabled() && _quick_done))) {
+        if (!loadSaveMessageListLoad()) {
+            return -1;
+        }
+
         if (autoQuickSaveSlots) {
-            if (++_slot_cursor >= quickSaveSlots) {
-                _slot_cursor = 0;
+            _slot_cursor = lsgNextQuickSaveSlot();
+
+            // CE: No description: the save screens show where it was made.
+            if (_slot_cursor != -1) {
+                lsgSetDescription(_slot_cursor, "");
             }
-        }
-        snprintf(_gmpath, sizeof(_gmpath), "%s\\%s%.2d\\", "SAVEGAME", "SLOT", _slot_cursor + 1);
-        strcat(_gmpath, "SAVE.DAT");
+        } else {
+            // The slot keeps its description.
+            snprintf(_gmpath, sizeof(_gmpath), "%s\\%s%.2d\\", "SAVEGAME", "SLOT", _slot_cursor + 1);
+            strcat(_gmpath, "SAVE.DAT");
 
-        _flptr = fileOpen(_gmpath, "rb");
-        if (_flptr != nullptr) {
-            lsgLoadHeaderInSlot(_slot_cursor);
-            fileClose(_flptr);
-        }
-
-        if (!messageListInit(&gLoadSaveMessageList)) {
-            return -1;
-        }
-
-        char path[COMPAT_MAX_PATH];
-        snprintf(path, sizeof(path), "%s%s", asc_5186C8, "LSGAME.MSG");
-        if (!messageListLoad(&gLoadSaveMessageList, path)) {
-            return -1;
-        }
-        messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_LSGAME, &gLoadSaveMessageList);
-
-        _snapshotBuf = nullptr;
-        int v6 = _QuickSnapShot();
-        if (v6 == 1) {
-            int v7 = lsgPerformSaveGame();
-            if (v7 != -1) {
-                v6 = v7;
+            _flptr = fileOpen(_gmpath, "rb");
+            if (_flptr != nullptr) {
+                lsgLoadHeaderInSlot(_slot_cursor);
+                fileClose(_flptr);
             }
         }
 
-        if (_snapshotBuf != nullptr) {
-            internal_free(_snapshot);
+        int rc = _slot_cursor != -1 ? lsgSaveInSlot(_slot_cursor) : -1;
+        if (rc == -1) {
+            // Error saving game! Unable to save game.
+            lsgShowError(132, 133);
         }
-
-        gameMouseSetCursor(MOUSE_CURSOR_ARROW);
-
-        if (v6 != -1) {
-            loadSaveMessageListReset();
-            return 1;
-        }
-
-        soundPlayFile("iisxxxx1");
-
-        // Error saving game!
-        stringCopy(_str0, getmsg(&gLoadSaveMessageList, &messageListItem, 132));
-        // Unable to save game.
-        stringCopy(_str1, getmsg(&gLoadSaveMessageList, &messageListItem, 133));
-
-        const char* body[] = {
-            _str1,
-        };
-        showDialogBox(_str0, body, 1, 169, 116, COLOR_AMBER, nullptr, COLOR_AMBER, DIALOG_BOX_LARGE);
 
         loadSaveMessageListReset();
+        return rc == -1 ? -1 : 1;
+    }
 
-        return -1;
+    if (muiIsEnabled()) {
+        _quick_done = false;
+        return lsgMobileScreenRun(true, false);
     }
 
     touch_set_touchscreen_mode(mode == LOAD_SAVE_MODE_NORMAL);
@@ -1097,14 +1251,12 @@ static int _QuickSnapShot()
     }
 
     // For preview take 640x380 area in the center of isometric window.
-    Window* window = windowGetWindow(gIsoWindow);
-    unsigned char* isoWindowBuffer = window->buffer
-        + window->width * (window->height - ORIGINAL_ISO_WINDOW_HEIGHT) / 2
-        + (window->width - ORIGINAL_ISO_WINDOW_WIDTH) / 2;
+    int isoWindowPitch;
+    unsigned char* isoWindowBuffer = worldViewGetCenteredArea(ORIGINAL_ISO_WINDOW_WIDTH, ORIGINAL_ISO_WINDOW_HEIGHT, &isoWindowPitch);
     blitBufferToBufferStretch(isoWindowBuffer,
         ORIGINAL_ISO_WINDOW_WIDTH,
         ORIGINAL_ISO_WINDOW_HEIGHT,
-        windowGetWidth(gIsoWindow),
+        isoWindowPitch,
         _snapshot,
         LS_PREVIEW_WIDTH,
         LS_PREVIEW_HEIGHT,
@@ -1131,10 +1283,12 @@ int lsgLoadGame(int mode)
     _ls_error_code = 0;
     _patches = settings.system.master_patches_path.c_str();
 
-    if (mode == LOAD_SAVE_MODE_QUICK && _quick_done) {
+    int sessionSlot = gSaveCatalog.sessionTarget();
+    if (mode == LOAD_SAVE_MODE_QUICK && sessionSlot >= 0) {
+        _slot_cursor = sessionSlot;
         int quickSaveWindowX = (screenGetWidth() - LS_WINDOW_WIDTH) / 2;
         int quickSaveWindowY = (screenGetHeight() - LS_WINDOW_HEIGHT) / 2;
-        int window = windowCreate(quickSaveWindowX,
+        int window = muiIsEnabled() ? -1 : windowCreate(quickSaveWindowX,
             quickSaveWindowY,
             LS_WINDOW_WIDTH,
             LS_WINDOW_HEIGHT,
@@ -1152,6 +1306,7 @@ int lsgLoadGame(int mode)
                 windowDestroy(window);
             }
             gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+            if (touchControlsIsEnabled()) touchControlsReset();
             return 1;
         }
 
@@ -1204,6 +1359,20 @@ int lsgLoadGame(int mode)
     if (mode == LOAD_SAVE_MODE_FROM_MAIN_MENU && gDevLoadGameSlot != -1) {
         devAutoloadSlot = gDevLoadGameSlot;
         gDevLoadGameSlot = -1;
+    }
+
+    if (muiIsEnabled()) {
+        int rc = devAutoloadSlot != -1
+            ? lsgMobileDevLoad(devAutoloadSlot)
+            : lsgMobileScreenRun(false, mode == LOAD_SAVE_MODE_FROM_MAIN_MENU);
+        if (rc == 1 && mode == LOAD_SAVE_MODE_FROM_MAIN_MENU) {
+            // The title menu fades the game's indexed palette to black.
+            // The classic picker restores it before play; the mobile picker
+            // returns here, so restore it after a successful load as well.
+            colorPaletteLoad("color.pal");
+            paletteFadeTo(_cmap);
+        }
+        return rc;
     }
 
     touch_set_touchscreen_mode(windowType == LOAD_SAVE_WINDOW_TYPE_LOAD_GAME || windowType == LOAD_SAVE_WINDOW_TYPE_LOAD_GAME_FROM_MAIN_MENU);
@@ -1688,14 +1857,12 @@ static int lsgWindowInit(int windowType)
         }
 
         // For preview take 640x380 area in the center of isometric window.
-        Window* window = windowGetWindow(gIsoWindow);
-        unsigned char* isoWindowBuffer = window->buffer
-            + window->width * (window->height - ORIGINAL_ISO_WINDOW_HEIGHT) / 2
-            + (window->width - ORIGINAL_ISO_WINDOW_WIDTH) / 2;
+        int isoWindowPitch;
+        unsigned char* isoWindowBuffer = worldViewGetCenteredArea(ORIGINAL_ISO_WINDOW_WIDTH, ORIGINAL_ISO_WINDOW_HEIGHT, &isoWindowPitch);
         blitBufferToBufferStretch(isoWindowBuffer,
             ORIGINAL_ISO_WINDOW_WIDTH,
             ORIGINAL_ISO_WINDOW_HEIGHT,
-            windowGetWidth(gIsoWindow),
+            isoWindowPitch,
             _snapshotBuf,
             LS_PREVIEW_WIDTH,
             LS_PREVIEW_HEIGHT,
@@ -1902,7 +2069,44 @@ EM_ASYNC_JS(void, do_save_idbfs_loadsave, (), {
 #endif
 
 // 0x47D88C
+// CE: Writes the save as one transaction of the catalog: a failed or
+// interrupted write leaves the slot's previous save (save_catalog.h).
 static int lsgPerformSaveGame()
+{
+    char title[32];
+    snprintf(title, sizeof(title), "saving to slot %d", _slot_cursor + 1);
+    actionLogState(title);
+
+    bool saved = gSaveCatalog.write(_slot_cursor, []() {
+        compatDirectoryEntryCacheClear();
+        return lsgWriteGameFiles() == 0;
+    });
+    lsgInvalidateSlotCache();
+
+    // Some failures of the writer return before resuming it.
+    backgroundSoundResume();
+
+    actionLog("%s slot %d", saved ? "saved to" : "FAILED to save to", _slot_cursor + 1);
+    actionLogFlush();
+    if (!saved) {
+        return -1;
+    }
+
+    // What the game is made of now, kept for this save.
+    saveCompatibilityRecord(_slot_cursor);
+
+    // Game Saved.
+    gLoadSaveMessageListItem.num = 140;
+    if (messageListGetItem(&gLoadSaveMessageList, &gLoadSaveMessageListItem)) {
+        displayMonitorAddMessage(gLoadSaveMessageListItem.text);
+    } else {
+        debugPrint("\nError: Couldn't find LoadSave Message!");
+    }
+
+    return 0;
+}
+
+static int lsgWriteGameFiles()
 {
     _ls_error_code = 0;
     _map_backup_count = -1;
@@ -1979,19 +2183,23 @@ static int lsgPerformSaveGame()
 
     debugPrint("LOADSAVE: Total save data written: %ld bytes.\n", fileTell(_flptr));
 
-    fileClose(_flptr);
+    if (fileClose(_flptr) != 0) {
+        return -1;
+    }
 
     // SFALL: Save sfallgv.sav.
     snprintf(_gmpath, sizeof(_gmpath), "%s\\%s%.2d\\", "SAVEGAME", "SLOT", _slot_cursor + 1);
     strcat(_gmpath, "sfallgv.sav");
 
+    // CE: A save without it is incomplete, it fails.
     _flptr = fileOpen(_gmpath, "wb");
-    if (_flptr != nullptr) {
-        bool saved = sfallSaveGameData(_flptr);
-        fileClose(_flptr);
-        if (!saved) {
-            return -1;
-        }
+    if (_flptr == nullptr) {
+        return -1;
+    }
+
+    bool sfallSaved = sfallSaveGameData(_flptr);
+    if (fileClose(_flptr) != 0 || !sfallSaved) {
+        return -1;
     }
 
     char ceSavePath[COMPAT_MAX_PATH];
@@ -2003,19 +2211,20 @@ static int lsgPerformSaveGame()
         return -1;
     }
 
+    // Keep the original SAVE.DAT thumbnail for compatibility. The mobile
+    // picker can use a wider image captured from the current world view.
+    char previewPath[COMPAT_MAX_PATH];
+    snprintf(previewPath, sizeof(previewPath), "%s\\SAVEGAME\\SLOT%.2d\\PREVIEW.PNG", _patches, _slot_cursor + 1);
+    if (!muiIsEnabled() || !lsgMobileWriteWidePreview(_slot_cursor)) {
+        compat_remove(previewPath);
+    }
+
     snprintf(_gmpath, sizeof(_gmpath), "%s\\%s%.2d\\", "SAVEGAME", "SLOT", _slot_cursor + 1);
     MapDirErase(_gmpath, "BAK");
 
 #if defined(__EMSCRIPTEN__)
     do_save_idbfs_loadsave();
 #endif
-
-    gLoadSaveMessageListItem.num = 140;
-    if (messageListGetItem(&gLoadSaveMessageList, &gLoadSaveMessageListItem)) {
-        displayMonitorAddMessage(gLoadSaveMessageListItem.text);
-    } else {
-        debugPrint("\nError: Couldn't find LoadSave Message!");
-    }
 
     backgroundSoundResume();
 
@@ -2118,6 +2327,9 @@ static int lsgLoadGameInSlot(int slot)
 
     snprintf(_str, sizeof(_str), "%s\\", "MAPS");
     MapDirErase(_str, "BAK");
+    // CE: The dude as saved, before the gender update below may change his
+    // look (`[debug] action_log`).
+    actionLogState("loaded, as saved");
     _proto_dude_update_gender();
 
     // Game Loaded.
@@ -2135,6 +2347,12 @@ static int lsgLoadGameInSlot(int slot)
     // SFALL: Call "after start" event
     sfallOnAfterGameStarted();
     gGameLoaded = true;
+    gSaveCatalog.loaded(slot);
+
+    char title[32];
+    snprintf(title, sizeof(title), "loaded slot %d", slot + 1);
+    actionLogState(title);
+    actionLogFlush();
 
     return 0;
 }
@@ -2297,8 +2515,8 @@ static int lsgLoadHeaderInSlot(int slot)
         return -1;
     }
 
-    ptr->fileMonth = v8[0];
-    ptr->fileDay = v8[1];
+    ptr->fileDay = v8[0];
+    ptr->fileMonth = v8[1];
     ptr->fileYear = v8[2];
 
     if (_db_freadInt(_flptr, &(ptr->fileTime)) == -1) {
@@ -2345,7 +2563,8 @@ static int lsgLoadHeaderInSlot(int slot)
 // 0x47E5D0
 static int _GetSlotList()
 {
-    std::fill_n(gLoadSaveSlotPageLoaded, saveLoadPages, false);
+    gSaveCatalog.refresh();
+    lsgInvalidateSlotCache();
     loadSaveLoadSlotPage(_currentSlotPage);
     return slotsPerPage;
 }
@@ -2365,9 +2584,13 @@ static void loadSaveLoadSlotPage(int page)
     for (int index = startIndex; index < endIndex; index++) {
         snprintf(_str, sizeof(_str), "%s\\%s%.2d\\%s", "SAVEGAME", "SLOT", index + 1, "SAVE.DAT");
 
+        // CE: The catalog has read the folder already, most slots are empty.
+        // Something without SAVE.DAT is a broken save.
         int fileSize;
-        if (dbGetFileSize(_str, &fileSize) != 0) {
+        if (!gSaveCatalog.entry(index).present) {
             _LSstatus[index] = SLOT_STATE_EMPTY;
+        } else if (dbGetFileSize(_str, &fileSize) != 0) {
+            _LSstatus[index] = SLOT_STATE_ERROR;
         } else {
             _flptr = fileOpen(_str, "rb");
 
@@ -2392,6 +2615,409 @@ static void loadSaveLoadSlotPage(int page)
             fileClose(_flptr);
         }
     }
+}
+
+// CE: Forgets the slots read from the folder (the game's slot list and the
+// file system's name cache), the catalog is up to date.
+static void lsgInvalidateSlotCache()
+{
+    compatDirectoryEntryCacheClear();
+    std::fill_n(gLoadSaveSlotPageLoaded, saveLoadPages, false);
+}
+
+// CE: The mobile save/load screen with LSGAME.MSG loaded for its texts.
+static int lsgMobileScreenRun(bool saving, bool fromMainMenu)
+{
+    if (!loadSaveMessageListLoad()) {
+        return -1;
+    }
+
+    int rc = muiLoadSaveScreenRun(saving, fromMainMenu);
+
+    loadSaveMessageListReset();
+    return rc;
+}
+
+// CE: `--dev-load-game`: [slot] is loaded as the mobile screen loads a chosen
+// one (automated tests start as the player's game does). Returns as the
+// screen does: 1 - loaded, 0 - nothing to load, -1 - failed.
+static int lsgMobileDevLoad(int slot)
+{
+    if (!loadSaveMessageListLoad()) {
+        return -1;
+    }
+
+    lsgMobileRefreshSlots();
+
+    int rc = 0;
+    MobileSaveSlotInfo info;
+    if (lsgMobileGetSlotInfo(slot, &info) && info.state == MobileSaveSlotState::Occupied) {
+        rc = lsgMobileLoadGame(slot) == 0 ? 1 : -1;
+    } else {
+        debugPrint("LOADSAVE: dev load slot %d is not occupied\n", slot + 1);
+    }
+
+    loadSaveMessageListReset();
+    return rc;
+}
+
+void lsgMobileRefreshSlots()
+{
+    gameSaveRecords().reload();
+    if (!gSaveCatalog.refresh()) {
+        debugPrint("\nLOADSAVE: ** Interrupted save writes not recovered! **\n");
+    }
+    lsgInvalidateSlotCache();
+}
+
+void lsgMobileSavesMayHaveChanged()
+{
+    if (gLoadSaveReady) {
+        lsgMobileRefreshSlots();
+    }
+}
+
+bool lsgMobileGetSlotInfo(int slot, MobileSaveSlotInfo* info)
+{
+    if (slot < 0 || slot >= saveLoadTotalSlots || info == nullptr) {
+        return false;
+    }
+
+    loadSaveLoadSlotPage(slot / slotsPerPage);
+
+    *info = MobileSaveSlotInfo();
+    switch (_LSstatus[slot]) {
+    case SLOT_STATE_EMPTY:
+        info->state = MobileSaveSlotState::Empty;
+        break;
+    case SLOT_STATE_OCCUPIED:
+        info->state = MobileSaveSlotState::Occupied;
+        break;
+    case SLOT_STATE_ERROR:
+        info->state = MobileSaveSlotState::Corrupt;
+        break;
+    case SLOT_STATE_UNSUPPORTED_VERSION:
+        info->state = MobileSaveSlotState::OldVersion;
+        break;
+    }
+
+    if (info->state == MobileSaveSlotState::Occupied) {
+        const LoadSaveSlotData& data = _LSData[slot];
+        memcpy(info->description, data.description, sizeof(info->description) - 1);
+        memcpy(info->characterName, data.characterName, sizeof(info->characterName) - 1);
+        info->gameDay = data.gameDay;
+        info->gameMonth = data.gameMonth;
+        info->gameYear = data.gameYear;
+        info->gameTime = data.gameTime;
+        info->map = static_cast<int>(data.map);
+        info->elevation = data.elevation;
+    }
+
+    const SaveCatalog::Entry& entry = gSaveCatalog.entry(slot);
+    info->created = entry.created;
+    info->order = entry.order;
+    return true;
+}
+
+std::string lsgMobileSaveDatPath(int slot)
+{
+    return gSaveCatalog.saveDatPath(slot);
+}
+
+std::vector<std::string> lsgAllSaveDatPaths()
+{
+    std::vector<std::string> paths;
+    for (int slot = 0; slot < saveLoadTotalSlots; slot++) {
+        if (gSaveCatalog.entry(slot).present) {
+            paths.push_back(gSaveCatalog.saveDatPath(slot));
+        }
+    }
+    return paths;
+}
+
+bool lsgMobileIsQuickSlot(int slot)
+{
+    return gSaveCatalog.isQuick(slot);
+}
+
+int lsgFindFreeManualSlot()
+{
+    return gSaveCatalog.freeManual();
+}
+
+int lsgMobileSaveGame(int slot, const char* description)
+{
+    ScopedGameMode gm(GameMode::kSaveGame);
+
+    if (slot < 0 || slot >= saveLoadTotalSlots) {
+        return -1;
+    }
+
+    _ls_error_code = 0;
+    _patches = settings.system.master_patches_path.c_str();
+
+    lsgSetDescription(slot, description);
+    int rc = lsgSaveInSlot(slot);
+    if (rc == -1) {
+        // Error saving game! Unable to save game.
+        lsgShowError(132, 133);
+    }
+
+    return rc;
+}
+
+int lsgMobileLoadGame(int slot)
+{
+    if (lsgLoadGameFromSlot(slot) != -1) {
+        // As the game's window when it closes: loading leaves the busy
+        // cursor, which keeps map input (touch commands too) off.
+        gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+        if (touchControlsIsEnabled()) {
+            touchControlsReset();
+        }
+        return 0;
+    }
+
+    // As the game's window: the world is half loaded, back to the main menu.
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+    // Error loading game! Unable to load game.
+    lsgShowError(134, 135);
+    mapNewMap();
+    _game_user_wants_to_quit = GAME_QUIT_REQUEST_MAIN_MENU;
+    return -1;
+}
+
+bool lsgMobileDeleteSlot(int slot)
+{
+    bool removed = gSaveCatalog.remove(slot);
+    lsgInvalidateSlotCache();
+    return removed;
+}
+
+int lsgCopyQuickSave(int source)
+{
+    int target = gSaveCatalog.copyQuick(source);
+    lsgInvalidateSlotCache();
+    return target;
+}
+
+int lsgSessionLoadSlot()
+{
+    return gSaveCatalog.sessionTarget();
+}
+
+int lsgMobileNewestSlot()
+{
+    lsgMobileRefreshSlots();
+
+    int slot = gSaveCatalog.newest();
+    MobileSaveSlotInfo info;
+    if (slot == -1 || !lsgMobileGetSlotInfo(slot, &info) || info.state != MobileSaveSlotState::Occupied) {
+        return -1;
+    }
+    return slot;
+}
+
+int lsgContinueGame()
+{
+    ScopedGameMode gm(GameMode::kLoadGame);
+
+    _ls_error_code = 0;
+    _patches = settings.system.master_patches_path.c_str();
+
+    int slot = lsgMobileNewestSlot();
+    if (slot == -1) {
+        return 0;
+    }
+
+    if (!loadSaveMessageListLoad()) {
+        return -1;
+    }
+
+    int rc = lsgMobileLoadGame(slot) == 0 ? 1 : -1;
+    loadSaveMessageListReset();
+
+    if (rc == 1) {
+        // As the load screen from the main menu: the title menu faded the
+        // palette to black.
+        colorPaletteLoad("color.pal");
+        paletteFadeTo(_cmap);
+    }
+    return rc;
+}
+
+const char* lsgGetMessage(int messageId)
+{
+    MessageListItem messageListItem;
+    return getmsg(&gLoadSaveMessageList, &messageListItem, messageId);
+}
+
+bool lsgMobileReadPreview(int slot, unsigned char* pixels, size_t size)
+{
+    if (slot < 0 || slot >= saveLoadTotalSlots || pixels == nullptr || size < LS_PREVIEW_SIZE) {
+        return false;
+    }
+
+    MobileSaveSlotInfo info;
+    if (!lsgMobileGetSlotInfo(slot, &info) || info.state != MobileSaveSlotState::Occupied) {
+        return false;
+    }
+
+    char path[COMPAT_MAX_PATH];
+    snprintf(path, sizeof(path), "SAVEGAME\\SLOT%.2d\\SAVE.DAT", slot + 1);
+    File* stream = fileOpen(path, "rb");
+    if (stream == nullptr) {
+        return false;
+    }
+
+    // The thumbnail follows the header (as `_LoadTumbSlot` reads it).
+    bool read = fileSeek(stream, 131, SEEK_SET) == 0
+        && fileRead(pixels, LS_PREVIEW_SIZE, 1, stream) == 1;
+    fileClose(stream);
+    return read;
+}
+
+bool lsgMobileCapturePreview(unsigned char* pixels, size_t size)
+{
+    if (pixels == nullptr || size < LS_PREVIEW_SIZE) {
+        return false;
+    }
+
+    _snapshotBuf = nullptr;
+    if (_QuickSnapShot() != 1) {
+        return false;
+    }
+
+    memcpy(pixels, _snapshot, LS_PREVIEW_SIZE);
+    internal_free(_snapshot);
+    _snapshot = nullptr;
+    _snapshotBuf = nullptr;
+    return true;
+}
+
+bool lsgMobileCaptureWidePreview(std::vector<unsigned char>* rgba, int* width, int* height)
+{
+    if (rgba == nullptr || width == nullptr || height == nullptr || !worldViewIsEnabled()) {
+        return false;
+    }
+
+    unsigned char* world = worldViewGetBuffer();
+    int worldWidth = worldViewGetWidth();
+    int worldHeight = worldViewGetHeight();
+    if (world == nullptr || worldWidth <= 0 || worldHeight <= 0) {
+        return false;
+    }
+
+    Rect visible;
+    worldViewGetVisibleRect(&visible);
+    int sourceWidth = visible.right - visible.left + 1;
+    int sourceHeight = visible.bottom - visible.top + 1;
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+        return false;
+    }
+
+    // What the player sees of the world, at most 800 pixels wide/high.
+    int previewWidth = std::min(sourceWidth, kMobileWidePreviewMaxSize);
+    int previewHeight = std::max(1, static_cast<int>(std::round(static_cast<double>(sourceHeight) * previewWidth / sourceWidth)));
+    if (previewHeight > kMobileWidePreviewMaxSize) {
+        previewWidth = std::max(1, previewWidth * kMobileWidePreviewMaxSize / previewHeight);
+        previewHeight = kMobileWidePreviewMaxSize;
+    }
+
+    // The game's palette, not the screen's one: it may be faded.
+    rgba->resize(static_cast<size_t>(previewWidth) * previewHeight * 4);
+    for (int y = 0; y < previewHeight; y++) {
+        int sourceY = std::clamp(visible.top + static_cast<int>((static_cast<long long>(y) * sourceHeight) / previewHeight), 0, worldHeight - 1);
+        for (int x = 0; x < previewWidth; x++) {
+            int sourceX = std::clamp(visible.left + static_cast<int>((static_cast<long long>(x) * sourceWidth) / previewWidth), 0, worldWidth - 1);
+            int color = world[static_cast<size_t>(sourceY) * worldWidth + sourceX] * 3;
+            unsigned char* dest = rgba->data() + (static_cast<size_t>(y) * previewWidth + x) * 4;
+            dest[0] = _cmap[color] << 2;
+            dest[1] = _cmap[color + 1] << 2;
+            dest[2] = _cmap[color + 2] << 2;
+            dest[3] = 255;
+        }
+    }
+
+    *width = previewWidth;
+    *height = previewHeight;
+    return true;
+}
+
+bool lsgMobileReadWidePreview(int slot, std::vector<unsigned char>* rgba, int* width, int* height)
+{
+    if (slot < 0 || slot >= saveLoadTotalSlots || rgba == nullptr || width == nullptr || height == nullptr) {
+        return false;
+    }
+
+    char path[COMPAT_MAX_PATH];
+    snprintf(path, sizeof(path), "%s\\SAVEGAME\\SLOT%.2d\\PREVIEW.PNG", _patches, slot + 1);
+    FILE* stream = compat_fopen(path, "rb");
+    if (stream == nullptr) {
+        return false;
+    }
+
+    std::vector<unsigned char> encoded;
+    bool read = fseek(stream, 0, SEEK_END) == 0;
+    long length = read ? ftell(stream) : -1;
+    read = read && length > 0 && length <= 8 * 1024 * 1024 && fseek(stream, 0, SEEK_SET) == 0;
+    if (read) {
+        encoded.resize(static_cast<size_t>(length));
+        read = fread(encoded.data(), 1, encoded.size(), stream) == encoded.size();
+    }
+    fclose(stream);
+
+    if (!read) {
+        return false;
+    }
+
+    unsigned decodedWidth = 0;
+    unsigned decodedHeight = 0;
+    std::vector<unsigned char> decoded;
+    if (lodepng::decode(decoded, decodedWidth, decodedHeight, encoded) != 0
+        || decodedWidth == 0
+        || decodedHeight == 0
+        || decodedWidth > kMobileWidePreviewMaxSize * 2
+        || decodedHeight > kMobileWidePreviewMaxSize * 2) {
+        return false;
+    }
+
+    *width = static_cast<int>(decodedWidth);
+    *height = static_cast<int>(decodedHeight);
+    rgba->swap(decoded);
+    return true;
+}
+
+// CE: PREVIEW.PNG of [slot]: the world as the player sees it, for the mobile
+// screen (SAVE.DAT keeps the game's small thumbnail).
+static bool lsgMobileWriteWidePreview(int slot)
+{
+    std::vector<unsigned char> rgba;
+    int width;
+    int height;
+    if (!lsgMobileCaptureWidePreview(&rgba, &width, &height)) {
+        return false;
+    }
+
+    std::vector<unsigned char> encoded;
+    if (lodepng::encode(encoded, rgba, static_cast<unsigned>(width), static_cast<unsigned>(height)) != 0) {
+        return false;
+    }
+
+    char path[COMPAT_MAX_PATH];
+    snprintf(path, sizeof(path), "%s\\SAVEGAME\\SLOT%.2d\\PREVIEW.PNG", _patches, slot + 1);
+    FILE* stream = compat_fopen(path, "wb");
+    if (stream == nullptr) {
+        return false;
+    }
+
+    bool written = fwrite(encoded.data(), 1, encoded.size(), stream) == encoded.size();
+    written = fclose(stream) == 0 && written;
+    if (!written) {
+        compat_remove(path);
+    }
+
+    return written;
 }
 
 // 0x47E6D8

@@ -1,6 +1,8 @@
 #ifndef SKILLDEX_H
 #define SKILLDEX_H
 
+#include "obj_types.h"
+
 namespace fallout {
 
 enum SkilldexRC : int {
@@ -17,7 +19,9 @@ enum SkilldexRC : int {
     SKILLDEX_RC_COUNT,
 };
 
-SkilldexRC skilldexOpen();
+// [target] - object the skill is for (action menu), the mobile UI shows
+// the list next to it.
+SkilldexRC skilldexOpen(Object* target = nullptr);
 int skilldexGetWindow();
 
 } // namespace fallout

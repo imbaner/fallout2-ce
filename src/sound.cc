@@ -13,6 +13,7 @@
 #endif
 
 #include <algorithm>
+#include <vector>
 
 #include <SDL.h>
 
@@ -20,6 +21,7 @@
 #include "audio_engine.h"
 #include "debug.h"
 #include "platform_compat.h"
+#include "sound_tempo.h"
 
 namespace fallout {
 
@@ -526,6 +528,7 @@ Sound* soundAllocate(int type, int soundFlags)
     sound->field_58 = -1;
     sound->minReadBuffer = 1;
     sound->volume = VOLUME_MAX;
+    sound->tempo = 1.0;
     sound->prev = nullptr;
     sound->field_54 = 0;
     sound->next = gSoundListHead;
@@ -589,7 +592,24 @@ int _preloadBuffers(Sound* sound)
         }
     }
 
-    result = _soundSetData(sound, buf, size);
+    // CE: A sound loaded whole plays at its tempo: its samples are made
+    // shorter before they reach the sound buffer.
+    std::vector<int16_t> tempoSamples;
+    if ((sound->type & SOUND_TYPE_MEMORY) != 0
+        && (sound->soundFlags & SOUND_LOOPING) == 0
+        && sound->bitsPerSample == 16
+        && sound->tempo != 1.0) {
+        int frameSize = sound->channels * 2;
+        tempoSamples = soundChangeTempo(reinterpret_cast<int16_t*>(buf), size / frameSize, sound->channels, sound->rate, sound->tempo);
+    }
+
+    if (!tempoSamples.empty()) {
+        size = static_cast<int>(tempoSamples.size() * sizeof(int16_t));
+        sound->fileSize = size;
+        result = _soundSetData(sound, reinterpret_cast<unsigned char*>(tempoSamples.data()), size);
+    } else {
+        result = _soundSetData(sound, buf, size);
+    }
     gSoundFreeProc(buf);
 
     if ((sound->type & SOUND_TYPE_MEMORY) != 0) {
@@ -994,6 +1014,24 @@ int soundGetDuration(Sound* sound)
     }
 
     return result;
+}
+
+int soundSetTempo(Sound* sound, double tempo)
+{
+    if (!gSoundInitialized) {
+        gSoundLastError = SOUND_NOT_INITIALIZED;
+        return gSoundLastError;
+    }
+
+    if (sound == nullptr || tempo <= 0.0) {
+        gSoundLastError = SOUND_NO_SOUND;
+        return gSoundLastError;
+    }
+
+    sound->tempo = tempo;
+
+    gSoundLastError = SOUND_NO_ERROR;
+    return gSoundLastError;
 }
 
 // 0x4ADD00

@@ -26,6 +26,25 @@ void textObjectsRenderInRect(Rect* rect);
 int textObjectsGetCount();
 void textObjectsRemoveByOwner(Object* object);
 
+// CE: The mobile UI draws the texts over the zoomed map at a fixed size
+// (mui_floating_text.cc) instead of the game drawing them into it.
+bool textObjectsDrawnOverMap();
+
+struct TextObjectView {
+    // In the game's encoding.
+    const char* text;
+    // Where it stays (where its object was when it was said).
+    int tile;
+    // Over the head of whoever said it, or at the tile (a text without an
+    // object, put at the screen's center).
+    bool aboveTile;
+    ColorWithFlags color;
+    ColorWithFlags outlineColor;
+};
+
+// The text object [index] (0..`textObjectsGetCount`).
+bool textObjectGetView(int index, TextObjectView* view);
+
 } // namespace fallout
 
 #endif /* TEXT_OBJECT_H */

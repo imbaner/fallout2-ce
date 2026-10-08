@@ -47,6 +47,13 @@ void gameMovieFadeOut();
 bool gameMovieIsSeen(int movie);
 bool gameMovieIsPlaying();
 
+// CE: Mobile UI movie player (mui_movie.cc): [movie] starts playing into a
+// texture (movie.h, the player drives it), the game's music pauses;
+// `gameMovieFinishMobile` stops it, marks it seen, gives the game its
+// palette and music back.
+bool gameMovieStartMobile(int movie);
+void gameMovieFinishMobile();
+
 } // namespace fallout
 
 #endif /* GAME_MOVIE_H */

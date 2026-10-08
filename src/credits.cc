@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <vector>
 
 #include "art.h"
 #include "color.h"
@@ -16,6 +17,7 @@
 #include "memory.h"
 #include "message.h"
 #include "mouse.h"
+#include "mui.h"
 #include "palette.h"
 #include "platform_compat.h"
 #include "sound.h"
@@ -70,6 +72,32 @@ void creditsOpen(const char* filePath, const InterfaceFrmId& backgroundFrmId, bo
         gCreditsFile = fileOpen(localizedPath, "rt");
         if (gCreditsFile != nullptr) {
             soundContinueAll();
+
+            // Mobile UI: the lines roll in its screen, in the game's colors.
+            if (muiIsEnabled()) {
+                std::vector<MuiCreditsLine> lines;
+                char str[260];
+                int font;
+                Color color;
+                while (creditsFileParseNextLine(str, &font, &color)) {
+                    size_t length = strlen(str);
+                    while (length > 0 && (str[length - 1] == '\n' || str[length - 1] == '\r')) {
+                        str[--length] = '\0';
+                    }
+
+                    MuiCreditsLine line;
+                    line.text = str;
+                    // Palette is 6 bits per channel.
+                    line.color = { static_cast<Uint8>(_cmap[color * 3] * 4), static_cast<Uint8>(_cmap[color * 3 + 1] * 4), static_cast<Uint8>(_cmap[color * 3 + 2] * 4), 255 };
+                    line.title = font == gCreditsWindowTitleFont;
+                    lines.push_back(line);
+                }
+                fileClose(gCreditsFile);
+                fontSetCurrent(oldFont);
+
+                muiCreditsRun(lines);
+                return;
+            }
 
             colorCycleDisable();
             gameMouseSetCursor(MOUSE_CURSOR_NONE);

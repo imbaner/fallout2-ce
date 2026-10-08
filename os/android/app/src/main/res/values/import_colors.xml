@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The mobile UI's theme (src/mui.cc kTheme). -->
+    <color name="import_background">#050A06</color>
+    <color name="import_panel">#0B120D</color>
+    <color name="import_panel_border">#3C6E45</color>
+    <color name="import_text">#BDF5B5</color>
+    <color name="import_text_dim">#74A874</color>
+    <color name="import_accent">#5CFF5C</color>
+    <color name="import_warning">#FF6E5E</color>
+    <color name="import_button">#14281A</color>
+    <color name="import_button_pressed">#2E6A3A</color>
+    <color name="import_button_border">#4C8F57</color>
+    <color name="import_button_text">#CFFFD0</color>
+    <color name="import_button_primary">#3F9A4C</color>
+    <color name="import_button_primary_text">#041006</color>
+</resources>

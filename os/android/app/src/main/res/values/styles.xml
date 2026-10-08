@@ -1,8 +1,9 @@
 <resources>
 
-    <!-- Base application theme. -->
-    <style name="AppTheme" parent="android:Theme.Holo.Light.DarkActionBar">
-        <!-- Customize your theme here. -->
+    <!-- The import screen: full screen, the mobile UI's dark green. -->
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/import_background</item>
+        <item name="android:colorAccent">@color/import_accent</item>
     </style>
 
 </resources>

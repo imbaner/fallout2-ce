@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <vector>
+
 #include "art.h"
 #include "color.h"
 #include "cycle.h"
@@ -18,9 +20,12 @@
 #include "map.h"
 #include "memory.h"
 #include "message.h"
+#include "mui.h"
+#include "mui_screens.h"
 #include "object.h"
 #include "platform_compat.h"
 #include "skill.h"
+#include "stat.h"
 #include "string_utils.h"
 #include "svga.h"
 #include "text_font.h"
@@ -106,10 +111,55 @@ static int gSkilldexWindowOldFont;
 
 static FrmImage _skilldexFrmImages[SKILLDEX_FRM_COUNT];
 
+// CE: Skills of the skilldex in the mobile UI list, next to [target] or the
+// HUD's skills button.
+static SkilldexRC skilldexChooseMobile(Object* target)
+{
+    struct Entry {
+        Skill skill;
+        MuiIcon icon;
+    };
+
+    const Entry entries[SKILLDEX_SKILL_COUNT] = {
+        { SKILL_SNEAK, MuiIcon::Sneak },
+        { SKILL_LOCKPICK, MuiIcon::Lockpick },
+        { SKILL_STEAL, MuiIcon::Steal },
+        { SKILL_TRAPS, MuiIcon::Traps },
+        { SKILL_FIRST_AID, MuiIcon::FilterDrugs },
+        { SKILL_DOCTOR, MuiIcon::Doctor },
+        { SKILL_SCIENCE, MuiIcon::Science },
+        { SKILL_REPAIR, MuiIcon::Repair },
+    };
+
+    std::vector<MuiActionItem> items;
+    for (const Entry& entry : entries) {
+        char value[16];
+        snprintf(value, sizeof(value), "%d%%", skillGetValue(gDude, entry.skill));
+        items.push_back({ entry.icon, muiDecodeGameText(skillGetName(entry.skill)), muiDecodeUtf8(value) });
+    }
+
+    MuiRect anchor;
+    MuiRect avoid;
+    muiPopupAnchor(target, HudElementId::Skills, &anchor, &avoid);
+
+    int index = muiChooseAction("skills", items, anchor, avoid);
+    if (index < 0) {
+        return SKILLDEX_RC_CANCELED;
+    }
+
+    soundPlayFile("ib1p1xx1");
+    return static_cast<SkilldexRC>(SKILLDEX_RC_SNEAK + index);
+}
+
 // skilldex_select
 // 0x4ABFD0 skilldex_select
-SkilldexRC skilldexOpen()
+SkilldexRC skilldexOpen(Object* target)
 {
+    // CE: The HUD stays visible under the list.
+    if (muiIsEnabled()) {
+        return skilldexChooseMobile(target);
+    }
+
     ScopedGameMode gm(GameMode::kSkilldex);
 
     if (skilldexWindowInit() == -1) {

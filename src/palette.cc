@@ -24,7 +24,7 @@ unsigned char gPaletteWhite[256 * 3];
 unsigned char gPaletteBlack[256 * 3];
 
 // 0x6642D0 fade_steps
-static int gPaletteFadeSteps;
+static unsigned int gPaletteFadeDurationMs = 700;
 
 // 0x493A00 palette_init
 void paletteInit()
@@ -33,27 +33,11 @@ void paletteInit()
     memset(gPaletteWhite, 63, 256 * 3);
     memcpy(gPalette, _cmap, 256 * 3);
 
-    unsigned int tick = getTicks();
-    if (backgroundSoundIsEnabled() || speechIsEnabled()) {
-        colorPaletteSetTransitionCallback(soundContinueAll);
-    }
-
-    constexpr int referenceFadeSteps = 60;
-    colorPaletteFadeBetween(gPalette, gPalette, referenceFadeSteps);
-
-    colorPaletteSetTransitionCallback(nullptr);
-
-    // Actual fade duration will never be 0 since |colorPaletteFadeBetween| uses
-    // frame rate throttling.
-    unsigned int actualFadeDuration = getTicksSince(tick);
-
+    // CE: Fades are timed (see `colorPaletteFadeBetween`); the original
+    // measured a reference fade here and picked a number of steps, which
+    // took many times longer on screens slower to present.
     constexpr int vanillaFadeDurationMs = 700;
-    const unsigned int fadeDurationMs = static_cast<int>(vanillaFadeDurationMs / settings.ui.anim_speed);
-
-    // Calculate fade steps needed to perform fading in about 700 ms.
-    gPaletteFadeSteps = static_cast<int>(referenceFadeSteps * fadeDurationMs / actualFadeDuration);
-
-    debugPrint("\nReference fade time: %ums, Target fade time: %dms, Fade steps: %d\n", actualFadeDuration, fadeDurationMs, gPaletteFadeSteps);
+    gPaletteFadeDurationMs = static_cast<unsigned int>(vanillaFadeDurationMs / settings.ui.anim_speed);
 }
 
 // NOTE: Collapsed.
@@ -85,7 +69,7 @@ void paletteFadeTo(unsigned char* palette)
         colorPaletteSetTransitionCallback(soundContinueAll);
     }
 
-    colorPaletteFadeBetween(gPalette, palette, gPaletteFadeSteps);
+    colorPaletteFadeBetween(gPalette, palette, gPaletteFadeDurationMs);
     colorPaletteSetTransitionCallback(nullptr);
 
     memcpy(gPalette, palette, 768);

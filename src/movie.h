@@ -1,6 +1,8 @@
 #ifndef MOVIE_H
 #define MOVIE_H
 
+#include <SDL.h>
+
 #include "geometry.h"
 
 namespace fallout {
@@ -40,6 +42,17 @@ int _moviePlaying();
 void movieHandleRendererReset();
 void movieHandleFocusGained();
 void movieRenderDirectOverlay();
+
+// CE: Mobile UI movie player: the movie plays without a window, its frames go
+// to a texture the player draws, subtitles are given as text; it can be
+// paused.
+int movieStartMobile(char* filePath, bool subtitles);
+bool movieIsMobile();
+SDL_Texture* movieGetFrameTexture(int* width, int* height);
+// Subtitle shown now (game charset), nullptr when none.
+const char* movieGetSubtitle();
+void moviePause(bool paused);
+bool movieIsPaused();
 
 } // namespace fallout
 

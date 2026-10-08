@@ -36,6 +36,7 @@
 #include "kb.h"
 #include "memory.h"
 #include "mouse.h"
+#include "mui.h"
 #include "object.h"
 #include "palette.h"
 #include "party_member.h"
@@ -54,6 +55,8 @@
 #include "text_font.h"
 #include "tile.h"
 #include "window_manager.h"
+#include "touch_controls.h"
+#include "dev_autotest.h"
 
 namespace fallout {
 
@@ -562,6 +565,8 @@ static int wmMatchEntranceFromMap(City areaIdx, Map mapIdx, int* entranceIdxPtr)
 static int wmMatchEntranceElevFromMap(City areaIdx, Map mapIdx, int elevation, int* entranceIdxPtr);
 static int wmMatchAreaFromMap(Map mapIdx, City* areaIdxPtr);
 static int wmWorldMapFunc(int a1);
+static bool wmTravelUpdate(unsigned int now, int stopX, int stopY, unsigned int* partyHealTimePtr);
+static int wmEnterPartyLocation(Map* mapPtr);
 static int wmInterfaceCenterOnParty();
 static void wmCheckGameEvents();
 static void wmClearRandomEncounterState();
@@ -586,6 +591,9 @@ static void wmInterfaceScrollTabsStart(int delta);
 static void wmInterfaceScrollTabsStop();
 static void wmInterfaceScrollTabsUpdate();
 static int wmInterfaceInit();
+static int wmInterfaceWindowInit();
+static bool wmTouchDragHandler(int x, int y, int dx, int dy, bool began);
+static int wmPartyClickRadius();
 static int wmInterfaceExit();
 static int wmInterfaceScroll(int dx, int dy, bool* successPtr);
 static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* success, bool shouldRefresh);
@@ -754,6 +762,14 @@ static unsigned char* wmBkWinBuf = nullptr;
 
 // CE: Offscreen buffer for safe city overlay rendering
 static unsigned char* wmOverlayOffscreenBuf = nullptr;
+
+// CE: The game's window of the world map exists: under the mobile UI there's
+// none (its screens draw the world map and the town maps), drawing into it is
+// skipped.
+static bool wmInterfaceHasWindow()
+{
+    return wmBkWinBuf != nullptr;
+}
 #define WM_OVERLAY_BUFFER_SIZE (200)
 
 // 0x51DE2C wmWorldOffsetX
@@ -3401,10 +3417,279 @@ int wmMapMarkMapEntranceState(Map mapIdx, int elevation, int state)
     return 0;
 }
 
+void wmGetInterfaceState(int* offsetX, int* offsetY, int* partyX, int* partyY, bool* isWalking, Rect* viewRect)
+{
+    *offsetX = wmWorldOffsetX;
+    *offsetY = wmWorldOffsetY;
+    *partyX = wmGenData.worldPosX;
+    *partyY = wmGenData.worldPosY;
+    *isWalking = wmGenData.isWalking;
+
+    Rect windowRect;
+    windowGetRect(wmBkWin, &windowRect);
+    viewRect->left = windowRect.left + WM_VIEW_X;
+    viewRect->top = windowRect.top + WM_VIEW_Y;
+    viewRect->right = viewRect->left + WM_VIEW_WIDTH - 1;
+    viewRect->bottom = viewRect->top + WM_VIEW_HEIGHT - 1;
+}
+
 // 0x4BFE0C wmWorldMap
 void wmWorldMap()
 {
     wmWorldMapFunc(0);
+}
+
+// The party's travel this frame, at the game's pace: its steps (more in the
+// car, which uses gas), healing, time, random encounters. [stopX] / [stopY]
+// is the place matched to an area when the car runs out of gas (the game's
+// window passes the cursor's). Returns true when the world map closes (an
+// encounter's map loads, the game quits).
+static bool wmTravelUpdate(unsigned int now, int stopX, int stopY, unsigned int* partyHealTimePtr)
+{
+    if (wmGenData.isWalking && wmTravelTickDue(now)) {
+        wmPartyWalkingStep();
+
+        if (wmGenData.isInCar) {
+            wmPartyWalkingStep();
+            wmPartyWalkingStep();
+            wmPartyWalkingStep();
+
+            if (gameGetGlobalVar(GVAR_CAR_BLOWER)) {
+                wmPartyWalkingStep();
+            }
+
+            if (gameGetGlobalVar(GVAR_NEW_RENO_CAR_UPGRADE)) {
+                wmPartyWalkingStep();
+            }
+
+            if (gameGetGlobalVar(GVAR_NEW_RENO_SUPER_CAR)) {
+                wmPartyWalkingStep();
+                wmPartyWalkingStep();
+                wmPartyWalkingStep();
+            }
+
+            wmGenData.carImageCurrentFrameIndex++;
+            if (wmGenData.carImageCurrentFrameIndex >= artGetFrameCount(wmGenData.carImageFrm)) {
+                wmGenData.carImageCurrentFrameIndex = 0;
+            }
+
+            wmCarUseGas(100);
+
+            if (wmGenData.carFuel <= 0) {
+                wmGenData.walkDestinationX = 0;
+                wmGenData.walkDestinationY = 0;
+                wmGenData.isWalking = false;
+
+                wmMatchWorldPosToArea(stopX, stopY, &(wmGenData.currentAreaId));
+
+                wmGenData.isInCar = false;
+
+                if (wmGenData.currentAreaId == CITY_INVALID) {
+                    wmGenData.currentCarAreaId = CITY_CAR_OUT_OF_GAS;
+
+                    CityInfo* city = &(wmAreaInfoList[CITY_CAR_OUT_OF_GAS]);
+
+                    CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
+                    int worldmapX = wmGenData.worldPosX + wmGenData.hotspotNormalFrmImage.getWidth() / 2 + citySizeDescription->frmImage.getWidth() / 2;
+                    int worldmapY = wmGenData.worldPosY + wmGenData.hotspotNormalFrmImage.getHeight() / 2 + citySizeDescription->frmImage.getHeight() / 2;
+                    wmAreaSetWorldPos(CITY_CAR_OUT_OF_GAS, worldmapX, worldmapY);
+
+                    city->state = CITY_STATE_KNOWN;
+                    city->visitedState = VisitedState::Known;
+
+                    wmGenData.currentAreaId = CITY_CAR_OUT_OF_GAS;
+                } else {
+                    wmGenData.currentCarAreaId = wmGenData.currentAreaId;
+                }
+
+                debugPrint("\nRan outta gas!");
+            }
+        }
+
+        wmInterfaceRefresh();
+
+        if (getTicksBetween(now, *partyHealTimePtr) > 1000) {
+            if (_partyMemberRestingHeal(3)) {
+                interfaceRenderHitPoints(false);
+                *partyHealTimePtr = now;
+            }
+        }
+
+        wmMarkSubTileRadiusVisited(wmGenData.worldPosX, wmGenData.worldPosY);
+
+        if (wmGenData.walkDistance <= 0) {
+            wmGenData.isWalking = false;
+            wmMatchWorldPosToArea(wmGenData.worldPosX, wmGenData.worldPosY, &(wmGenData.currentAreaId));
+        }
+
+        wmInterfaceRefresh();
+
+        if (wmGameTimeIncrement(18000)) {
+            if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
+                return true;
+            }
+        }
+
+        if (wmGenData.isWalking) {
+            Map mapToLoad = MAP_INVALID;
+            if (wmRndEncounterOccurred(&mapToLoad)) {
+                if (mapToLoad != MAP_INVALID) {
+                    if (wmGenData.isInCar) {
+                        City areaIdx;
+                        if (wmTryMatchAreaContainingMapIdx(mapToLoad, &areaIdx)) {
+                            wmGenData.currentCarAreaId = areaIdx;
+                        }
+                    }
+
+                    mapLoadById(mapToLoad);
+                }
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Enters the place the party stands at, as tapping the party does: a
+// visited town with its map shows the town map, another area loads its first
+// map, the wasteland its encounter map. [mapPtr] - the map loaded,
+// MAP_INVALID none (the town map was left). -1 - error.
+static int wmEnterPartyLocation(Map* mapPtr)
+{
+    Map map = MAP_INVALID;
+    *mapPtr = MAP_INVALID;
+
+    if (wmGenData.currentAreaId != CITY_INVALID) {
+        CityInfo* city = &(wmAreaInfoList[wmGenData.currentAreaId]);
+        if (city->visitedState == VisitedState::Visited && city->mapFid != -1) {
+            if (wmTownMapFunc(&map) == -1) {
+                return -1;
+            }
+        } else {
+            int elevation;
+            int tile;
+            Rotation rotation;
+            if (wmAreaFindFirstValidMap(&map, &elevation, &tile, &rotation) == -1) {
+                return -1;
+            }
+
+            mapSetEnteringLocation(elevation, tile, rotation);
+
+            // SFALL/CE: LocalMapEnter runs after this first-entry state
+            // transition, so a hook that redirects to a different map still
+            // leaves the clicked area marked visited.
+            city->visitedState = VisitedState::Visited;
+        }
+    } else {
+        map = MAP_FIRST;
+    }
+
+    if (map != MAP_INVALID) {
+        wmRunLocalMapEnterHook(&map);
+        if (wmGenData.isInCar) {
+            wmGenData.isInCar = false;
+            if (wmGenData.currentAreaId == CITY_INVALID) {
+                City areaIdx;
+                if (wmTryMatchAreaContainingMapIdx(map, &areaIdx)) {
+                    wmGenData.currentCarAreaId = areaIdx;
+                }
+            } else {
+                wmGenData.currentCarAreaId = wmGenData.currentAreaId;
+            }
+        }
+
+        mapLoadById(map);
+    }
+
+    *mapPtr = map;
+    return 0;
+}
+
+// CE: Mobile UI: the world map's screen (mui_worldmap.cc) shows the game's
+// state and asks for travel and entering; the travel runs as in the game's
+// window.
+static int wmWorldMapMobileLoop()
+{
+    int rc = 0;
+    Map map = MAP_INVALID;
+    unsigned int partyHealTime = 0;
+
+    muiWorldmapShow();
+
+    while (true) {
+        sharedFpsLimiter.mark();
+
+        int keyCode = inputGetInput();
+
+        devAutotestTick();
+
+        // SFALL: WorldmapLoopHook.
+        sfall_gl_scr_process_worldmap();
+
+        unsigned int now = getTicks();
+
+        if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
+            showQuitConfirmationDialog();
+        } else if (keyCode == KEY_ESCAPE) {
+            muiWorldmapBack();
+        }
+
+        // NOTE: Uninline.
+        wmCheckGameEvents();
+
+        if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
+            break;
+        }
+
+        // A car out of gas stops where the party is.
+        if (wmTravelUpdate(now, wmGenData.worldPosX, wmGenData.worldPosY, &partyHealTime)) {
+            break;
+        }
+
+        MuiWorldmapAction action = muiWorldmapTakeAction();
+        switch (action.type) {
+        case MuiWorldmapActionType::TravelTo: {
+            int width = wmNumHorizontalTiles * WM_TILE_WIDTH;
+            int height = wmNumHorizontalTiles > 0 ? wmMaxTileNum / wmNumHorizontalTiles * WM_TILE_HEIGHT : 0;
+            int x = std::clamp(static_cast<int>(action.x), 0, std::max(width - 1, 0));
+            int y = std::clamp(static_cast<int>(action.y), 0, std::max(height - 1, 0));
+            wmPartyInitWalking(x, y);
+            break;
+        }
+        case MuiWorldmapActionType::TravelToArea:
+            if (cityIsValid(static_cast<City>(action.area)) && wmAreaIsKnown(static_cast<City>(action.area)) && action.area != wmGenData.currentAreaId) {
+                // As the game's town list (see `wmWorldMapFunc`).
+                CityInfo* city = &(wmAreaInfoList[action.area]);
+                CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
+                wmPartyInitWalking(city->x + citySizeDescription->frmImage.getWidth() / 2 - WM_VIEW_X,
+                    city->y + citySizeDescription->frmImage.getHeight() / 2 - WM_VIEW_Y);
+            }
+            break;
+        case MuiWorldmapActionType::Enter:
+            if (!wmGenData.isWalking && wmEnterPartyLocation(&map) == -1) {
+                rc = -1;
+            }
+            break;
+        case MuiWorldmapActionType::Menu:
+            muiWorldmapMenuRun();
+            break;
+        case MuiWorldmapActionType::None:
+            break;
+        }
+
+        if (map != MAP_INVALID || rc == -1 || _game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
+            break;
+        }
+
+        renderFpsCounter();
+        renderPresent();
+        sharedFpsLimiter.throttle();
+    }
+
+    muiWorldmapHide();
+
+    return rc;
 }
 
 // 0x4BFE10 wmWorldMapFunc
@@ -3429,10 +3714,23 @@ static int wmWorldMapFunc(int a1)
     wmResetTerrainInfo();
     wmLastTravelTick = getTicks();
 
+    if (muiIsEnabled()) {
+        rc = wmWorldMapMobileLoop();
+
+        if (wmInterfaceExit() == -1) {
+            paletteSetEntries(_cmap);
+            return -1;
+        }
+
+        return rc;
+    }
+
     while (true) {
         sharedFpsLimiter.mark();
 
         int keyCode = inputGetInput();
+
+        devAutotestTick();
 
         // SFALL: WorldmapLoopHook.
         sfall_gl_scr_process_worldmap();
@@ -3471,111 +3769,13 @@ static int wmWorldMapFunc(int a1)
 
         int mouseEvent = mouseGetEvent();
 
-        if (wmGenData.isWalking && wmTravelTickDue(now)) {
-            wmPartyWalkingStep();
-
-            if (wmGenData.isInCar) {
-                wmPartyWalkingStep();
-                wmPartyWalkingStep();
-                wmPartyWalkingStep();
-
-                if (gameGetGlobalVar(GVAR_CAR_BLOWER)) {
-                    wmPartyWalkingStep();
-                }
-
-                if (gameGetGlobalVar(GVAR_NEW_RENO_CAR_UPGRADE)) {
-                    wmPartyWalkingStep();
-                }
-
-                if (gameGetGlobalVar(GVAR_NEW_RENO_SUPER_CAR)) {
-                    wmPartyWalkingStep();
-                    wmPartyWalkingStep();
-                    wmPartyWalkingStep();
-                }
-
-                wmGenData.carImageCurrentFrameIndex++;
-                if (wmGenData.carImageCurrentFrameIndex >= artGetFrameCount(wmGenData.carImageFrm)) {
-                    wmGenData.carImageCurrentFrameIndex = 0;
-                }
-
-                wmCarUseGas(100);
-
-                if (wmGenData.carFuel <= 0) {
-                    wmGenData.walkDestinationX = 0;
-                    wmGenData.walkDestinationY = 0;
-                    wmGenData.isWalking = false;
-
-                    wmMatchWorldPosToArea(worldX, worldY, &(wmGenData.currentAreaId));
-
-                    wmGenData.isInCar = false;
-
-                    if (wmGenData.currentAreaId == CITY_INVALID) {
-                        wmGenData.currentCarAreaId = CITY_CAR_OUT_OF_GAS;
-
-                        CityInfo* city = &(wmAreaInfoList[CITY_CAR_OUT_OF_GAS]);
-
-                        CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
-                        int worldmapX = wmGenData.worldPosX + wmGenData.hotspotNormalFrmImage.getWidth() / 2 + citySizeDescription->frmImage.getWidth() / 2;
-                        int worldmapY = wmGenData.worldPosY + wmGenData.hotspotNormalFrmImage.getHeight() / 2 + citySizeDescription->frmImage.getHeight() / 2;
-                        wmAreaSetWorldPos(CITY_CAR_OUT_OF_GAS, worldmapX, worldmapY);
-
-                        city->state = CITY_STATE_KNOWN;
-                        city->visitedState = VisitedState::Known;
-
-                        wmGenData.currentAreaId = CITY_CAR_OUT_OF_GAS;
-                    } else {
-                        wmGenData.currentCarAreaId = wmGenData.currentAreaId;
-                    }
-
-                    debugPrint("\nRan outta gas!");
-                }
-            }
-
-            wmInterfaceRefresh();
-
-            if (getTicksBetween(now, partyHealTime) > 1000) {
-                if (_partyMemberRestingHeal(3)) {
-                    interfaceRenderHitPoints(false);
-                    partyHealTime = now;
-                }
-            }
-
-            wmMarkSubTileRadiusVisited(wmGenData.worldPosX, wmGenData.worldPosY);
-
-            if (wmGenData.walkDistance <= 0) {
-                wmGenData.isWalking = false;
-                wmMatchWorldPosToArea(wmGenData.worldPosX, wmGenData.worldPosY, &(wmGenData.currentAreaId));
-            }
-
-            wmInterfaceRefresh();
-
-            if (wmGameTimeIncrement(18000)) {
-                if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
-                    break;
-                }
-            }
-
-            if (wmGenData.isWalking) {
-                Map mapToLoad = MAP_INVALID;
-                if (wmRndEncounterOccurred(&mapToLoad)) {
-                    if (mapToLoad != MAP_INVALID) {
-                        if (wmGenData.isInCar) {
-                            City areaIdx;
-                            if (wmTryMatchAreaContainingMapIdx(mapToLoad, &areaIdx)) {
-                                wmGenData.currentCarAreaId = areaIdx;
-                            }
-                        }
-
-                        mapLoadById(mapToLoad);
-                    }
-                    break;
-                }
-            }
+        if (wmTravelUpdate(now, worldX, worldY, &partyHealTime)) {
+            break;
         }
 
         if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0 && (mouseEvent & MOUSE_EVENT_LEFT_BUTTON_REPEAT) == 0) {
             if (mouseHitTestInWindow(wmBkWin, WM_VIEW_X, WM_VIEW_Y, WM_VIEW_WIDTH + WM_VIEW_X, WM_VIEW_HEIGHT + WM_VIEW_Y)) {
-                if (!wmGenData.isWalking && !mousePressed && abs(wmGenData.worldPosX - worldX) < 5 && abs(wmGenData.worldPosY - worldY) < 5) {
+                if (!wmGenData.isWalking && !mousePressed && abs(wmGenData.worldPosX - worldX) < wmPartyClickRadius() && abs(wmGenData.worldPosY - worldY) < wmPartyClickRadius()) {
                     mousePressed = true;
                     wmInterfaceRefresh();
                     renderFpsCounter();
@@ -3591,50 +3791,13 @@ static int wmWorldMapFunc(int a1)
                 mousePressed = false;
                 wmInterfaceRefresh();
 
-                if (abs(wmGenData.worldPosX - worldX) < 5 && abs(wmGenData.worldPosY - worldY) < 5) {
-                    if (wmGenData.currentAreaId != CITY_INVALID) {
-                        CityInfo* city = &(wmAreaInfoList[wmGenData.currentAreaId]);
-                        if (city->visitedState == VisitedState::Visited && city->mapFid != -1) {
-                            if (wmTownMapFunc(&map) == -1) {
-                                rc = -1;
-                                break;
-                            }
-                        } else {
-                            int elevation;
-                            int tile;
-                            Rotation rotation;
-                            if (wmAreaFindFirstValidMap(&map, &elevation, &tile, &rotation) == -1) {
-                                rc = -1;
-                                break;
-                            }
-
-                            mapSetEnteringLocation(elevation, tile, rotation);
-
-                            // SFALL/CE: LocalMapEnter runs after this first-entry
-                            // state transition, so a hook that redirects to a
-                            // different map still leaves the clicked area marked
-                            // visited.
-                            city->visitedState = VisitedState::Visited;
-                        }
-                    } else {
-                        map = MAP_FIRST;
+                if (abs(wmGenData.worldPosX - worldX) < wmPartyClickRadius() && abs(wmGenData.worldPosY - worldY) < wmPartyClickRadius()) {
+                    if (wmEnterPartyLocation(&map) == -1) {
+                        rc = -1;
+                        break;
                     }
 
                     if (map != MAP_INVALID) {
-                        wmRunLocalMapEnterHook(&map);
-                        if (wmGenData.isInCar) {
-                            wmGenData.isInCar = false;
-                            if (wmGenData.currentAreaId == CITY_INVALID) {
-                                City areaIdx;
-                                if (wmTryMatchAreaContainingMapIdx(map, &areaIdx)) {
-                                    wmGenData.currentCarAreaId = areaIdx;
-                                }
-                            } else {
-                                wmGenData.currentCarAreaId = wmGenData.currentAreaId;
-                            }
-                        }
-
-                        mapLoadById(map);
                         break;
                     }
                 }
@@ -4994,6 +5157,33 @@ static void wmInterfaceScrollTabsUpdate()
 }
 
 // 0x4C2324 wmInterfaceInit
+// CE: One finger drag over the map scrolls it (touch controls).
+static bool wmTouchDragHandler(int x, int y, int dx, int dy, bool began)
+{
+    if (began) {
+        Rect windowRect;
+        windowGetRect(wmBkWin, &windowRect);
+        int viewX = x - windowRect.left;
+        int viewY = y - windowRect.top;
+        return viewX >= WM_VIEW_X && viewX < WM_VIEW_X + WM_VIEW_WIDTH
+            && viewY >= WM_VIEW_Y && viewY < WM_VIEW_Y + WM_VIEW_HEIGHT;
+    }
+
+    // Map follows the finger.
+    if (dx != 0 || dy != 0) {
+        wmInterfaceScrollPixel(abs(dx), abs(dy), -dx, -dy, nullptr, true);
+    }
+
+    return true;
+}
+
+// CE: Distance from party marker which counts as clicking on it (entering
+// location). Fingers are less precise than mouse.
+static int wmPartyClickRadius()
+{
+    return touchControlsIsEnabled() ? 12 : 5;
+}
+
 static int wmInterfaceInit()
 {
     wmLastRndTime = getTicks();
@@ -5020,45 +5210,10 @@ static int wmInterfaceInit()
     gameMouseSetCursor(MOUSE_CURSOR_ARROW);
 
     // CE: Clear map window.
-    windowFill(gIsoWindow,
-        0,
-        0,
-        windowGetWidth(gIsoWindow),
-        windowGetHeight(gIsoWindow),
-        COLOR_BLACK);
-    windowRefresh(gIsoWindow);
+    isoWindowClear();
 
     // CE: Stop all animations.
     animationStop();
-
-    int worldmapWindowX = (screenGetWidth() - WM_WINDOW_WIDTH) / 2;
-    int worldmapWindowY = (screenGetHeight() - WM_WINDOW_HEIGHT) / 2;
-    wmBkWin = windowCreate(worldmapWindowX, worldmapWindowY, WM_WINDOW_WIDTH, WM_WINDOW_HEIGHT, COLOR_BLACK, WINDOW_MOVE_ON_TOP);
-    if (wmBkWin == -1) {
-        return -1;
-    }
-
-    if (!_backgroundFrmImage.lock(InterfaceFrameId::WorldMapDialogBox)) {
-        return -1;
-    }
-
-    wmBkWinBuf = windowGetBuffer(wmBkWin);
-    if (wmBkWinBuf == nullptr) {
-        return -1;
-    }
-
-    // CE: Allocate offscreen buffer for safe city overlay rendering
-    wmOverlayOffscreenBuf = (unsigned char*)internal_malloc(WM_OVERLAY_BUFFER_SIZE * WM_OVERLAY_BUFFER_SIZE);
-    if (wmOverlayOffscreenBuf == nullptr) {
-        return -1;
-    }
-
-    blitBufferToBuffer(_backgroundFrmImage.getData(),
-        _backgroundFrmImage.getWidth(),
-        _backgroundFrmImage.getHeight(),
-        _backgroundFrmImage.getWidth(),
-        wmBkWinBuf,
-        WM_WINDOW_WIDTH);
 
     for (CitySize citySize = CITY_SIZE_FIRST; citySize < CITY_SIZE_COUNT; citySize++) {
         CitySizeDescription* citySizeDescription = &(wmSphereData[citySize]);
@@ -5092,6 +5247,79 @@ static int wmInterfaceInit()
     for (int index = 0; index < wmMaxTileNum; index++) {
         wmTileInfoList[index].handle = INVALID_CACHE_ENTRY;
     }
+
+    if (wmGenData.isInCar) {
+        if (!wmLockCarInterfaceArt(carInterfaceArtFrmId, &(wmGenData.carImageFrm), &(wmGenData.carImageFrmHandle))) {
+            carInterfaceArtFrmId = kDefaultCarInterfaceArtFrmId;
+
+            if (!wmLockCarInterfaceArt(carInterfaceArtFrmId, &(wmGenData.carImageFrm), &(wmGenData.carImageFrmHandle))) {
+                return -1;
+            }
+        }
+
+        wmGenData.carImageFrmWidth = artGetWidth(wmGenData.carImageFrm);
+        wmGenData.carImageFrmHeight = artGetHeight(wmGenData.carImageFrm);
+    }
+
+    if (wmMakeTabsLabelList(&wmLabelList, &wmLabelCount) == -1) {
+        return -1;
+    }
+
+    // CE: Mobile UI: its screen draws the world map, the game's window, its
+    // art and buttons aren't made.
+    if (!muiIsEnabled() && wmInterfaceWindowInit() == -1) {
+        return -1;
+    }
+
+    wmInterfaceWasInitialized = 1;
+
+    if (wmInterfaceRefresh() == -1) {
+        return -1;
+    }
+
+    if (wmBkWin != -1) {
+        windowRefresh(wmBkWin);
+    }
+
+    scriptsDisable();
+    _scr_remove_all();
+
+    return 0;
+}
+
+// The game's window of the world map: its background, dial, town tabs,
+// car overlay and buttons, scrolling by the mouse at the window's edges.
+static int wmInterfaceWindowInit()
+{
+    int worldmapWindowX = (screenGetWidth() - WM_WINDOW_WIDTH) / 2;
+    int worldmapWindowY = (screenGetHeight() - WM_WINDOW_HEIGHT) / 2;
+    wmBkWin = windowCreate(worldmapWindowX, worldmapWindowY, WM_WINDOW_WIDTH, WM_WINDOW_HEIGHT, COLOR_BLACK, WINDOW_MOVE_ON_TOP);
+    touchControlsSetDragHandler(wmTouchDragHandler);
+    if (wmBkWin == -1) {
+        return -1;
+    }
+
+    if (!_backgroundFrmImage.lock(InterfaceFrameId::WorldMapDialogBox)) {
+        return -1;
+    }
+
+    wmBkWinBuf = windowGetBuffer(wmBkWin);
+    if (wmBkWinBuf == nullptr) {
+        return -1;
+    }
+
+    // CE: Allocate offscreen buffer for safe city overlay rendering
+    wmOverlayOffscreenBuf = (unsigned char*)internal_malloc(WM_OVERLAY_BUFFER_SIZE * WM_OVERLAY_BUFFER_SIZE);
+    if (wmOverlayOffscreenBuf == nullptr) {
+        return -1;
+    }
+
+    blitBufferToBuffer(_backgroundFrmImage.getData(),
+        _backgroundFrmImage.getWidth(),
+        _backgroundFrmImage.getHeight(),
+        _backgroundFrmImage.getWidth(),
+        wmBkWinBuf,
+        WM_WINDOW_WIDTH);
 
     if (!wmGenData.tabsBackgroundFrmImage.lock(InterfaceFrameId::WorldMapTownTabsUnderlay)) {
         return -1;
@@ -5232,34 +5460,7 @@ static int wmInterfaceInit()
         buttonSetCallbacks(scrollDownBtn, _gsound_red_butt_press, _gsound_red_butt_release);
     }
 
-    if (wmGenData.isInCar) {
-        if (!wmLockCarInterfaceArt(carInterfaceArtFrmId, &(wmGenData.carImageFrm), &(wmGenData.carImageFrmHandle))) {
-            carInterfaceArtFrmId = kDefaultCarInterfaceArtFrmId;
-
-            if (!wmLockCarInterfaceArt(carInterfaceArtFrmId, &(wmGenData.carImageFrm), &(wmGenData.carImageFrmHandle))) {
-                return -1;
-            }
-        }
-
-        wmGenData.carImageFrmWidth = artGetWidth(wmGenData.carImageFrm);
-        wmGenData.carImageFrmHeight = artGetHeight(wmGenData.carImageFrm);
-    }
-
     tickersAdd(wmMouseBkProc);
-
-    if (wmMakeTabsLabelList(&wmLabelList, &wmLabelCount) == -1) {
-        return -1;
-    }
-
-    wmInterfaceWasInitialized = 1;
-
-    if (wmInterfaceRefresh() == -1) {
-        return -1;
-    }
-
-    windowRefresh(wmBkWin);
-    scriptsDisable();
-    _scr_remove_all();
 
     return 0;
 }
@@ -5269,6 +5470,8 @@ static int wmInterfaceExit()
 {
     int i;
     TileInfo* tile;
+
+    touchControlsSetDragHandler(nullptr);
 
     tickersRemove(wmMouseBkProc);
 
@@ -5744,7 +5947,7 @@ static int wmTileGrabArt(int tileIdx)
 // 0x4C3830 wmInterfaceRefresh
 static int wmInterfaceRefresh()
 {
-    if (wmInterfaceWasInitialized != 1) {
+    if (wmInterfaceWasInitialized != 1 || !wmInterfaceHasWindow()) {
         return 0;
     }
 
@@ -5894,6 +6097,10 @@ static int wmInterfaceRefresh()
 // 0x4C3C9C wmInterfaceRefreshDate
 static void wmInterfaceRefreshDate(bool shouldRefreshWindow)
 {
+    if (!wmInterfaceHasWindow()) {
+        return;
+    }
+
     int month;
     int day;
     int year;
@@ -6191,6 +6398,10 @@ static void wmInterfaceDrawSubTileRectFogged(unsigned char* dest, int width, int
 // 0x4C40E4 wmInterfaceDrawSubTileList
 static int wmInterfaceDrawSubTileList(TileInfo* tileInfo, int column, int row, int x, int y, int a6)
 {
+    if (!wmInterfaceHasWindow()) {
+        return 0;
+    }
+
     SubtileInfo* subtileInfo = &(tileInfo->subtiles[row][column]);
 
     int destY = y;
@@ -6240,6 +6451,10 @@ static int wmInterfaceDrawSubTileList(TileInfo* tileInfo, int column, int row, i
 // 0x4C41EC wmDrawCursorStopped
 static int wmDrawCursorStopped()
 {
+    if (!wmInterfaceHasWindow()) {
+        return 0;
+    }
+
     unsigned char* src;
     int width;
     int height;
@@ -6321,6 +6536,10 @@ static int wmDrawCursorStopped()
 
 static void wmInterfaceDrawTerrainInfo()
 {
+    if (!wmInterfaceHasWindow()) {
+        return;
+    }
+
     if (!wmTerrainInfoIsVisible || !wmCursorIsVisible()) {
         return;
     }
@@ -6604,9 +6823,61 @@ void wmTownMap()
 }
 
 // 0x4C485C wmTownMapFunc
+// CE: Mobile UI: the town map as its screen: the town's picture, its
+// entrances with their names (the game's rules for which show).
+static int wmTownMapMobile(Map* mapIdxPtr)
+{
+    if (wmGenData.currentAreaId == CITY_INVALID) {
+        return -1;
+    }
+
+    CityInfo* city = &(wmAreaInfoList[wmGenData.currentAreaId]);
+
+    MuiTownMapView view;
+    char name[40];
+    wmGetAreaName(city, name);
+    view.name = name;
+    view.pictureFid = city->mapFid;
+
+    for (int index = 0; index < city->entrancesLength; index++) {
+        EntranceInfo* entrance = &(city->entrances[index]);
+        if (entrance->state == 0 || entrance->x == -1 || entrance->y == -1) {
+            continue;
+        }
+
+        // Entrances are placed in the game's window, the picture at its
+        // view; the marker's center.
+        MuiTownMapEntrance item;
+        item.index = index;
+        item.x = static_cast<float>(entrance->x - WM_VIEW_X + wmGenData.hotspotNormalFrmImage.getWidth() / 2);
+        item.y = static_cast<float>(entrance->y - WM_VIEW_Y + wmGenData.hotspotNormalFrmImage.getHeight() / 2);
+
+        MessageListItem messageListItem;
+        messageListItem.num = 200 + 10 * wmGenData.currentAreaId + index;
+        if (messageListGetItem(&wmMsgFile, &messageListItem) && messageListItem.text != nullptr) {
+            item.name = messageListItem.text;
+        }
+
+        view.entrances.push_back(item);
+    }
+
+    int index = muiTownMapRun(view);
+    if (index >= 0 && index < city->entrancesLength) {
+        EntranceInfo* entrance = &(city->entrances[index]);
+        *mapIdxPtr = entrance->map;
+        mapSetEnteringLocation(entrance->elevation, entrance->tile, entrance->rotation);
+    }
+
+    return 0;
+}
+
 static int wmTownMapFunc(Map* mapIdxPtr)
 {
     *mapIdxPtr = MAP_INVALID;
+
+    if (muiIsEnabled()) {
+        return wmTownMapMobile(mapIdxPtr);
+    }
 
     if (wmTownMapInit() == -1) {
         wmTownMapExit();
@@ -6765,6 +7036,10 @@ static int wmTownMapInit()
 // 0x4C4BD0 wmTownMapRefresh
 static int wmTownMapRefresh()
 {
+    if (!wmInterfaceHasWindow()) {
+        return 0;
+    }
+
     blitBufferToBuffer(_townFrmImage.getData(),
         std::min(_townFrmImage.getWidth(), WM_VIEW_WIDTH),
         std::min(_townFrmImage.getHeight(), WM_VIEW_HEIGHT),
@@ -7071,6 +7346,10 @@ int wmSfxIdxName(int sfxIdx, char** namePtr)
 // 0x4C50F4 wmRefreshInterfaceOverlay
 static int wmRefreshInterfaceOverlay(bool shouldRefreshWindow)
 {
+    if (!wmInterfaceHasWindow()) {
+        return 0;
+    }
+
     blitBufferToBufferTrans(_backgroundFrmImage.getData(),
         _backgroundFrmImage.getWidth(),
         _backgroundFrmImage.getHeight(),
@@ -7127,6 +7406,10 @@ static int wmRefreshInterfaceOverlay(bool shouldRefreshWindow)
 // 0x4C5244 wmInterfaceRefreshCarFuel
 static void wmInterfaceRefreshCarFuel()
 {
+    if (!wmInterfaceHasWindow()) {
+        return;
+    }
+
     int ratio = (WM_WINDOW_CAR_FUEL_BAR_HEIGHT * wmGenData.carFuel) / CAR_FUEL_MAX;
     if ((ratio & 1) != 0) {
         ratio -= 1;
@@ -7153,6 +7436,10 @@ static void wmInterfaceRefreshCarFuel()
 // 0x4C52B0 wmRefreshTabs
 static int wmRefreshTabs()
 {
+    if (!wmInterfaceHasWindow()) {
+        return 0;
+    }
+
     unsigned char* firstTabBottomDest;
     unsigned char* firstTabDest;
     int firstVisibleLabelIndex;
@@ -7335,6 +7622,10 @@ static int wmFreeTabsLabelList(int** quickDestinationsListPtr, int* quickDestina
 // 0x4C5734 wmRefreshInterfaceDial
 static void wmRefreshInterfaceDial(bool shouldRefreshWindow)
 {
+    if (!wmInterfaceHasWindow()) {
+        return;
+    }
+
     unsigned char* data = artGetFrameData(wmGenData.dialFrm, wmGenData.dialFrmCurrentFrameIndex);
     blitBufferToBufferTrans(data,
         wmGenData.dialFrmWidth,
@@ -7590,6 +7881,111 @@ void wmForceEncounter(Map map, EncounterFlag flags)
     } else {
         wmForceEncounterFlags &= ~ENCOUNTER_FLAG_LOCK2;
     }
+}
+
+void wmMobileGetState(WorldmapMobileState* state)
+{
+    int rows = wmNumHorizontalTiles > 0 ? wmMaxTileNum / wmNumHorizontalTiles : 0;
+    state->tileWidth = WM_TILE_WIDTH;
+    state->tileHeight = WM_TILE_HEIGHT;
+    state->tilesPerRow = wmNumHorizontalTiles;
+    state->width = wmNumHorizontalTiles * WM_TILE_WIDTH;
+    state->height = rows * WM_TILE_HEIGHT;
+
+    state->tileFids.resize(wmMaxTileNum);
+    for (int index = 0; index < wmMaxTileNum; index++) {
+        state->tileFids[index] = wmTileInfoList[index].fid;
+    }
+
+    state->subtileSize = WM_SUBTILE_SIZE;
+    state->subtilesPerRow = wmNumHorizontalTiles * SUBTILE_GRID_WIDTH;
+    state->subtileRows = rows * SUBTILE_GRID_HEIGHT;
+    state->subtiles.resize(static_cast<size_t>(state->subtilesPerRow) * state->subtileRows);
+    for (int tile = 0; tile < wmMaxTileNum; tile++) {
+        TileInfo* tileInfo = &(wmTileInfoList[tile]);
+        int baseX = tile % wmNumHorizontalTiles * SUBTILE_GRID_WIDTH;
+        int baseY = tile / wmNumHorizontalTiles * SUBTILE_GRID_HEIGHT;
+        for (int row = 0; row < SUBTILE_GRID_HEIGHT; row++) {
+            for (int column = 0; column < SUBTILE_GRID_WIDTH; column++) {
+                unsigned char value;
+                switch (tileInfo->subtiles[row][column].state) {
+                case SUBTILE_STATE_UNKNOWN:
+                    value = 0;
+                    break;
+                case SUBTILE_STATE_KNOWN:
+                    value = 1;
+                    break;
+                default:
+                    value = 2;
+                    break;
+                }
+                state->subtiles[static_cast<size_t>(baseY + row) * state->subtilesPerRow + baseX + column] = value;
+            }
+        }
+    }
+
+    // Areas as the game's window draws them: their circle's center (they are
+    // placed in the window, the terrain at its view).
+    state->cities.clear();
+    state->destinationArea = -1;
+    for (int index = 0; index < wmMaxAreaNum; index++) {
+        CityInfo* city = &(wmAreaInfoList[index]);
+        if (city->state == CITY_STATE_UNKNOWN) {
+            continue;
+        }
+
+        CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
+        int circleWidth = citySizeDescription->frmImage.getWidth();
+        int circleHeight = citySizeDescription->frmImage.getHeight();
+
+        WorldmapMobileCity item;
+        item.area = index;
+        item.x = static_cast<float>(city->x + circleWidth / 2 - WM_VIEW_X);
+        item.y = static_cast<float>(city->y + circleHeight / 2 - WM_VIEW_Y);
+        item.radius = circleWidth / 2.0f;
+        item.visited = city->visitedState == VisitedState::Visited;
+
+        if (!wmTownNamesHidden) {
+            char name[40];
+            if (wmAreaIsKnown(city->areaId)) {
+                wmGetAreaName(city, name);
+            } else {
+                MessageListItem messageListItem;
+                strncpy(name, getmsg(&wmMsgFile, &messageListItem, 1004), sizeof(name) - 1);
+                name[sizeof(name) - 1] = '\0';
+            }
+            item.name = name;
+        }
+
+        if (wmGenData.isWalking
+            && static_cast<int>(item.x) == wmGenData.walkDestinationX
+            && static_cast<int>(item.y) == wmGenData.walkDestinationY) {
+            state->destinationArea = index;
+        }
+
+        state->cities.push_back(item);
+    }
+
+    state->destinations.clear();
+    for (int index = 0; index < wmLabelCount; index++) {
+        state->destinations.push_back(wmLabelList[index]);
+    }
+
+    state->partyX = static_cast<float>(wmGenData.worldPosX);
+    state->partyY = static_cast<float>(wmGenData.worldPosY);
+    state->walking = wmGenData.isWalking;
+    state->destinationX = static_cast<float>(wmGenData.walkDestinationX);
+    state->destinationY = static_cast<float>(wmGenData.walkDestinationY);
+    state->currentArea = wmGenData.isWalking ? -1 : wmGenData.currentAreaId;
+
+    state->encounter = wmGenData.encounterIconIsVisible;
+    state->encounterSpecial = wmGenData.encounterCursorId == WORLD_MAP_ENCOUNTER_FRM_SPECIAL_DARK
+        || wmGenData.encounterCursorId == WORLD_MAP_ENCOUNTER_FRM_SPECIAL_BRIGHT;
+    state->encounterBright = wmGenData.encounterCursorId == WORLD_MAP_ENCOUNTER_FRM_RANDOM_BRIGHT
+        || wmGenData.encounterCursorId == WORLD_MAP_ENCOUNTER_FRM_SPECIAL_BRIGHT;
+
+    state->inCar = wmGenData.isInCar;
+    state->fuel = std::clamp(static_cast<float>(wmGenData.carFuel) / CAR_FUEL_MAX, 0.0f, 1.0f);
 }
 
 } // namespace fallout

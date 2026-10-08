@@ -1,5 +1,7 @@
 #include "movie.h"
 
+#include <string>
+
 #include <SDL.h>
 #include <string.h>
 #include <vector>
@@ -211,6 +213,11 @@ static int _movieX;
 // 0x638EB4 movieY
 static int _movieY;
 
+// CE: Mobile UI player mode (see `movieStartMobile`).
+static bool gMovieMobile = false;
+static bool gMoviePaused = false;
+static std::string gMovieSubtitleText;
+
 static SDL_Rect movieComputeDirectRect(int srcWidth, int srcHeight)
 {
     int availableX = _movieX;
@@ -289,6 +296,18 @@ static bool movieReadImpl(void* handle, void* buf, int count)
 // 0x486654 movie_MVE_ShowFrame
 static void movieDirectImpl(unsigned char* pixels, int src_width, int src_height, int, int, int, int, int, int)
 {
+    // Mobile UI player: every frame to the texture it draws.
+    if (gMovieMobile) {
+        if (!movieDirectOverlayEnsureTexture(src_width, src_height)) {
+            gMovieFlags |= MOVIE_EXTENDED_FLAG_ERROR;
+            return;
+        }
+
+        movieDirectOverlayUpload(pixels, src_width, src_height);
+        movieDirectOverlay.active = false;
+        return;
+    }
+
     if (gMovieWindow == -1) {
         return;
     }
@@ -472,6 +491,9 @@ static void _cleanupMovie(bool shouldEndMovie)
     _movieScaleFlag = 0;
     gMovieFlags = 0;
     gMovieWindow = -1;
+    gMovieMobile = false;
+    gMoviePaused = false;
+    gMovieSubtitleText.clear();
 }
 
 // 0x48711C movieClose
@@ -626,6 +648,22 @@ static void movieRenderSubtitles()
         return;
     }
 
+    // Mobile UI player: the text of the frame, it draws it.
+    if (gMovieMobile) {
+        int frame;
+        int dropped;
+        MVE_rmFrameCounts(&frame, &dropped);
+
+        while (gMovieSubtitleHead != nullptr && frame >= gMovieSubtitleHead->num) {
+            MovieSubtitleListNode* next = gMovieSubtitleHead->next;
+            gMovieSubtitleText = gMovieSubtitleHead->text;
+            internal_free_safe(gMovieSubtitleHead->text, __FILE__, __LINE__);
+            internal_free_safe(gMovieSubtitleHead, __FILE__, __LINE__);
+            gMovieSubtitleHead = next;
+        }
+        return;
+    }
+
     int subtitleX = _movieX;
     int subtitleW = _subtitleW;
     int movieY = _movieY;
@@ -768,7 +806,11 @@ static int _stepMovie()
     int stepResult = _MVE_rmStepMovie();
     if (stepResult != -1) {
         movieRenderSubtitles();
-        renderPresent();
+
+        // The mobile UI player's loop presents frames.
+        if (!gMovieMobile) {
+            renderPresent();
+        }
     }
 
     return stepResult;
@@ -806,6 +848,10 @@ void _movieUpdate()
         return;
     }
 
+    if (gMoviePaused) {
+        return;
+    }
+
     if (_stepMovie() == -1) {
         _cleanupMovie(true);
         return;
@@ -823,6 +869,78 @@ void _movieUpdate()
 int _moviePlaying()
 {
     return _running;
+}
+
+int movieStartMobile(char* filePath, bool subtitles)
+{
+    if (_running) {
+        return 1;
+    }
+
+    gMovieFileStream = movieOpen(filePath);
+    if (gMovieFileStream == nullptr) {
+        return 1;
+    }
+
+    gMovieWindow = -1;
+    _running = 1;
+    gMovieMobile = true;
+    gMoviePaused = false;
+    gMovieSubtitleText.clear();
+    _movieX = 0;
+    _movieY = 0;
+    _movieW = screenGetWidth();
+    _movieH = screenGetHeight();
+    _movieSubRectFlag = 0;
+    _movieScaleFlag = 0;
+    movieOutputRect = { 0, 0, 0, 0 };
+    gMovieFlags = MOVIE_EXTENDED_FLAG_DIRECT;
+
+    if (subtitles) {
+        gMovieFlags |= MOVIE_EXTENDED_FLAG_SUBTITLES;
+        movieLoadSubtitles(filePath);
+    }
+
+    MveSetShowFrame(movieDirectImpl);
+    MVE_rmPrepMovie(gMovieFileStream, 0, 0, 0);
+
+    return 0;
+}
+
+bool movieIsMobile()
+{
+    return _running && gMovieMobile;
+}
+
+SDL_Texture* movieGetFrameTexture(int* width, int* height)
+{
+    if (!gMovieMobile || movieDirectOverlay.texture == nullptr) {
+        return nullptr;
+    }
+
+    *width = movieDirectOverlay.srcWidth;
+    *height = movieDirectOverlay.srcHeight;
+    return movieDirectOverlay.texture;
+}
+
+const char* movieGetSubtitle()
+{
+    return gMovieMobile && !gMovieSubtitleText.empty() ? gMovieSubtitleText.c_str() : nullptr;
+}
+
+void moviePause(bool paused)
+{
+    if (!_running || paused == gMoviePaused) {
+        return;
+    }
+
+    gMoviePaused = paused;
+    MVE_rmHoldMovie(paused);
+}
+
+bool movieIsPaused()
+{
+    return _running && gMoviePaused;
 }
 
 void movieHandleFocusGained()

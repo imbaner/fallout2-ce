@@ -5,6 +5,7 @@
 #include "art.h"
 #include "color.h"
 #include "content_config.h"
+#include "dev_autotest.h"
 #include "debug.h"
 #include "draw.h"
 #include "font_manager.h"
@@ -14,6 +15,7 @@
 #include "input.h"
 #include "kb.h"
 #include "mouse.h"
+#include "mui.h"
 #include "palette.h"
 #include "platform_compat.h"
 #include "preferences.h"
@@ -498,6 +500,13 @@ int mainMenuWindowInit()
 
     colorPaletteLoad("color.pal");
 
+    // Mobile UI: its main menu screen shows while the menu does, no window.
+    if (muiIsEnabled()) {
+        gMainMenuWindowInitialized = true;
+        gMainMenuWindowHidden = true;
+        return 0;
+    }
+
     gMainMenuWindow = windowCreate(0,
         0,
         screenGetWidth(),
@@ -551,6 +560,7 @@ void mainMenuWindowFree()
         }
     }
 
+    muiMainMenuHide();
     mainMenuScaledButtonData.clear();
     mainMenuButtonPanelFrmImage.unlock();
     mainMenuButtonPressedFrmImage.unlock();
@@ -585,7 +595,10 @@ void mainMenuWindowHide(bool animate)
         soundContinueAll();
     }
 
-    windowHide(gMainMenuWindow);
+    if (gMainMenuWindow != -1) {
+        windowHide(gMainMenuWindow);
+    }
+    muiMainMenuHide();
     touch_set_touchscreen_mode(false);
 
     gMainMenuWindowHidden = true;
@@ -602,13 +615,18 @@ void mainMenuWindowUnhide(bool animate)
         return;
     }
 
-    windowShow(gMainMenuWindow);
+    if (gMainMenuWindow != -1) {
+        windowShow(gMainMenuWindow);
+    } else {
+        muiMainMenuShow();
+    }
     touch_set_touchscreen_mode(true);
 
     if (animate) {
         colorPaletteLoad("color.pal");
         paletteFadeTo(_cmap);
     }
+    muiMainMenuReady();
 
     gMainMenuWindowHidden = false;
 }
@@ -658,6 +676,17 @@ int mainMenuWindowHandleEvents()
             }
         }
 
+        // Mobile main menu: the tapped button.
+        if (rc == -1 && muiIsEnabled()) {
+            int choice = muiMainMenuTakeChoice();
+            if (choice != -1) {
+                // NOTE: Uninline.
+                main_menu_play_sound("nmselec1");
+                rc = choice;
+                break;
+            }
+        }
+
         if (rc == -1) {
             if (keyCode == KEY_CTRL_R) {
                 rc = MAIN_MENU_SELFRUN;
@@ -687,11 +716,14 @@ int mainMenuWindowHandleEvents()
         } else if (_game_user_wants_to_quit == GAME_QUIT_REQUEST_MAIN_MENU) {
             _game_user_wants_to_quit = GAME_QUIT_REQUEST_NONE;
         } else {
-            if (getTicksSince(tick) >= gMainMenuScreensaverDelay) {
+            // Not on the mobile main menu: a phone left on it would start
+            // the intro movie.
+            if (!muiIsEnabled() && getTicksSince(tick) >= gMainMenuScreensaverDelay) {
                 rc = MAIN_MENU_TIMEOUT;
             }
         }
 
+        devAutotestTick();
         renderPresent();
         sharedFpsLimiter.throttle();
     }

@@ -129,6 +129,8 @@ typedef struct Sound {
     SoundDeleteCallback* deleteCallback;
     struct Sound* next;
     struct Sound* prev;
+    // CE: Plays this many times as fast, same pitch (`soundSetTempo`).
+    double tempo;
 } Sound;
 
 void soundSetMemoryProcs(MallocProc* mallocProc, ReallocProc* reallocProc, FreeProc* freeProc);
@@ -151,6 +153,10 @@ int soundSetVolume(Sound* sound, int volume);
 int soundSetCallback(Sound* sound, SoundCallback* callback, void* userData);
 int soundSetChannels(Sound* sound, int channels);
 int soundSetReadLimit(Sound* sound, int readLimit);
+// CE: The sound loaded next plays [tempo] times as fast keeping its pitch
+// (sound_tempo.h), for sounds of sped up animations. Only sounds loaded
+// whole (not streamed, not looping) change.
+int soundSetTempo(Sound* sound, double tempo);
 int soundPause(Sound* sound);
 int soundResume(Sound* sound);
 int soundSetFileIO(Sound* sound, SoundOpenProc* openProc, SoundCloseProc* closeProc, SoundReadProc* readProc, SoundWriteProc* writeProc, SoundSeekProc* seekProc, SoundTellProc* tellProc, SoundFileLengthProc* fileLengthProc);

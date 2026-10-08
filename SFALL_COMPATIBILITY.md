@@ -32,6 +32,7 @@ The following settings were moved into [`fallout2.cfg`](files/fallout2.cfg) inst
 | `Misc` | `NumbersInDialogue` | `ui` | `numbers_in_dialogue` |
 | `Misc` | `PartyMemberExtraInfo` | `ui` | `party_member_extra_info` |
 | `Misc` | `AutoQuickSave` | `ui` | `auto_quick_save` |
+| `Misc` | `AutoQuickSavePage` | `ui` | `auto_quick_save_page` |
 | `Main` | `EnableHighResolutionStencil` | `ui` | `enable_high_resolution_stencil` |
 | `Misc` | `ConsoleOutputPath` | `debug` | `console_output_path` |
 | `Misc` | `GaplessMusic` | `sound` | `gapless_music` |

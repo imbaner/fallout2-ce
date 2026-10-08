@@ -51,6 +51,7 @@
 #include "tile.h"
 #include "window_manager.h"
 #include "worldmap.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -1176,7 +1177,8 @@ static void op_get_mouse_x(Program* program)
 {
     int x;
     int y;
-    mouseGetPosition(&x, &y);
+    // CE: With touch-native input the last point touched on the map.
+    mouseGetPointerPosition(&x, &y);
     programStackPushInteger(program, x);
 }
 
@@ -1185,7 +1187,7 @@ static void op_get_mouse_y(Program* program)
 {
     int x;
     int y;
-    mouseGetPosition(&x, &y);
+    mouseGetPointerPosition(&x, &y);
     programStackPushInteger(program, y);
 }
 
@@ -1194,7 +1196,7 @@ static void op_get_mouse_buttons(Program* program)
 {
     // CE: Implementation is slightly different - it does not handle middle
     // mouse button.
-    programStackPushInteger(program, mouse_get_last_buttons());
+    programStackPushInteger(program, mouseGetPointerButtons());
 }
 
 static void op_get_window_under_mouse(Program* program)
@@ -1366,7 +1368,10 @@ static void op_tile_under_cursor(Program* program)
 {
     int x;
     int y;
-    mouseGetPosition(&x, &y);
+    mouseGetPointerPosition(&x, &y);
+
+    // CE: Map may be zoomed and panned (see world_view.h).
+    worldViewScreenToWorld(x, y, &x, &y);
 
     int tile = tileFromScreenXY(x, y);
     programStackPushInteger(program, tile);

@@ -4,10 +4,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include <SDL.h>
 
 #include "color.h"
 #include "config.h"
+#include "dev_autotest.h"
 #include "dinput.h"
 #include "draw.h"
 #include "game.h"
@@ -16,16 +19,22 @@
 #include "mouse.h"
 #include "movie.h"
 #include "scan_unimplemented.h"
+#include "mui.h"
+#include "perf_monitor.h"
 #include "settings.h"
 #include "text_font.h"
 #include "tile.h"
 #include "win32.h"
 #include "window_manager_private.h"
+#include "world_view.h"
 
 namespace fallout {
 
 static bool createRenderer(int width, int height);
 static void destroyRenderer();
+static void screenUpdatePalette(int first, int count);
+static void screenConvertPaletteRange(int first, int count);
+static void screenConvertRect(int x, int y, int width, int height);
 
 // screen rect
 Rect _scr_size;
@@ -41,6 +50,19 @@ SDL_Surface* gSdlSurface = nullptr;
 SDL_Renderer* gSdlRenderer = nullptr;
 SDL_Texture* gSdlTexture = nullptr;
 SDL_Surface* gSdlTextureSurface = nullptr;
+
+// CE: Layer tags of screen pixels, parallel to `gSdlSurface` (pitch is equal
+// to surface width).
+static unsigned char* gScreenLayers = nullptr;
+static unsigned char gScreenBlitLayer = kScreenLayerUi;
+static const unsigned char* gScreenBlitLayerSource = nullptr;
+
+// Current palette in UI texture pixel format.
+static Uint32 gScreenPalette[256];
+
+// CE: Part of the UI texture surface changed since it was uploaded last.
+static bool gScreenDirty = false;
+static SDL_Rect gScreenDirtyRect;
 
 // TODO: Remove once migration to update-render cycle is completed.
 FpsLimiter sharedFpsLimiter;
@@ -113,6 +135,24 @@ int _GNW95_init_mode_ex(int width, int height, int bpp)
     height = settings.screen.resolution_y;
     int scale = settings.screen.scale;
 
+#ifdef __ANDROID__
+    // CE: The phone's screen decides: the game's 480 lines (the original's
+    // height, what the mobile UI is laid out against) and as many columns as
+    // the screen's proportions give, full screen. A config copied from a
+    // computer (a window of its size) doesn't matter.
+    SDL_DisplayMode displayMode;
+    if (SDL_GetDesktopDisplayMode(0, &displayMode) == 0 && displayMode.w > 0 && displayMode.h > 0) {
+        int longSide = std::max(displayMode.w, displayMode.h);
+        int shortSide = std::min(displayMode.w, displayMode.h);
+        height = 480;
+        width = std::max(640, 480 * longSide / shortSide);
+        scale = 1;
+        settings.screen.resolution_x = width;
+        settings.screen.resolution_y = height;
+        settings.screen.windowed = WindowMode::Fullscreen;
+    }
+#endif
+
     // Only allow scaling if resulting game resolution is >= 640x480
     if ((width / scale) < 640 || (height / scale) < 480) {
         scale = 1;
@@ -162,6 +202,10 @@ int _GNW95_init_window(int width, int height, WindowMode mode, int scale)
 {
     if (gSdlWindow == nullptr) {
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+
+        // CE: Naming a driver turns SDL's command batching off; the mobile UI
+        // and the tiled world view make many small draws a frame.
+        SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
 
         Uint32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI;
 
@@ -221,6 +265,14 @@ int directDrawInit(int width, int height, int bpp)
 
     SDL_SetPaletteColors(gSdlSurface->format->palette, colors, 0, 256);
 
+    gScreenLayers = reinterpret_cast<unsigned char*>(SDL_calloc(static_cast<size_t>(width) * height, 1));
+    if (gScreenLayers == nullptr) {
+        directDrawFree();
+        return -1;
+    }
+
+    screenUpdatePalette(0, 256);
+
     return 0;
 }
 
@@ -230,6 +282,11 @@ void directDrawFree()
     if (gSdlSurface != nullptr) {
         SDL_FreeSurface(gSdlSurface);
         gSdlSurface = nullptr;
+    }
+
+    if (gScreenLayers != nullptr) {
+        SDL_free(gScreenLayers);
+        gScreenLayers = nullptr;
     }
 }
 
@@ -249,7 +306,8 @@ void directDrawSetPaletteInRange(unsigned char* palette, int start, int count)
         }
 
         SDL_SetPaletteColors(gSdlSurface->format->palette, colors, start, count);
-        SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
+        screenUpdatePalette(start, count);
+        screenConvertPaletteRange(start, count);
     }
 }
 
@@ -267,7 +325,8 @@ void directDrawSetPalette(unsigned char* palette)
         }
 
         SDL_SetPaletteColors(gSdlSurface->format->palette, colors, 0, 256);
-        SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
+        screenUpdatePalette(0, 256);
+        screenConvertRect(0, 0, gSdlSurface->w, gSdlSurface->h);
     }
 }
 
@@ -298,16 +357,132 @@ void _GNW95_ShowRect(unsigned char* src, int srcPitch, int unused, int srcX, int
 
     blitBufferToBuffer(src + srcPitch * srcY + srcX, srcWidth, srcHeight, srcPitch, (unsigned char*)gSdlSurface->pixels + gSdlSurface->pitch * destY + destX, gSdlSurface->pitch);
 
-    SDL_Rect srcRect;
-    srcRect.x = destX;
-    srcRect.y = destY;
-    srcRect.w = srcWidth;
-    srcRect.h = srcHeight;
+    unsigned char* layers = gScreenLayers + gSdlSurface->w * destY + destX;
+    if (gScreenBlitLayerSource != nullptr) {
+        blitBufferToBuffer(gScreenBlitLayerSource + srcPitch * srcY + srcX, srcWidth, srcHeight, srcPitch, layers, gSdlSurface->w);
+    } else {
+        bufferFill(layers, srcWidth, srcHeight, gSdlSurface->w, static_cast<Color>(gScreenBlitLayer));
+    }
 
-    SDL_Rect destRect;
-    destRect.x = destX;
-    destRect.y = destY;
-    SDL_BlitSurface(gSdlSurface, &srcRect, gSdlTextureSurface, &destRect);
+    screenConvertRect(destX, destY, srcWidth, srcHeight);
+}
+
+void screenLayersSetBlitLayer(unsigned char layer)
+{
+    gScreenBlitLayer = layer;
+}
+
+void screenLayersSetBlitSource(const unsigned char* layers)
+{
+    gScreenBlitLayerSource = layers;
+}
+
+// Entries which really changed with the last palette update (the game sets
+// all cycling entries when any of them moves).
+static bool gScreenPaletteChanged[256];
+
+static void screenUpdatePalette(int first, int count)
+{
+    SDL_Color* colors = gSdlSurface->format->palette->colors;
+    for (int index = 0; index < 256; index++) {
+        Uint32 color = 0xFF000000 | (colors[index].r << 16) | (colors[index].g << 8) | colors[index].b;
+        gScreenPaletteChanged[index] = gScreenPalette[index] != color;
+        gScreenPalette[index] = color;
+    }
+
+    worldViewInvalidatePalette(first, count);
+}
+
+static void screenMarkDirty(int x, int y, int width, int height)
+{
+    SDL_Rect rect = { x, y, width, height };
+    if (gScreenDirty) {
+        SDL_UnionRect(&gScreenDirtyRect, &rect, &gScreenDirtyRect);
+    } else {
+        gScreenDirtyRect = rect;
+        gScreenDirty = true;
+    }
+}
+
+// Converts only pixels with palette entries [first, first + count) (palette
+// cycling changes a few entries many times a second).
+static void screenConvertPaletteRange(int first, int count)
+{
+    if (gSdlTextureSurface == nullptr) {
+        return;
+    }
+
+    if (first == 0 && count >= 256) {
+        screenConvertRect(0, 0, gSdlSurface->w, gSdlSurface->h);
+        return;
+    }
+
+    int last = first + count - 1;
+    bool anyChanged = false;
+    for (int index = first; index <= last; index++) {
+        anyChanged = anyChanged || gScreenPaletteChanged[index];
+    }
+    if (!anyChanged) {
+        return;
+    }
+
+    int top = -1;
+    int bottom = -1;
+    int left = gSdlSurface->w;
+    int right = -1;
+    for (int row = 0; row < gSdlSurface->h; row++) {
+        const unsigned char* src = reinterpret_cast<unsigned char*>(gSdlSurface->pixels) + gSdlSurface->pitch * row;
+        const unsigned char* layers = gScreenLayers + gSdlSurface->w * row;
+        Uint32* dest = reinterpret_cast<Uint32*>(reinterpret_cast<unsigned char*>(gSdlTextureSurface->pixels) + gSdlTextureSurface->pitch * row);
+        for (int column = 0; column < gSdlSurface->w; column++) {
+            unsigned char index = src[column];
+            if (!gScreenPaletteChanged[index]) {
+                continue;
+            }
+
+            Uint32 color = gScreenPalette[index];
+            if (layers[column] == kScreenLayerWorld) {
+                color &= 0x00FFFFFF;
+            }
+            dest[column] = color;
+
+            if (top == -1) {
+                top = row;
+            }
+            bottom = row;
+            left = std::min(left, column);
+            right = std::max(right, column);
+        }
+    }
+
+    if (top != -1) {
+        screenMarkDirty(left, top, right - left + 1, bottom - top + 1);
+    }
+}
+
+// Converts palette indices to UI texture pixels. Pixels belonging to the world
+// layer are fully transparent so the world texture rendered below shows
+// through.
+static void screenConvertRect(int x, int y, int width, int height)
+{
+    if (gSdlTextureSurface == nullptr) {
+        return;
+    }
+
+    for (int row = 0; row < height; row++) {
+        const unsigned char* src = reinterpret_cast<unsigned char*>(gSdlSurface->pixels) + gSdlSurface->pitch * (y + row) + x;
+        const unsigned char* layers = gScreenLayers + gSdlSurface->w * (y + row) + x;
+        Uint32* dest = reinterpret_cast<Uint32*>(reinterpret_cast<unsigned char*>(gSdlTextureSurface->pixels) + gSdlTextureSurface->pitch * (y + row)) + x;
+        for (int column = 0; column < width; column++) {
+            Uint32 color = gScreenPalette[src[column]];
+            if (layers[column] == kScreenLayerWorld) {
+                color &= 0x00FFFFFF;
+            }
+            dest[column] = color;
+        }
+    }
+
+    screenMarkDirty(x, y, width, height);
 }
 
 // Clears drawing surface.
@@ -325,7 +500,8 @@ void _GNW95_zero_vid_mem()
         surface += gSdlSurface->pitch;
     }
 
-    SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
+    memset(gScreenLayers, kScreenLayerUi, static_cast<size_t>(gSdlSurface->w) * gSdlSurface->h);
+    screenConvertRect(0, 0, gSdlSurface->w, gSdlSurface->h);
 }
 
 int screenGetWidth()
@@ -344,7 +520,8 @@ int screenGetVisibleHeight()
 {
     int windowBottomMargin = 0;
 
-    if (!settings.ui.iface_bar_mode) {
+    // CE: Touch HUD floats over the map, there is no bar at the bottom.
+    if (!settings.ui.iface_bar_mode && !settings.touch.hud) {
         windowBottomMargin = INTERFACE_BAR_HEIGHT;
     }
     return screenGetHeight() - windowBottomMargin;
@@ -368,10 +545,15 @@ static bool createRenderer(int width, int height)
         return false;
     }
 
-    gSdlTexture = SDL_CreateTexture(gSdlRenderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STREAMING, width, height);
+    // CE: UI texture has alpha channel to let world layer show through.
+    gSdlTexture = SDL_CreateTexture(gSdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
     if (gSdlTexture == nullptr) {
         return false;
     }
+
+    SDL_SetTextureBlendMode(gSdlTexture, SDL_BLENDMODE_BLEND);
+    // New texture has undefined content.
+    screenMarkDirty(0, 0, width, height);
 
     Uint32 format;
     if (SDL_QueryTexture(gSdlTexture, &format, nullptr, nullptr, nullptr) != 0) {
@@ -388,6 +570,9 @@ static bool createRenderer(int width, int height)
 
 static void destroyRenderer()
 {
+    worldViewResetRenderer();
+    muiResetRenderer();
+
     if (gSdlTextureSurface != nullptr) {
         SDL_FreeSurface(gSdlTextureSurface);
         gSdlTextureSurface = nullptr;
@@ -409,6 +594,9 @@ void handleWindowSizeChanged()
     movieHandleRendererReset();
     destroyRenderer();
     createRenderer(screenGetWidth(), screenGetHeight());
+    if (gSdlSurface != nullptr) {
+        screenConvertRect(0, 0, gSdlSurface->w, gSdlSurface->h);
+    }
     mouseDeviceRefreshWindowMapping();
 }
 
@@ -466,16 +654,50 @@ void renderFpsCounter()
     rect.w = width;
     rect.h = height;
     SDL_BlitSurface(gSdlSurface, &rect, gSdlTextureSurface, &rect);
+    screenMarkDirty(rect.x, rect.y, rect.w, rect.h);
 }
 
 void renderPresent()
 {
-    SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+    // CE: Mobile UI screen switch in progress, the last frame stays.
+    if (muiHoldsFrame()) {
+        return;
+    }
+
+    PerfFrame perf;
+    perfMonitorMark(&perf.start);
     SDL_RenderClear(gSdlRenderer);
-    SDL_RenderCopy(gSdlRenderer, gSdlTexture, nullptr, nullptr);
+    // CE: Under a mobile UI screen covering everything the map and the
+    // game's screen would be drawn only to be painted over.
+    if (!muiCoversScreen()) {
+        // Only what changed since the last upload.
+        if (gScreenDirty) {
+            Uint64 start;
+            perfMonitorMark(&start);
+            const unsigned char* pixels = reinterpret_cast<const unsigned char*>(gSdlTextureSurface->pixels)
+                + gScreenDirtyRect.y * gSdlTextureSurface->pitch
+                + gScreenDirtyRect.x * gSdlTextureSurface->format->BytesPerPixel;
+            SDL_UpdateTexture(gSdlTexture, &gScreenDirtyRect, pixels, gSdlTextureSurface->pitch);
+            perfMonitorCount(PerfCount::ScreenPixels, static_cast<long long>(gScreenDirtyRect.w) * gScreenDirtyRect.h);
+            perfMonitorSpan(PerfSpan::ScreenUpload, start);
+            gScreenDirty = false;
+        }
+        worldViewRender(gSdlRenderer);
+        Uint64 start;
+        perfMonitorMark(&start);
+        SDL_RenderCopy(gSdlRenderer, gSdlTexture, nullptr, nullptr);
+        perfMonitorSpan(PerfSpan::ScreenDraw, start);
+    }
     // render movie SDL texture if present
     movieRenderDirectOverlay();
+    perfMonitorMark(&perf.uiStart);
+    muiRender(gSdlRenderer);
+    perfMonitorMark(&perf.uiEnd);
+    devAutotestPump();
+    devAutotestCapture(gSdlRenderer);
     SDL_RenderPresent(gSdlRenderer);
+    perfMonitorMark(&perf.end);
+    perfMonitorFrame(perf);
 }
 
 } // namespace fallout

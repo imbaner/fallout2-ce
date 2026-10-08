@@ -38,6 +38,11 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
+# Source tree without git history (e.g. downloaded as a ZIP archive)
+if(NOT DATE)
+    string(TIMESTAMP DATE "\"%b %d %Y %H:%M:%S\"")
+endif()
+
 # Define a variable for CI_BUILD
 set(CI_BUILD 0)
 

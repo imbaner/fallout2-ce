@@ -111,7 +111,11 @@ struct UISettings {
 
     // Whether to use high resolution art for dialog borders.
     bool dialog_border = true;
+    // Number of pages reserved for quick saves (free first, then oldest),
+    // starting at `auto_quick_save_page` (sfall AutoQuickSave,
+    // AutoQuickSavePage).
     int auto_quick_save = 0;
+    int auto_quick_save_page = 1;
     bool enable_high_resolution_stencil = true;
     // Maximum number of columns in inventory and loot windows
     int inventory_columns = 1;
@@ -174,6 +178,17 @@ struct SoundSettings {
 struct DebugSettings {
     std::string mode = "environment";
     bool show_fps = false;
+    // CE: Once a second appends frame timings to perf.log (see
+    // `perf_monitor.h`).
+    bool perf_log = false;
+    // CE: Keeps the latest touches in memory and writes them to touch.log
+    // when touches go wrong (see `touch_log.h`). Always on in the
+    // touch-only build (settings.cc).
+    bool touch_log = false;
+    // CE: Writes what the player did and what the game made of it to
+    // actions.log (see `action_log.h`). Always on in the touch-only build
+    // (settings.cc).
+    bool action_log = false;
     bool show_tile_num = false;
     bool show_script_messages = false;
     bool show_load_info = false;
@@ -195,6 +210,55 @@ struct QolSettings {
     bool party_trade_from_menu = true;
     bool party_loot_and_barter = false;
     bool fast_ammo_load = true;
+};
+
+// CE: Improvements of this port that Fallout 2 CE and its mods don't have:
+// they keep the game's rules and data, only make playing better. Each can be
+// turned off (`[enhancements]`, rows of the settings screen).
+struct EnhancementSettings {
+    // The combat speed preference speeds up every combat animation, not only
+    // walking: running as walking, attacks, reloads, hits, falls and deaths
+    // up to twice as fast, their sounds as fast at the same pitch (see
+    // `animationGetCombatSpeedFactor`).
+    bool combat_speed_all_animations = true;
+    // Mobile main menu: Continue loads the save made last.
+    bool main_menu_continue = true;
+    // Mobile world map: the camera goes with the travelling party (until the
+    // map is moved by a finger).
+    bool worldmap_follow_party = true;
+    // Saves made with other game files or mods are marked on the save
+    // screen, loading one likely to fail asks first (save_compatibility.h).
+    bool save_compatibility = true;
+};
+
+// CE: Zoomable map view, see world_view.h.
+struct WorldViewSettings {
+    bool enabled = true;
+    // Initial zoom, 1.0 means one map pixel per screen pixel.
+    double zoom = 1.0;
+    double zoom_min = 0.5;
+    double zoom_max = 4.0;
+    // 0 - nearest, 1 - bilinear, 2 - sharp bilinear.
+    int filter = 2;
+};
+
+// CE: Touch-first controls on the map, see touch_controls.h.
+struct TouchSettings {
+#ifdef __ANDROID__
+    bool controls = true;
+    // Touch HUD instead of the original interface bar, see touch_hud.h.
+    bool hud = true;
+    // Mobile UI screens instead of the original ones, see mui.h.
+    bool mobile_ui = true;
+#else
+    bool controls = false;
+    bool hud = false;
+    bool mobile_ui = false;
+#endif
+    // HUD size in percent of the default (buttons are sized in dp).
+    int hud_scale = 100;
+    // Screen density (Android dp scale). 0 - detect (Android), 1.0 elsewhere.
+    double hud_density = 0.0;
 };
 
 struct MapperSettings {
@@ -227,6 +291,9 @@ struct Settings {
     DebugSettings debug;
     CombatAiSettings combat_ai;
     QolSettings qol;
+    EnhancementSettings enhancements;
+    WorldViewSettings world_view;
+    TouchSettings touch;
     MapperSettings mapper;
 };
 

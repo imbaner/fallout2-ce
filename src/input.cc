@@ -1,4 +1,7 @@
 #include "input.h"
+#include "dev_autotest.h"
+
+#include <string.h>
 
 #include <SDL.h>
 #include <lodepng.h>
@@ -10,9 +13,15 @@
 #include "dinput.h"
 #include "draw.h"
 #include "game.h"
+#include "game_commands.h"
 #include "kb.h"
+#include "loadsave.h"
+#include "mui.h"
 #include "memory.h"
 #include "mouse.h"
+#include "touch_controls.h"
+#include "action_log.h"
+#include "touch_log.h"
 #include "movie.h"
 #include "sfall_kb_helpers.h"
 #include "sfall_script_hooks.h"
@@ -23,6 +32,9 @@
 #include "window_manager.h"
 
 namespace fallout {
+
+static void inputForgetLiftedFingers(bool excludeNew, SDL_FingerID fingerId);
+static void inputResetTouchGestures();
 
 typedef struct InputEvent {
     // This is either logical key or input event id, which can be either
@@ -50,7 +62,23 @@ static void screenshotBlitter(unsigned char* src, int src_pitch, int a3, int x, 
 static void buildNormalizedQwertyKeys();
 static void _GNW95_process_key(KeyboardData* data);
 static int inputGetHookMouseButton(int sdlButton);
-static void inputHandleMouseClickHook(int sdlButton, bool pressed);
+
+#if FALLOUT_TOUCH_ONLY
+// Keys of a soft keyboard which edit a text field (the mobile UI's fields
+// take them as keys, typed text comes as `SDL_TEXTINPUT`).
+static bool inputIsTextEditingKey(int scancode)
+{
+    switch (scancode) {
+    case SDL_SCANCODE_BACKSPACE:
+    case SDL_SCANCODE_DELETE:
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
 
 // 0x51E23C GNW95_repeat_rate
 static int gKeyboardKeyRepeatRate = 80;
@@ -128,12 +156,22 @@ static int inputGetHookMouseButton(int sdlButton)
     }
 }
 
-static void inputHandleMouseClickHook(int sdlButton, bool pressed)
+// CE: Calls of `HOOK_MOUSECLICK` (automated tests).
+static int gMouseClickHookCalls = 0;
+
+int inputGetMouseClickHookCalls()
+{
+    return gMouseClickHookCalls;
+}
+
+void inputRunMouseClickHook(int sdlButton, bool pressed)
 {
     if (!gGameLoaded) return;
 
     int hookButton = inputGetHookMouseButton(sdlButton);
     if (hookButton == -1) return;
+
+    gMouseClickHookCalls++;
 
     ScriptHookCall(HOOK_MOUSECLICK, 0, { pressed ? 1 : 0, hookButton }).call();
 }
@@ -206,7 +244,13 @@ int inputGetInput()
         mouseGetPosition(&_input_mx, &_input_my);
         return -2;
     } else {
+#if FALLOUT_TOUCH_ONLY
+        // CE: Windows' menu bars (`_win_register_menu_bar`) - the game makes
+        // none.
+        return v3;
+#else
         return _GNW_check_menu_bars(v3);
+#endif
     }
 
     return -1;
@@ -227,6 +271,9 @@ void _process_bk()
     tickersExecute();
 
     _mouse_info();
+
+    // CE: Touch-native input: the map takes the fingers' gestures itself.
+    touchControlsProcessGestures();
 
     v1 = _win_check_all_buttons();
     if (v1 != -1) {
@@ -306,8 +353,20 @@ void inputEventQueueReset()
     gInputEventQueueReadIndex = -1;
     gInputEventQueueWriteIndex = 0;
     SDL_Event e;
-    while (SDL_PollEvent(&e)) { } // Clear all input events
+    while (SDL_PollEvent(&e)) { // Clear all input events
+        if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
+            touchLogFinger(e.tfinger, e.type, TouchLogRoute::Drained);
+            actionLogFinger(e.tfinger, e.type, "drained");
+        }
+    }
     sfall_kb_clear_synthetic_key_events();
+
+    // CE: Commands of the touch HUD and the mobile screens are input too.
+    gameCommandsClear();
+
+    // CE: Finger ends were cleared too: fingers of ours not down any more
+    // are let go (without their gestures, as the clicks cleared).
+    inputForgetLiftedFingers(false, 0);
 }
 
 // 0x4C8D1C
@@ -990,11 +1049,81 @@ int _GNW95_input_init()
 }
 
 // 0x4C9CF0
+// CE: Fingers the mobile UI or the map's touch follow which SDL doesn't
+// have down (their end was lost: the input queue cleared, the system took
+// the touch) are let go without a gesture; they'd stay pressed forever
+// (taps dead, the map "clicked" where they were). [excludeNew] - a new
+// finger [fingerId] goes down: ours with its number are stale too.
+// Synthetic touches of automated tests aren't SDL's.
+static void inputForgetLiftedFingers(bool excludeNew, SDL_FingerID fingerId)
+{
+    if (devAutotestIsEnabled()) {
+        return;
+    }
+
+    // Down now and at the previous check: SDL drops a finger right after
+    // queueing its end, which may not be read yet.
+    constexpr int kMaxFingers = 32;
+    static SDL_FingerID previous[kMaxFingers];
+    static int previousCount = 0;
+
+    SDL_FingerID now[kMaxFingers];
+    int nowCount = 0;
+    int devices = SDL_GetNumTouchDevices();
+    for (int device = 0; device < devices; device++) {
+        SDL_TouchID touchId = SDL_GetTouchDevice(device);
+        int fingers = SDL_GetNumTouchFingers(touchId);
+        for (int index = 0; index < fingers && nowCount < kMaxFingers; index++) {
+            SDL_Finger* finger = SDL_GetTouchFinger(touchId, index);
+            if (finger != nullptr) {
+                now[nowCount++] = finger->id;
+            }
+        }
+    }
+
+    SDL_FingerID down[kMaxFingers * 2];
+    int count = 0;
+    for (int index = 0; index < nowCount; index++) {
+        if (!(excludeNew && now[index] == fingerId)) {
+            down[count++] = now[index];
+        }
+    }
+    for (int index = 0; index < previousCount; index++) {
+        if (!(excludeNew && previous[index] == fingerId)) {
+            down[count++] = previous[index];
+        }
+    }
+
+    if (!excludeNew) {
+        memcpy(previous, now, sizeof(now[0]) * nowCount);
+        previousCount = nowCount;
+    }
+
+    if (muiForgetMissingFingers(down, count)) {
+        touchLogLostFingers("ui");
+    }
+    if (touch_forget_missing(down, count)) {
+        touchLogLostFingers("map");
+        inputResetTouchGestures();
+    }
+}
+
+// CE: A finger followed by the map ended elsewhere: its gesture is over
+// without an end - the map's touch controls and the emulated mouse let go.
+static void inputResetTouchGestures()
+{
+    touchControlsReset();
+    mouseResetTouchGesture();
+}
+
 void _GNW95_process_message()
 {
     // We need to process event loop even if program is not active or keyboard
     // is disabled, because if we ignore it, we'll never be able to reactivate
     // it again.
+
+    touchLogFrame();
+    actionLogFrame();
 
     KeyboardData keyboardData;
     SDL_Event e;
@@ -1004,25 +1133,76 @@ void _GNW95_process_message()
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP:
         case SDL_MOUSEWHEEL:
+#if !FALLOUT_TOUCH_ONLY
+            // CE: The touch-only build has no mouse (a connected one is
+            // ignored).
             if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
-                inputHandleMouseClickHook(e.button.button, e.type == SDL_MOUSEBUTTONDOWN);
+                inputRunMouseClickHook(e.button.button, e.type == SDL_MOUSEBUTTONDOWN);
             }
             handleMouseEvent(&e);
+#endif
             break;
         case SDL_FINGERDOWN:
-            touch_handle_start(&(e.tfinger));
-            break;
         case SDL_FINGERMOTION:
-            touch_handle_move(&(e.tfinger));
-            break;
         case SDL_FINGERUP:
-            touch_handle_end(&(e.tfinger));
+            // CE: A new finger: a finger of ours with its number is one
+            // whose end never came (Android reuses numbers).
+            if (e.type == SDL_FINGERDOWN) {
+                inputForgetLiftedFingers(true, e.tfinger.fingerId);
+            }
+
+            // CE: Mobile UI takes touches on its screens. A finger the map
+            // was following which ends on a screen opened meanwhile is
+            // forgotten by the map without a gesture.
+            if (muiHandleFingerEvent(&e)) {
+                touchLogFinger(e.tfinger, e.type, TouchLogRoute::Ui);
+                actionLogFinger(e.tfinger, e.type, "ui");
+                if (e.type == SDL_FINGERUP && touch_handle_cancel(e.tfinger.fingerId)) {
+                    touchLogCancel(e.tfinger.fingerId);
+                    inputResetTouchGestures();
+                }
+                break;
+            }
+
+            touchLogFinger(e.tfinger, e.type, TouchLogRoute::Map);
+            actionLogFinger(e.tfinger, e.type, "map");
+
+            if (e.type == SDL_FINGERDOWN) {
+                touch_handle_start(&(e.tfinger));
+            } else if (e.type == SDL_FINGERMOTION) {
+                touch_handle_move(&(e.tfinger));
+            } else {
+                touch_handle_end(&(e.tfinger));
+            }
             break;
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
             keyboardData.key = e.key.keysym.scancode;
+
+            // CE: Android's back button is Back of the mobile UI (the
+            // showing screen's back, the game's menu on the map), not a key.
+            if (keyboardData.key == SDL_SCANCODE_AC_BACK) {
+                if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+                    touchLogBack();
+                    muiRequestBack();
+                }
+                break;
+            }
+
             keyboardData.down = (e.key.state & SDL_PRESSED) != 0;
             bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(keyboardData.key, keyboardData.down);
+            bool modHotkey = sfall_kb_consume_hotkey_event(keyboardData.key, keyboardData.down);
+
+#if FALLOUT_TOUCH_ONLY
+            // CE: No keyboard in the touch-only build (touch.h): the game is
+            // told what to do by commands (game_commands.h). Keys reach it
+            // only from mods (`tap_key`, hotkeys of mods' buttons) and a soft
+            // keyboard's editing keys while a text field is edited.
+            if (!syntheticSfallKey && !modHotkey && !(SDL_IsTextInputActive() && inputIsTextEditingKey(keyboardData.key))) {
+                break;
+            }
+#endif
+
             if (!keyboardIsDisabled()) {
                 if (!e.key.repeat && !syntheticSfallKey) {
                     int keyOverride = sfall_kb_handle_key_pressed(keyboardData.key, keyboardData.down);
@@ -1037,6 +1217,10 @@ void _GNW95_process_message()
             }
             break;
         }
+        case SDL_TEXTINPUT:
+            // CE: Mobile UI text fields (any script, soft keyboards).
+            muiHandleTextInput(e.text.text);
+            break;
         case SDL_WINDOWEVENT:
             switch (e.window.event) {
             case SDL_WINDOWEVENT_EXPOSED:
@@ -1046,6 +1230,8 @@ void _GNW95_process_message()
                 handleWindowSizeChanged();
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
+                touchLogFocus(true);
+                actionLog("the game came back");
                 gProgramIsActive = true;
                 movieHandleFocusGained();
                 if (!mouseDeviceInitMode()) {
@@ -1053,19 +1239,37 @@ void _GNW95_process_message()
                 }
                 windowRefreshAll(&_scr_size);
                 audioEngineResume();
+                // Android: the app's import or export of saves was over it.
+                lsgMobileSavesMayHaveChanged();
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST:
+                touchLogFocus(false);
+                actionLog("the game went to the background");
+                actionLogFlush();
                 gProgramIsActive = false;
                 mouseDeviceInitMode();
                 audioEnginePause();
+
+                // CE: Nothing stays pressed while the game is away (the
+                // ends may not come): fingers, their gestures, keys.
+                muiForgetMissingFingers(nullptr, 0);
+                touch_forget_missing(nullptr, 0);
+                inputResetTouchGestures();
+                keyboardReset();
                 break;
             }
             break;
         case SDL_QUIT:
+            touchLogExit();
+            actionLog("the game closed by the system");
+            actionLogFlush();
             exit(EXIT_SUCCESS);
             break;
         }
     }
+
+    // CE: All events are in: fingers of ours not down any more lost their end.
+    inputForgetLiftedFingers(false, 0);
 
     touch_process_gesture();
 

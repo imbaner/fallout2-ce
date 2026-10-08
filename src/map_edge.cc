@@ -10,6 +10,7 @@
 #include "svga.h"
 #include "tile.h"
 #include "window_manager.h"
+#include "world_view.h"
 
 #include <cassert>
 
@@ -63,23 +64,50 @@ static int pixelToTile(int px, int py)
 
 static Size getIsoWindowSize()
 {
+    // CE: Map is rendered into world view buffer when it's enabled.
+    if (worldViewIsEnabled()) {
+        return { worldViewGetWidth(), worldViewGetHeight() };
+    }
+
     Rect winRect;
     int rc = windowGetRect(gIsoWindow, &winRect);
     assert(rc != -1);
     return { rectGetWidth(&winRect), rectGetHeight(&winRect) };
 }
 
+// CE: Returns size of the part of the map visible on screen, which defines
+// how close to the map edge the view can be scrolled.
+static Size getScrollViewSize()
+{
+    if (worldViewIsEnabled()) {
+        int width;
+        int height;
+        worldViewGetVisibleSize(&width, &height);
+        return { width, height };
+    }
+
+    return getIsoWindowSize();
+}
+
 // Fill pixel-space fields of a zone from its stored tileRect corners.
 // Screen-size dependent — must be re-run if resolution changes.
 static void calcEdgeData(EdgeZone* zone)
 {
-    const auto [winWidth, winHeight] = getIsoWindowSize();
+    const auto [winWidth, winHeight] = getScrollViewSize();
     const int winHalfWidth = winWidth / 2;
     const int winHalfHeight = winHeight / 2;
 
     // Compute sub-tile alignment sizes (sfall mapWidthModSize / mapHeightModSize).
     maxTileXAlignment = winHalfWidth % kTileWidth;
     maxTileYAlignment = winHalfHeight % kTileHeight;
+
+    // CE: With zoomable world view visible size changes continuously, so
+    // sub-tile alignment on map edges is not used (it would redraw the whole
+    // map on every zoom change). Areas outside of the map are still clipped.
+    if (worldViewIsEnabled()) {
+        maxTileXAlignment = 0;
+        maxTileYAlignment = 0;
+    }
 
     // Truncated half sizes for border contraction (matching sfall ViewMap::GetWinMapHalfSize).
     const int winHalfWidthSnapped = winHalfWidth - maxTileXAlignment;
@@ -520,6 +548,19 @@ void mapEdgeRecalc()
     }
 }
 
+void mapEdgeHandleViewSizeChanged(bool moveIntoLimits)
+{
+    if (!mapEdgeIsEnabled()) {
+        return;
+    }
+
+    mapEdgeRecalc();
+
+    if (moveIntoLimits && mapEdgeZoneIsSelected() && !mapEdgeTileInBounds(gCenterTile)) {
+        tileSetCenter(gCenterTile, TILE_SET_CENTER_REFRESH_WINDOW);
+    }
+}
+
 bool mapEdgeComputeVisibleArea(int elevation, Rect* outRect)
 {
     if (!mapEdgeIsEnabled()) return false;
@@ -555,9 +596,14 @@ bool mapEdgeIsOverClippedArea(int screenX, int screenY)
 {
     if (!mapEdgeIsEnabled()) return false;
 
-    if (screenX >= gMapVisibleArea.left && screenX <= gMapVisibleArea.right && screenY >= gMapVisibleArea.top && screenY < gMapVisibleArea.bottom) return false;
+    // CE: Visible area is in world view coordinates.
+    int worldX;
+    int worldY;
+    worldViewScreenToWorld(screenX, screenY, &worldX, &worldY);
 
-    return windowGetAtPoint(screenX, screenY) == gIsoWindow;
+    if (worldX >= gMapVisibleArea.left && worldX <= gMapVisibleArea.right && worldY >= gMapVisibleArea.top && worldY < gMapVisibleArea.bottom) return false;
+
+    return windowGetVisibleAtPoint(screenX, screenY) == gIsoWindow;
 }
 
 } // namespace fallout

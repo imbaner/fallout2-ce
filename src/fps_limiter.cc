@@ -2,6 +2,8 @@
 
 #include <SDL.h>
 
+#include "perf_monitor.h"
+
 namespace fallout {
 
 FpsLimiter::FpsLimiter(unsigned int fps)
@@ -18,7 +20,9 @@ void FpsLimiter::mark()
 void FpsLimiter::throttle() const
 {
     if (1000 / _fps > SDL_GetTicks() - _ticks) {
-        SDL_Delay(1000 / _fps - (SDL_GetTicks() - _ticks));
+        unsigned int delay = 1000 / _fps - (SDL_GetTicks() - _ticks);
+        perfMonitorSleep(delay);
+        SDL_Delay(delay);
     }
 }
 

@@ -26,11 +26,24 @@ endif()
 
 option(FALLOUT_VENDORED "Use vendored third-party libraries" ON)
 option(FALLOUT_AUDIO_OGG "Enable OGG decoding with stb_vorbis when available" ON)
+# The touch recorder and the game journal always on in the touch-only build
+# (the test builds); off, the config's `[debug] touch_log` / `action_log`
+# decide (the release).
+option(FALLOUT_DIAGNOSTICS "Touch-only build: touch recorder and game journal always on" ON)
 
 set(FALLOUT_STB_VORBIS_DIR "" CACHE PATH "Directory containing stb_vorbis.c")
 
 if(ANDROID)
     add_library(${EXECUTABLE_NAME} SHARED)
+    # The touch-only build (src/touch.h) leaves the game's windows the mobile
+    # UI replaced unreferenced; drop them (the NDK compiles every function
+    # into its own section). Only `SDL_main` (declared exported by SDL) is
+    # called from outside, so nothing else is exported to keep them alive.
+    set_target_properties(${EXECUTABLE_NAME} PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    target_link_options(${EXECUTABLE_NAME} PRIVATE "-Wl,--gc-sections")
 else()
     add_executable(${EXECUTABLE_NAME} WIN32 MACOSX_BUNDLE)
 endif()
@@ -130,6 +143,8 @@ set(FALLOUT_ENGINE_SOURCES
     "src/game_vars.h"
     "src/game.cc"
     "src/game.h"
+    "src/game_commands.cc"
+    "src/game_commands.h"
     "src/geometry.cc"
     "src/geometry.h"
     "src/graph_lib.cc"
@@ -157,6 +172,16 @@ set(FALLOUT_ENGINE_SOURCES
     "src/lips.cc"
     "src/lips.h"
     "src/loadsave.cc"
+    "src/save_catalog.cc"
+    "src/save_storage.cc"
+    "src/save_storage.h"
+    "src/save_catalog.h"
+    "src/save_compatibility.cc"
+    "src/save_compatibility.h"
+    "src/save_composition.cc"
+    "src/save_composition.h"
+    "src/save_records.cc"
+    "src/save_records.h"
     "src/loadsave.h"
     "src/mainmenu.cc"
     "src/mainmenu.h"
@@ -232,6 +257,8 @@ set(FALLOUT_ENGINE_SOURCES
     "src/sound_effects_cache.h"
     "src/sound_effects_list.cc"
     "src/sound_effects_list.h"
+    "src/sound_tempo.cc"
+    "src/sound_tempo.h"
     "src/sound.cc"
     "src/sound.h"
     "src/stat_defs.h"
@@ -266,6 +293,10 @@ set(FALLOUT_ENGINE_SOURCES
     "src/window.h"
     "src/word_wrap.cc"
     "src/word_wrap.h"
+    "src/dev_autotest.cc"
+    "src/dev_autotest.h"
+    "src/world_view.cc"
+    "src/world_view.h"
     "src/worldmap.cc"
     "src/worldmap.h"
     "src/xfile.cc"
@@ -319,7 +350,60 @@ set(FALLOUT_PLATFORM_SOURCES
     "src/sfall_callbacks.cc"
     "src/sfall_callbacks.h"
     "src/touch.cc"
+    "src/touch_controls.cc"
+    "src/touch_controls.h"
+    "src/touch_hud.cc"
+    "src/touch_hud.h"
+    "src/hud_layout.cc"
+    "src/hud_layout.h"
+    "src/mui.cc"
+    "src/mui.h"
+    "src/mui_dialog.cc"
+    "src/mui_action_list.cc"
+    "src/mui_automap.cc"
+    "src/mui_barter.cc"
+    "src/mui_called_shot.cc"
+    "src/mui_character.cc"
+    "src/mui_game_dialog.cc"
+    "src/mui_icons.cc"
+    "src/mui_icons.h"
+    "src/mui_inventory.cc"
+    "src/mui_items.cc"
+    "src/mui_loot.cc"
+    "src/mui_map_view.cc"
+    "src/mui_map_view.h"
+    "src/mui_movie.cc"
+    "src/mui_character_selector.cc"
+    "src/mui_elevator.cc"
+    "src/mui_main_menu.cc"
+    "src/mui_options.cc"
+    "src/mui_scenes.cc"
+    "src/mui_worldmap.cc"
+    "src/mui_preferences.cc"
+    "src/mui_loadsave.cc"
+    "src/mui_notify.cc"
+    "src/mui_pipboy.cc"
+    "src/mui_notify.h"
+    "src/mui_quantity.cc"
+    "src/mui_use_item.cc"
+    "src/perf_monitor.cc"
+    "src/world_texture.cc"
+    "src/world_texture.h"
+    "src/map_hints.cc"
+    "src/map_hints.h"
+    "src/player_commands.cc"
+    "src/player_commands.h"
+    "src/perf_monitor.h"
+    "src/mui_screens.h"
+    "src/mui_draw.cc"
+    "src/mui_draw.h"
+    "src/mui_floating_text.cc"
+    "src/mui_floating_text.h"
     "src/touch.h"
+    "src/action_log.cc"
+    "src/action_log.h"
+    "src/touch_log.cc"
+    "src/touch_log.h"
     "src/scan_unimplemented.cc"
 	"third_party/lodepng/lodepng.cpp"
 )
@@ -333,6 +417,7 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
 target_sources(${EXECUTABLE_NAME} PUBLIC ${FALLOUT_PLATFORM_SOURCES})
 
 target_include_directories(${EXECUTABLE_NAME} PUBLIC "third_party/lodepng")
+target_include_directories(${EXECUTABLE_NAME} PRIVATE "third_party/stb")
 
 set(FALLOUT_HAVE_STB_VORBIS OFF)
 if(FALLOUT_AUDIO_OGG)
@@ -360,6 +445,8 @@ if(FALLOUT_HAVE_STB_VORBIS)
 else()
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE HAVE_STB_VORBIS=0)
 endif()
+
+target_compile_definitions(${EXECUTABLE_NAME} PRIVATE FALLOUT_DIAGNOSTICS=$<BOOL:${FALLOUT_DIAGNOSTICS}>)
 
 if(IOS)
     target_sources(${EXECUTABLE_NAME} PUBLIC
@@ -526,6 +613,48 @@ target_link_libraries(${EXECUTABLE_NAME} ${SDL2_LIBRARIES})
 target_link_libraries(${EXECUTABLE_NAME} ${SDL2_MAIN_LIBRARIES})
 target_include_directories(${EXECUTABLE_NAME} PRIVATE ${SDL2_INCLUDE_DIRS})
 
+# The game's import on Android reads the archive the player chose
+# (src/import_archive.cc): .zip itself (zlib; Deflate64 through zlib's
+# contrib/infback9), .7z, .rar and .tar through libarchive (liblzma for .7z).
+# Its library for the app's Java side; ce-import-tool tries it on a computer.
+if(FALLOUT_VENDORED AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
+    add_subdirectory("third_party/xz")
+    add_subdirectory("third_party/libarchive")
+
+    add_library(import_archive STATIC
+        "src/import_archive.cc"
+        "src/import_archive.h"
+        "${ZLIB_SOURCE_DIR}/contrib/infback9/infback9.c"
+        "${ZLIB_SOURCE_DIR}/contrib/infback9/inftree9.c"
+    )
+    target_include_directories(import_archive PUBLIC "src")
+    target_include_directories(import_archive PRIVATE "${ZLIB_SOURCE_DIR}/contrib/infback9" ${ZLIB_INCLUDE_DIRS})
+    target_link_libraries(import_archive PUBLIC archive_read)
+    # Archives over 2 GB on 32-bit systems (pread, lseek).
+    target_compile_definitions(import_archive PRIVATE _FILE_OFFSET_BITS=64)
+    set_target_properties(import_archive PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    if(ANDROID)
+        add_library(fallout2-import SHARED "src/import_archive_jni.cc" "src/save_composition.cc")
+        target_link_libraries(fallout2-import PRIVATE import_archive)
+        # Only the JNI functions (JNIEXPORT) are needed from outside.
+        set_target_properties(fallout2-import PROPERTIES
+            C_VISIBILITY_PRESET hidden
+            CXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN ON)
+        target_link_options(fallout2-import PRIVATE "-Wl,--gc-sections")
+    else()
+        add_executable(ce-import-tool "tools/ce_import_tool.cc")
+        target_link_libraries(ce-import-tool PRIVATE import_archive)
+        if(APPLE)
+            set_target_properties(ce-import-tool PROPERTIES
+                XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+                XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
+            )
+        endif()
+    endif()
+endif()
+
 if((NOT ANDROID) AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
     add_executable(ce-dat-tool
         "tools/dat_tool.cc"
@@ -690,6 +819,7 @@ if((NOT ANDROID) AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
     endif()
 
     target_include_directories(mapper-ce PUBLIC "third_party/lodepng")
+    target_include_directories(mapper-ce PRIVATE "third_party/stb")
     target_include_directories(mapper-ce PRIVATE "src")
     target_include_directories(mapper-ce PRIVATE ${ZLIB_INCLUDE_DIRS})
     target_include_directories(mapper-ce PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -772,4 +902,19 @@ endif()
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
+endif()
+
+# CE: Tests of engine-independent parts (tests/*_test.cc), desktop POSIX
+# builds: `cmake --build <build> --target <name>`, then `ctest` in <build>.
+if(UNIX AND NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+    enable_testing()
+
+    function(ce_add_test name)
+        add_executable(${name} EXCLUDE_FROM_ALL "tests/${name}.cc" ${ARGN})
+        target_include_directories(${name} PRIVATE "src")
+        add_test(NAME ${name} COMMAND ${name})
+    endfunction()
+
+    ce_add_test(save_catalog_test "src/save_catalog.cc" "src/save_records.cc" "src/save_storage.cc")
+    ce_add_test(sound_tempo_test "src/sound_tempo.cc")
 endif()

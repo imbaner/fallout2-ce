@@ -104,6 +104,11 @@ EdgeZone::ClipSides mapEdgeGetClipSides(int elevation);
 // Call when resolution changes while a map is loaded.
 void mapEdgeRecalc();
 
+// CE: Recalculates scroll limits when visible part of the map changes size
+// (see world_view.h) and, with [moveIntoLimits], moves the view back into
+// them if needed.
+void mapEdgeHandleViewSizeChanged(bool moveIntoLimits);
+
 // Pixel-offset adjustments for sub-tile boundary alignment (sfall mapModWidth/Height).
 // Used when camera is exactly at one of the scroll border edges.
 int mapEdgeGetTileXAlignment();

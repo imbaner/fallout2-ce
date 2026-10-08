@@ -7,6 +7,7 @@
 #include "color.h"
 #include "datafile.h"
 #include "db.h"
+#include "debug.h"
 #include "draw.h"
 #include "game.h"
 #include "input.h"
@@ -19,6 +20,7 @@
 #include "platform_compat.h"
 #include "svga.h"
 #include "text_font.h"
+#include "touch.h"
 #include "widget.h"
 #include "window_manager.h"
 
@@ -680,6 +682,12 @@ static void redrawButton(ManagedButton* managedButton)
 // 0x4B7610
 bool scriptWindowHide()
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     if (managedWindow->window == -1) {
         return false;
@@ -693,6 +701,12 @@ bool scriptWindowHide()
 // 0x4B7648
 bool scriptWindowShow()
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     if (managedWindow->window == -1) {
         return false;
@@ -750,18 +764,36 @@ bool scriptWindowSetFlag(int windowId, int bitFlag, bool enabled)
 // 0x4B7734
 int scriptWindowWidth()
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return 0;
+    }
+
     return gManagedWindows[gCurrentManagedWindowIndex].width;
 }
 
 // 0x4B7754
 int scriptWindowHeight()
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return 0;
+    }
+
     return gManagedWindows[gCurrentManagedWindowIndex].height;
 }
 
 // 0x4B7680
 bool scriptWindowDraw()
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     if (managedWindow->window == -1) {
         return false;
@@ -852,6 +884,14 @@ int scriptWindowScale(const char* windowName, int x, int y, int width, int heigh
 // 0x4B7F3C
 int scriptWindowCreate(const char* windowName, int x, int y, int width, int height, ColorWithFlags color, int flags)
 {
+#if FALLOUT_TOUCH_ONLY
+    // CE: Scripts' own windows aren't supported in the touch-only build
+    // (touch.h): nothing could press their buttons. The script gets "no
+    // window", as when one can't be made.
+    debugPrint("\nscriptWindowCreate: scripts' windows aren't supported (%s)\n", windowName);
+    return -1;
+#endif
+
     int windowIndex = -1;
 
     // NOTE: Original code is slightly different.
@@ -1275,6 +1315,12 @@ bool scriptWindowFormatMessage(char* string, int x, int y, int width, int height
 // 0x4B8A60
 bool scriptWindowPrint(char* string, int width, int x, int y, ColorWithFlags color)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     x = (int)(x * managedWindow->scaleX);
     y = (int)(y * managedWindow->scaleY);
@@ -1287,6 +1333,12 @@ bool scriptWindowPrint(char* string, int width, int x, int y, ColorWithFlags col
 // 0x4B8B10
 void _displayInWindow(unsigned char* data, int width, int height, int pitch)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return;
+    }
+
     if (gDisplayInWindowCallback != nullptr) {
         // NOTE: The second parameter is unclear as there is no distinction
         // between address of entire window struct and it's name (since it's the
@@ -1368,6 +1420,12 @@ bool scriptWindowDisplay(char* fileName, int x, int y, int width, int height)
 // 0x4B8EF0 windowDisplayBuf
 bool scriptWindowDisplayBuf(unsigned char* src, int srcWidth, int srcHeight, int destX, int destY, int destWidth, int destHeight)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     unsigned char* windowBuffer = windowGetBuffer(managedWindow->window);
 
@@ -1788,6 +1846,12 @@ bool scriptWindowAddButton(const char* buttonName, int x, int y, int width, int 
 // 0x4B9DD0
 bool scriptWindowAddButtonGfx(const char* buttonName, char* pressedFileName, char* normalFileName, char* hoverFileName)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     for (int index = 0; index < managedWindow->buttonsLength; index++) {
         ManagedButton* managedButton = &(managedWindow->buttons[index]);
@@ -2079,6 +2143,12 @@ bool scriptWindowAddButtonTextWithOffsets(const char* buttonName, const char* te
 // 0x4BA694
 bool scriptWindowFill(float r, float g, float b)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     int colorIndex = ((int)(r * 31.0) << 10) | ((int)(g * 31.0) << 5) | (int)(b * 31.0);
 
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
@@ -2095,6 +2165,12 @@ bool scriptWindowFill(float r, float g, float b)
 // 0x4BA738
 bool scriptWindowFillRect(int x, int y, int width, int height, float r, float g, float b)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
 
     x = (int)(x * managedWindow->scaleX);
@@ -2122,6 +2198,12 @@ bool scriptWindowFillRect(int x, int y, int width, int height, float r, float g,
 // 0x4BA844
 void scriptWindowEndRegion()
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return;
+    }
+
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
     Region* region = managedWindow->regions[managedWindow->currentRegionIndex];
     scriptWindowAddRegionPoint(region->points->x, region->points->y, false);
@@ -2390,6 +2472,12 @@ bool scriptWindowSetMovieFlags(int flags)
 // 0x4BB24C
 bool scriptWindowPlayMovie(char* filePath)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     if (_movieRun(gManagedWindows[gCurrentManagedWindowIndex].window, filePath) != 0) {
         return false;
     }
@@ -2400,6 +2488,12 @@ bool scriptWindowPlayMovie(char* filePath)
 // 0x4BB280
 bool scriptWindowPlayMovieRect(char* filePath, int x, int y, int w, int h)
 {
+    // CE: No window selected (none made - never in the touch-only build -
+    // or deleted): nothing to act on.
+    if (gCurrentManagedWindowIndex == -1) {
+        return false;
+    }
+
     if (_movieRunRect(gManagedWindows[gCurrentManagedWindowIndex].window, filePath, x, y, w, h) != 0) {
         return false;
     }

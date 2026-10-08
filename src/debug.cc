@@ -9,6 +9,7 @@
 
 #include "memory.h"
 #include "platform_compat.h"
+#include "touch.h"
 #include "window_manager_private.h"
 
 namespace fallout {
@@ -58,7 +59,12 @@ void debugModeInit(const char* debugMode)
     } else if (compat_stricmp(debugMode, "mono") == 0) {
         _debug_register_mono();
     } else if (compat_stricmp(debugMode, "gnw") == 0) {
+#if FALLOUT_TOUCH_ONLY
+        // CE: No debug window in the touch-only build (touch.h), the log.
+        _debug_register_log("debug.log", "wt");
+#else
         _debug_register_func(_win_debug);
+#endif
     }
 
     if (gDebugPrintProc == nullptr) {
@@ -140,8 +146,13 @@ void _debug_register_env()
         // NOTE: Uninline.
         _debug_register_screen();
     } else if (strcmp(copy, "gnw") == 0) {
+#if FALLOUT_TOUCH_ONLY
+        // CE: No debug window in the touch-only build (touch.h), the log.
+        _debug_register_log("debug.log", "wt");
+#else
         // NOTE: Uninline.
         _debug_register_func(_win_debug);
+#endif
     }
 
     internal_free(copy);

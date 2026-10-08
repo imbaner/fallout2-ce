@@ -9,6 +9,8 @@
 
 namespace fallout {
 
+struct Sound;
+
 // Signature of animation callback accepting 2 parameters.
 typedef int(AnimationCallback)(void* a1, void* a2);
 
@@ -59,6 +61,15 @@ int animationRegisterTakeOutWeapon(Object* owner, WeaponAnimation weaponAnimatio
 int animationRegisterSetLightDistance(Object* owner, int lightDistance, int delay);
 int animationRegisterToggleOutline(Object* object, bool outline, int delay);
 int animationRegisterPlaySoundEffect(Object* owner, const char* soundEffectName, int delay);
+
+// CE: How many times as fast combat speed makes [object]'s animations other
+// than walking and running (`[enhancements] combat_speed_all_animations`),
+// 1 - not at all. Their sounds play as fast (`animationLoadSoundEffect`).
+double animationGetCombatSpeedFactor(Object* object);
+
+// CE: Sound effect [soundEffectName] of [owner]'s animation: its volume by
+// distance, as fast as the animation (`animationRegisterPlaySoundEffect`).
+Sound* animationLoadSoundEffect(Object* owner, const char* soundEffectName);
 int animationRegisterAnimateForever(Object* owner, AnimationType anim, int delay);
 int animationRegisterPing(AnimationRequestOptions requestOptions, int delay);
 int _make_path(Object* object, int from, int to, unsigned char* rotations, int requireEmptyDest);
@@ -69,6 +80,9 @@ void _object_animate();
 int _check_move(int* actionPointsPtr);
 int _dude_move(int actionPoints);
 int _dude_run(int actionPoints);
+int dudeCheckMoveTile(int tile, int* actionPointsPtr);
+int dudeMoveToTile(int tile, int actionPoints);
+int dudeRunToTile(int tile, int actionPoints);
 void _dude_fidget();
 void _dude_stand(Object* obj, Rotation rotation, const FrmId& frmId);
 void _dude_standup(Object* a1);

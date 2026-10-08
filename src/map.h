@@ -102,6 +102,8 @@ char* mapGetCityName(Map map_num);
 char* mapDescriptionById(Map map_index);
 Map mapGetCurrentMap();
 int mapScroll(int dx, int dy);
+int mapScrollImmediate(int dx, int dy);
+void isoWindowClear();
 int mapSetEnteringLocation(int elevation, int tile, Rotation rotation);
 void mapNewMap();
 int mapLoadByName(char* fileName);
@@ -116,6 +118,10 @@ const char* mapBuildSavePath(const char* name);
 int mapLoadSaved(char* fileName);
 int mapGetLoadedAreaId();
 int mapSetTransition(MapTransition* transition);
+// CE: A map is being loaded: the old one's objects are gone, the new one's
+// aren't all there, the party is set aside (frames drawn meanwhile, from the
+// file reading's progress, mustn't look at the world).
+bool mapIsLoading();
 int mapHandleTransition();
 int _map_save_in_game(bool isLeavingMap);
 int _map_save(bool isInGame = false);

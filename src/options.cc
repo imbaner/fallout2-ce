@@ -15,6 +15,7 @@
 #include "memory.h"
 #include "message.h"
 #include "mouse.h"
+#include "mui.h"
 #include "preferences.h"
 #include "settings.h"
 #include "string_utils.h"
@@ -22,6 +23,7 @@
 #include "text_font.h"
 #include "tile.h"
 #include "window_manager.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -125,6 +127,10 @@ static void optionsMessageListReset()
 int showOptions()
 {
     ScopedGameMode gm(GameMode::kOptions);
+
+    if (muiIsEnabled()) {
+        return muiOptionsScreenRun();
+    }
 
     if (optionsWindowInit() == -1) {
         debugPrint("\nOPTION MENU: Error loading option dialog data!\n");
@@ -595,10 +601,16 @@ static void _ShadeScreen(bool preserveWorldState)
         mouseHideCursor();
         tileWindowRefresh();
 
-        int windowWidth = windowGetWidth(gIsoWindow);
-        int windowHeight = windowGetHeight(gIsoWindow);
-        unsigned char* windowBuffer = windowGetBuffer(gIsoWindow);
-        grayscalePaletteApply(windowBuffer, windowWidth, windowHeight, windowWidth);
+        if (worldViewIsEnabled()) {
+            // CE: Map is rendered into world view buffer.
+            grayscalePaletteApply(worldViewGetBuffer(), worldViewGetWidth(), worldViewGetHeight(), worldViewGetWidth());
+            worldViewInvalidateAll();
+        } else {
+            int windowWidth = windowGetWidth(gIsoWindow);
+            int windowHeight = windowGetHeight(gIsoWindow);
+            unsigned char* windowBuffer = windowGetBuffer(gIsoWindow);
+            grayscalePaletteApply(windowBuffer, windowWidth, windowHeight, windowWidth);
+        }
 
         windowRefresh(gIsoWindow);
     }

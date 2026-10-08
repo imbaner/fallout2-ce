@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "db.h"
+#include "input.h"
 #include "memory.h"
 #include "svga.h"
 
@@ -92,21 +93,26 @@ int Color2RGB(Color c)
 // Performs animated palette transition.
 //
 // 0x4C7320 fadeSystemPalette
-void colorPaletteFadeBetween(unsigned char* oldPalette, unsigned char* newPalette, int steps)
+void colorPaletteFadeBetween(unsigned char* oldPalette, unsigned char* newPalette, unsigned int durationMs)
 {
-    for (int step = 0; step < steps; step++) {
+    unsigned int start = getTicks();
+    for (;;) {
         sharedFpsLimiter.mark();
+
+        unsigned int elapsed = getTicksSince(start);
+        if (elapsed >= durationMs) {
+            break;
+        }
 
         unsigned char palette[COLOR_MAP_SIZE];
 
         for (int index = 0; index < COLOR_MAP_SIZE; index++) {
-            palette[index] = oldPalette[index] - (oldPalette[index] - newPalette[index]) * step / steps;
+            palette[index] = oldPalette[index] - (oldPalette[index] - newPalette[index]) * static_cast<int>(elapsed) / static_cast<int>(durationMs);
         }
 
+        // Keeps sound streaming while the game waits here.
         if (gColorPaletteTransitionCallback != nullptr) {
-            if (step % 128 == 0) {
-                gColorPaletteTransitionCallback();
-            }
+            gColorPaletteTransitionCallback();
         }
 
         _setSystemPalette(palette);

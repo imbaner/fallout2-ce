@@ -1,10 +1,16 @@
 #include "touch.h"
 
-#include <algorithm>
-#include <stack>
+#include <math.h>
 
+#include <algorithm>
+#include <queue>
+
+#if !FALLOUT_TOUCH_ONLY
 #include "mouse.h"
+#endif
 #include "svga.h"
+#include "hud_layout.h"
+#include "touch_controls.h"
 
 namespace fallout {
 
@@ -16,6 +22,17 @@ namespace fallout {
 
 #define TAP_MAXIMUM_DURATION 75
 #define PAN_MINIMUM_MOVEMENT 4
+
+// CE: A finger moving less than this is still a tap / long press (Android's
+// touch slop). The original 4 screen pixels were made for 640x480 screens;
+// on a phone they're under a millimeter and a finger rolling while tapping
+// made a pan, the tap was lost.
+static constexpr float kTouchSlopDp = 8.0f;
+
+static int touch_get_slop()
+{
+    return std::max(PAN_MINIMUM_MOVEMENT, static_cast<int>(kTouchSlopDp * hudGetPixelsPerDp()));
+}
 #define LONG_PRESS_MINIMUM_DURATION 500
 
 struct TouchLocation {
@@ -35,7 +52,9 @@ struct Touch {
 
 static Touch touches[MAX_TOUCHES];
 static Gesture currentGesture;
-static std::stack<Gesture> gestureEventsQueue;
+// CE: FIFO, several events may be queued at once (e.g. when two finger pan
+// replaces single finger one).
+static std::queue<Gesture> gestureEventsQueue;
 
 static bool gUseTouchscreenMode = false;
 static bool gUsePanMode = false;
@@ -88,6 +107,28 @@ static TouchLocation touch_get_current_location_centroid(int* indexes, int lengt
     return centroid;
 }
 
+// CE: Latest event time of the fingers.
+static Uint32 touch_get_latest_timestamp(int* indexes, int length)
+{
+    Uint32 latest = 0;
+    for (int index = 0; index < length; index++) {
+        latest = std::max(latest, touches[indexes[index]].currentTimestamp);
+    }
+    return latest;
+}
+
+// CE: Distance between the first two fingers, or 0.
+static int touch_get_span(int* indexes, int length, bool current)
+{
+    if (length < 2) {
+        return 0;
+    }
+
+    const TouchLocation& a = current ? touches[indexes[0]].currentLocation : touches[indexes[0]].startLocation;
+    const TouchLocation& b = current ? touches[indexes[1]].currentLocation : touches[indexes[1]].startLocation;
+    return static_cast<int>(hypot(a.x - b.x, a.y - b.y));
+}
+
 void touch_handle_start(SDL_TouchFingerEvent* event)
 {
     // On iOS `fingerId` is an address of underlying `UITouch` object. When
@@ -133,6 +174,48 @@ void touch_handle_end(SDL_TouchFingerEvent* event)
         touch->currentLocation.y = static_cast<int>(event->y * screenGetHeight());
         touch->phase = TOUCH_PHASE_ENDED;
     }
+}
+
+bool touch_handle_cancel(SDL_FingerID fingerId)
+{
+    int index = find_touch(fingerId);
+    if (index == -1 || !touches[index].used) {
+        return false;
+    }
+
+    touches[index].used = false;
+
+    // Nothing left: no gesture goes on.
+    for (const Touch& touch : touches) {
+        if (touch.used) {
+            return true;
+        }
+    }
+    currentGesture = Gesture();
+    return true;
+}
+
+bool touch_forget_missing(const SDL_FingerID* down, int count)
+{
+    bool forgotten = false;
+    for (const Touch& touch : touches) {
+        if (!touch.used) {
+            continue;
+        }
+
+        bool isDown = false;
+        for (int index = 0; index < count; index++) {
+            if (down[index] == touch.fingerId) {
+                isDown = true;
+                break;
+            }
+        }
+
+        if (!isDown && touch_handle_cancel(touch.fingerId)) {
+            forgotten = true;
+        }
+    }
+    return forgotten;
 }
 
 void touch_process_gesture()
@@ -210,12 +293,46 @@ void touch_process_gesture()
             // same as it was when gesture was recognized.
             if (activeCount == currentGesture.numberOfTouches && endedCount == 0) {
                 TouchLocation centroid = touch_get_current_location_centroid(active, activeCount);
-                currentGesture.state = kChanged;
+                int span = touch_get_span(active, activeCount, true);
+
+                // CE: This is called on every event poll, report only actual
+                // changes of pans to avoid flooding the queue. Long press is
+                // reported continuously: mouse emulation keeps button held
+                // only while it receives events.
+                if (currentGesture.type == kLongPress
+                    || currentGesture.state == kBegan
+                    || centroid.x != currentGesture.x
+                    || centroid.y != currentGesture.y
+                    || span != currentGesture.span) {
+                    currentGesture.state = kChanged;
+                    currentGesture.x = centroid.x;
+                    currentGesture.y = centroid.y;
+                    currentGesture.span = span;
+                    currentGesture.time = touch_get_latest_timestamp(active, activeCount);
+                    gestureEventsQueue.push(currentGesture);
+                }
+            } else if (currentGesture.type == kPan && currentGesture.numberOfTouches == 1 && activeCount == 2 && endedCount == 0) {
+                // CE: Second finger joined single finger pan - turn it into
+                // two finger pan (pinch) right away.
+                currentGesture.state = kEnded;
+                currentGesture.time = touch_get_latest_timestamp(active, activeCount);
+                gestureEventsQueue.push(currentGesture);
+
+                TouchLocation centroid = touch_get_current_location_centroid(active, activeCount);
+                currentGesture.type = kPan;
+                currentGesture.state = kBegan;
+                currentGesture.numberOfTouches = 2;
                 currentGesture.x = centroid.x;
                 currentGesture.y = centroid.y;
+                currentGesture.span = touch_get_span(active, activeCount, true);
+                currentGesture.startX = currentGesture.x;
+                currentGesture.startY = currentGesture.y;
+                currentGesture.startSpan = currentGesture.span;
+                currentGesture.time = touch_get_latest_timestamp(active, activeCount);
                 gestureEventsQueue.push(currentGesture);
             } else {
                 currentGesture.state = kEnded;
+                currentGesture.time = std::max(touch_get_latest_timestamp(active, activeCount), touch_get_latest_timestamp(ended, endedCount));
                 gestureEventsQueue.push(currentGesture);
             }
         }
@@ -249,6 +366,11 @@ void touch_process_gesture()
                 currentGesture.numberOfTouches = endedCount;
                 currentGesture.x = currentCentroid.x;
                 currentGesture.y = currentCentroid.y;
+                currentGesture.span = 0;
+                currentGesture.startX = currentCentroid.x;
+                currentGesture.startY = currentCentroid.y;
+                currentGesture.startSpan = 0;
+                currentGesture.time = endLatestTimestamp;
                 gestureEventsQueue.push(currentGesture);
 
                 // Reset tap gesture immediately.
@@ -258,14 +380,26 @@ void touch_process_gesture()
             TouchLocation startCentroid = touch_get_start_location_centroid(active, activeCount);
             TouchLocation currentCentroid = touch_get_current_location_centroid(active, activeCount);
 
+            // CE: Pinch changes distance between fingers while their
+            // centroid may stay in place.
+            int startSpan = touch_get_span(active, activeCount, false);
+            int currentSpan = touch_get_span(active, activeCount, true);
+
             // Disambiguate between pan and long press.
-            if (abs(currentCentroid.x - startCentroid.x) >= PAN_MINIMUM_MOVEMENT
-                || abs(currentCentroid.y - startCentroid.y) >= PAN_MINIMUM_MOVEMENT) {
+            int slop = touch_get_slop();
+            if (abs(currentCentroid.x - startCentroid.x) >= slop
+                || abs(currentCentroid.y - startCentroid.y) >= slop
+                || abs(currentSpan - startSpan) >= slop) {
                 currentGesture.type = kPan;
                 currentGesture.state = kBegan;
                 currentGesture.numberOfTouches = activeCount;
                 currentGesture.x = currentCentroid.x;
                 currentGesture.y = currentCentroid.y;
+                currentGesture.span = currentSpan;
+                currentGesture.startX = startCentroid.x;
+                currentGesture.startY = startCentroid.y;
+                currentGesture.startSpan = startSpan;
+                currentGesture.time = touch_get_latest_timestamp(active, activeCount);
                 gestureEventsQueue.push(currentGesture);
             } else if (SDL_GetTicks() - touches[active[0]].startTimestamp >= LONG_PRESS_MINIMUM_DURATION) {
                 currentGesture.type = kLongPress;
@@ -273,16 +407,41 @@ void touch_process_gesture()
                 currentGesture.numberOfTouches = activeCount;
                 currentGesture.x = currentCentroid.x;
                 currentGesture.y = currentCentroid.y;
+                currentGesture.span = currentSpan;
+                currentGesture.startX = startCentroid.x;
+                currentGesture.startY = startCentroid.y;
+                currentGesture.startSpan = startSpan;
+                // The finger held still has no newer events: the long press
+                // is as new as its recognition (the finger is still down).
+                currentGesture.time = SDL_GetTicks();
                 gestureEventsQueue.push(currentGesture);
             }
 
-            if (gUseTouchscreenMode) {
+#if !FALLOUT_TOUCH_ONLY
+            // CE: Multi-finger gestures (pinch zoom) must not move cursor.
+            // Touch-native input has no cursor: the mouse isn't emulated.
+            if (!touchControlsIsNative() && touch_get_touchscreen_mode() && activeCount == 1 && touchControlsWantsCursorWarp(currentCentroid.x, currentCentroid.y)) {
+                int x = currentCentroid.x;
+                int y = currentCentroid.y;
+                touchControlsAdjustUiTouch(&x, &y);
+
                 mouseHideCursor();
-                _mouse_set_position(currentCentroid.x, currentCentroid.y);
+                _mouse_set_position(x, y);
                 mouseShowCursor();
             }
+#endif
         }
     }
+}
+
+bool touch_any_finger_down()
+{
+    for (const Touch& touch : touches) {
+        if (touch.used && touch.phase != TOUCH_PHASE_ENDED) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool touch_get_gesture(Gesture* gesture)
@@ -291,7 +450,7 @@ bool touch_get_gesture(Gesture* gesture)
         return false;
     }
 
-    *gesture = gestureEventsQueue.top();
+    *gesture = gestureEventsQueue.front();
     gestureEventsQueue.pop();
 
     return true;
@@ -304,7 +463,8 @@ void touch_set_touchscreen_mode(const bool value)
 
 bool touch_get_touchscreen_mode()
 {
-    return gUseTouchscreenMode;
+    // CE: With touch controls fingers always point at things directly.
+    return gUseTouchscreenMode || touchControlsIsEnabled();
 }
 
 void touch_set_pan_mode(const bool value)

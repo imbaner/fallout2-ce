@@ -17,7 +17,9 @@
 #include "kb.h"
 #include "message.h"
 #include "mouse.h"
+#include "mui.h"
 #include "palette.h"
+#include "preferences.h"
 #include "scripts.h"
 #include "settings.h"
 #include "svga.h"
@@ -831,6 +833,118 @@ int _SavePrefs(bool save)
     return 0;
 }
 
+bool PreferenceValues::operator==(const PreferenceValues& other) const
+{
+    return gameDifficulty == other.gameDifficulty
+        && combatDifficulty == other.combatDifficulty
+        && violenceLevel == other.violenceLevel
+        && targetHighlight == other.targetHighlight
+        && combatLooks == other.combatLooks
+        && combatMessages == other.combatMessages
+        && combatTaunts == other.combatTaunts
+        && languageFilter == other.languageFilter
+        && running == other.running
+        && subtitles == other.subtitles
+        && itemHighlight == other.itemHighlight
+        && combatSpeed == other.combatSpeed
+        && playerSpeedup == other.playerSpeedup
+        && textBaseDelay == other.textBaseDelay
+        && masterVolume == other.masterVolume
+        && musicVolume == other.musicVolume
+        && soundEffectsVolume == other.soundEffectsVolume
+        && speechVolume == other.speechVolume
+        && brightness == other.brightness
+        && mouseSensitivity == other.mouseSensitivity;
+}
+
+PreferenceValues preferencesGetValues()
+{
+    PreferenceValues values;
+    values.gameDifficulty = gPreferencesGameDifficulty1;
+    values.combatDifficulty = gPreferencesCombatDifficulty1;
+    values.violenceLevel = gPreferencesViolenceLevel1;
+    values.targetHighlight = gPreferencesTargetHighlight1;
+    values.combatLooks = gPreferencesCombatLooks1;
+    values.combatMessages = gPreferencesCombatMessages1;
+    values.combatTaunts = gPreferencesCombatTaunts1;
+    values.languageFilter = gPreferencesLanguageFilter1;
+    values.running = gPreferencesRunning1;
+    values.subtitles = gPreferencesSubtitles1;
+    values.itemHighlight = gPreferencesItemHighlight1;
+    values.combatSpeed = gPreferencesCombatSpeed1;
+    values.playerSpeedup = gPreferencesPlayerSpeedup1;
+    values.textBaseDelay = gPreferencesTextBaseDelay1;
+    values.masterVolume = gPreferencesMasterVolume1;
+    values.musicVolume = gPreferencesMusicVolume1;
+    values.soundEffectsVolume = gPreferencesSoundEffectsVolume1;
+    values.speechVolume = gPreferencesSpeechVolume1;
+    values.brightness = gPreferencesBrightness1;
+    values.mouseSensitivity = gPreferencesMouseSensitivity1;
+    return values;
+}
+
+static void preferencesSetValues(const PreferenceValues& values)
+{
+    gPreferencesGameDifficulty1 = values.gameDifficulty;
+    gPreferencesCombatDifficulty1 = values.combatDifficulty;
+    gPreferencesViolenceLevel1 = values.violenceLevel;
+    gPreferencesTargetHighlight1 = values.targetHighlight;
+    gPreferencesCombatLooks1 = values.combatLooks;
+    gPreferencesCombatMessages1 = values.combatMessages;
+    gPreferencesCombatTaunts1 = values.combatTaunts;
+    gPreferencesLanguageFilter1 = values.languageFilter;
+    gPreferencesRunning1 = values.running;
+    gPreferencesSubtitles1 = values.subtitles;
+    gPreferencesItemHighlight1 = values.itemHighlight;
+    gPreferencesCombatSpeed1 = values.combatSpeed;
+    gPreferencesPlayerSpeedup1 = values.playerSpeedup;
+    gPreferencesTextBaseDelay1 = values.textBaseDelay;
+    gPreferencesMasterVolume1 = values.masterVolume;
+    gPreferencesMusicVolume1 = values.musicVolume;
+    gPreferencesSoundEffectsVolume1 = values.soundEffectsVolume;
+    gPreferencesSpeechVolume1 = values.speechVolume;
+    gPreferencesBrightness1 = values.brightness;
+    gPreferencesMouseSensitivity1 = values.mouseSensitivity;
+}
+
+PreferenceValues preferencesGetDefaults()
+{
+    PreferenceValues current = preferencesGetValues();
+    preferencesSetDefaults(false);
+    PreferenceValues defaults = preferencesGetValues();
+    preferencesSetValues(current);
+    return defaults;
+}
+
+void preferencesPreview(const PreferenceValues& values)
+{
+    gameSoundSetMasterVolume(values.masterVolume);
+    backgroundSoundSetVolume(values.musicVolume);
+    soundEffectsSetVolume(values.soundEffectsVolume);
+    speechSetVolume(values.speechVolume);
+    colorSetBrightness(values.brightness);
+}
+
+void preferencesApply(const PreferenceValues& values)
+{
+    preferencesSetValues(values);
+
+    // As the window closing after a change (`preferencesWindowFree`).
+    _SavePrefs(1);
+    _JustUpdate_();
+    _combat_highlight_change();
+}
+
+void preferencesPlaySoundEffectSample()
+{
+    soundPlayFile("butin1");
+}
+
+void preferencesPlaySpeechSample()
+{
+    speechLoad("narrator\\options", GSOUND_LIMIT_AFTER, GSOUND_MEMORY, GSOUND_NO_LOOP);
+}
+
 // 0x493224
 int preferencesSave(File* stream)
 {
@@ -1230,6 +1344,22 @@ static int preferencesWindowFree()
 int doPreferences(bool animated)
 {
     ScopedGameMode gm(GameMode::kPreferences);
+
+    // Mobile UI: its settings screen instead of the window. It covers the
+    // screen, so the main menu's palette fades are set at once.
+    if (muiIsEnabled()) {
+        if (animated) {
+            colorPaletteLoad("color.pal");
+            paletteSetEntries(_cmap);
+        }
+
+        muiPreferencesScreenRun(!animated);
+
+        if (animated) {
+            paletteSetEntries(gPaletteBlack);
+        }
+        return 0;
+    }
 
     if (preferencesWindowInit() == -1) {
         debugPrint("\nPREFERENCE MENU: Error loading preference dialog data!\n");

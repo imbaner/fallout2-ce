@@ -2,8 +2,11 @@
 #define GAME_MOUSE_H
 
 #include "obj_types.h"
+#include "skill_defs.h"
 
 namespace fallout {
+
+class FrmId;
 
 typedef enum GameMouseMode {
     GAME_MOUSE_MODE_MOVE,
@@ -107,6 +110,28 @@ void _gmouse_remove_item_outline(Object* object);
 
 void gameMouseRefreshImmediately();
 Object* gmouse_get_outlined_object();
+
+// CE: Building blocks for touch controls (see touch_controls.h).
+
+// Returns true if player can act on the map (walk, use objects, attack).
+bool gameMouseIsMapInputEnabled();
+
+// Returns true if the map view can be moved (also during enemy turns).
+bool gameMouseIsMapScrollingEnabled();
+
+// Primary action on the object under cursor (left click in arrow mode).
+void gameMouseUseObjectUnderCursor();
+
+// Fills action menu items available for the object, returns their count.
+// `actionMenuItems` must have room for `GAME_MOUSE_ACTION_MENU_ITEM_COUNT - 1`
+// items.
+int gameMouseBuildActionMenuItems(Object* targetObj, int* actionMenuItems);
+
+// Performs action menu item on the object.
+void gameMouseExecuteActionMenuItem(Object* targetObj, int menuItem);
+
+// Skill of a skill targeting mode, `SKILL_INVALID` for other modes.
+Skill gameMouseGetModeSkill(int mode);
 
 } // namespace fallout
 

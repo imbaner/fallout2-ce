@@ -7,6 +7,7 @@
 #include <limits>
 #include <vector>
 
+#include "action_log.h"
 #include "animation.h"
 #include "animation_defs.h"
 #include "art.h"
@@ -32,6 +33,7 @@
 #include "text_object.h"
 #include "tile.h"
 #include "worldmap.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -1506,16 +1508,21 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
             TileFlags currentSquareFlags = tileFlagsFromTileFid(currentSquareRoofFid);
             TileFlags previousSquareFlags = tileFlagsFromTileFid(previousSquareRoofFid);
             if (isEmpty != _obj_last_is_empty || currentSquareFlags != previousSquareFlags) {
+                // CE: Only where roofs changed is drawn again (the game
+                // drew the whole screen).
+                Rect roofs;
                 if (!_obj_last_is_empty) {
-                    tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, elevation, true);
+                    tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, elevation, true, &roofs);
+                    if (rect != nullptr && roofs.right >= roofs.left) {
+                        rectUnion(rect, &roofs, rect);
+                    }
                 }
 
                 if (!isEmpty) {
-                    tile_fill_roof(roofX, roofY, elevation, false);
-                }
-
-                if (rect != nullptr) {
-                    rectUnion(rect, &_scr_size, rect);
+                    tile_fill_roof(roofX, roofY, elevation, false, &roofs);
+                    if (rect != nullptr && roofs.right >= roofs.left) {
+                        rectUnion(rect, &roofs, rect);
+                    }
                 }
             }
 
@@ -1573,8 +1580,14 @@ int objectSetFrmId(Object* obj, const FrmId& frmId, Rect* dirtyRect)
         return -1;
     }
 
+
     if (frmId.valid()) {
         assert(frmId.hasFid() && "objectSetFrmId(Object* obj, const FrmId& frmId, Rect* dirtyRect) called with path based FrmId which is not supported!");
+    }
+
+    // CE: Who changes the dude's look (`[debug] action_log`).
+    if (obj == gDude && FrmId(obj).frameId().critter != frmId.frameId().critter) {
+        actionLogDudeFid(obj->fid, frmId.fid());
     }
 
     if (dirtyRect != nullptr) {
@@ -4983,6 +4996,11 @@ static void objectDrawOutline(Object* object, Rect* rect)
 // 0x48F1B0 obj_render_object
 static void _obj_render_object(Object* object, Rect* rect, int light)
 {
+    // CE: Drawn on top of zoomed map by world view (see world_view.h).
+    if (worldViewIsOverlayObject(object)) {
+        return;
+    }
+
     const FrmId frmId = FrmId(object);
     ObjectType type = frmId.objectType();
     if (artIsObjectTypeHidden(type)) {

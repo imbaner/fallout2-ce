@@ -1,6 +1,7 @@
 #include "animation.h"
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <cstddef>
 #include <stdio.h>
@@ -13,6 +14,7 @@
 #include "combat_ai.h"
 #include "critter.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "display_monitor.h"
 #include "game.h"
 #include "game_mouse.h"
@@ -38,6 +40,7 @@
 #include "text_object.h"
 #include "tile.h"
 #include "trait.h"
+#include "world_view.h"
 #include "worldmap.h"
 
 namespace fallout {
@@ -344,6 +347,7 @@ static int _anim_hide(Object* object, int animationSequenceIndex);
 static int animationChangeFrmId(Object* obj, int animationSequenceIndex, const FrmId& frmId);
 static int _check_gravity(int tile, int elevation);
 static unsigned int animationComputeTicksPerFrame(Object* object, const FrmId& frmId);
+static bool animationIsSpedUpInCombat(Object* object);
 
 static void reportOverloaded(Object* critter);
 
@@ -1337,8 +1341,7 @@ int animationRegisterPlaySoundEffect(Object* owner, const char* soundEffectName,
     animationDescription->kind = ANIM_KIND_CALLBACK;
     animationDescription->owner = owner;
     if (soundEffectName != nullptr) {
-        int volume = _gsound_compute_relative_volume(owner);
-        animationDescription->param1 = soundEffectLoadWithVolume(soundEffectName, owner, volume);
+        animationDescription->param1 = animationLoadSoundEffect(owner, soundEffectName);
         if (animationDescription->param1 != nullptr) {
             animationDescription->callback = (AnimationCallback*)_gsnd_anim_sound;
         } else {
@@ -2848,6 +2851,158 @@ static int _anim_animate(Object* obj, AnimationType anim, int animationSequenceI
     return 0;
 }
 
+// CE: Longest delay (ms) animations catch up on (`_object_animate`); after
+// a longer one (a menu, loading) they go on from the next frame.
+static constexpr unsigned int kAnimationCatchUpLimit = 250;
+
+// CE: One frame of animation [index] (0x417B30 loop body). Returns false when
+// it can't take another one now (complete, waiting, another sad took over).
+static bool animationAdvanceSad(int index)
+{
+    AnimationSad* sad = &(gAnimationSads[index]);
+    Object* object = sad->obj;
+
+    if (animationRunSequence(sad->animationSequenceIndex) == -1) {
+        return false;
+    }
+
+    if (sad->length > 0) {
+        if ((sad->flags & ANIM_SAD_STRAIGHT) != 0) {
+            _object_straight_move(index);
+        } else {
+            int savedTile = object->tile;
+            _object_move(index);
+            if (savedTile != object->tile) {
+                scriptsExecSpatialProc(object, object->tile, object->elevation);
+            }
+        }
+        return sad->step != ANIM_COMPLETE;
+    }
+
+    if (sad->step == 0) {
+        for (int index = 0; index < gAnimationCurrentSad; index++) {
+            AnimationSad* otherSad = &(gAnimationSads[index]);
+            if (object == otherSad->obj && otherSad->step == SAD_INIT) {
+                otherSad->step = ANIM_COMPLETE;
+                _anim_set_continue(otherSad->animationSequenceIndex, 1);
+            }
+        }
+        sad->step = SAD_INIT;
+    }
+
+    Rect dirtyRect;
+    Rect tempRect;
+
+    objectGetRect(object, &dirtyRect);
+
+    if (object->fid == sad->fid) {
+        if ((sad->flags & ANIM_SAD_REVERSE) == 0) {
+            CacheEntry* cacheHandle;
+            Art* art = artLock(FrmId(object), &cacheHandle);
+            if (art != nullptr) {
+                if ((sad->flags & ANIM_SAD_FOREVER) == 0 && object->frame == artGetFrameCount(art) - 1) {
+                    sad->step = ANIM_COMPLETE;
+                    artUnlock(cacheHandle);
+
+                    if ((sad->flags & ANIM_SAD_HIDE_ON_END) != 0) {
+                        // NOTE: Uninline.
+                        _anim_hide(object, -1);
+                    }
+
+                    _anim_set_continue(sad->animationSequenceIndex, 1);
+                    return false;
+                } else {
+                    objectSetNextFrame(object, &tempRect);
+                    rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+                    int frameX;
+                    int frameY;
+                    artGetFrameOffsets(art, object->frame, object->rotation, &frameX, &frameY);
+
+                    _obj_offset(object, frameX, frameY, &tempRect);
+                    rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+                    artUnlock(cacheHandle);
+                }
+            }
+
+            tileWindowRefreshRect(&dirtyRect, gElevation);
+
+            return true;
+        }
+
+        if ((sad->flags & ANIM_SAD_FOREVER) != 0 || object->frame != 0) {
+            int x = 0;
+            int y = 0;
+
+            CacheEntry* cacheHandle;
+            Art* art = artLock(FrmId(object), &cacheHandle);
+            if (art != nullptr) {
+                artGetFrameOffsets(art, object->frame, object->rotation, &x, &y);
+                artUnlock(cacheHandle);
+            }
+
+            objectSetPrevFrame(object, &tempRect);
+            rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+            _obj_offset(object, -x, -y, &tempRect);
+            rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+            tileWindowRefreshRect(&dirtyRect, gElevation);
+            return true;
+        }
+
+        sad->step = ANIM_COMPLETE;
+        _anim_set_continue(sad->animationSequenceIndex, 1);
+    } else {
+        int x;
+        int y;
+
+        CacheEntry* cacheHandle;
+        Art* art = artLock(FrmId(object), &cacheHandle);
+        if (art != nullptr) {
+            artGetRotationOffsets(art, object->rotation, &x, &y);
+            artUnlock(cacheHandle);
+        } else {
+            x = 0;
+            y = 0;
+        }
+
+        objectSetFrmId(object, FrmId(sad->fid), &tempRect);
+        rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+        art = artLock(FrmId(object), &cacheHandle);
+        if (art != nullptr) {
+            int frame;
+            if ((sad->flags & ANIM_SAD_REVERSE) != 0) {
+                frame = artGetFrameCount(art) - 1;
+            } else {
+                frame = 0;
+            }
+
+            objectSetFrame(object, frame, &tempRect);
+            rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+            int frameX;
+            int frameY;
+            artGetFrameOffsets(art, object->frame, object->rotation, &frameX, &frameY);
+
+            Rect tempRect;
+            _obj_offset(object, x + frameX, y + frameY, &tempRect);
+            rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+
+            artUnlock(cacheHandle);
+        } else {
+            objectSetFrame(object, 0, &tempRect);
+            rectUnion(&dirtyRect, &tempRect, &dirtyRect);
+        }
+
+        tileWindowRefreshRect(&dirtyRect, gElevation);
+    }
+
+    return sad->step != ANIM_COMPLETE;
+}
+
 // 0x417B30
 void _object_animate()
 {
@@ -2857,159 +3012,45 @@ void _object_animate()
 
     _anim_in_bk = true;
 
+    // CE: Drawn once where animations end up (see the catch up below).
+    tileBeginDeferredRefresh();
+
     for (int index = 0; index < gAnimationCurrentSad; index++) {
         AnimationSad* sad = &(gAnimationSads[index]);
         if (sad->step == ANIM_COMPLETE) {
             continue;
         }
 
-        Object* object = sad->obj;
-
         unsigned int time = getTicks();
-        if (getTicksBetween(time, sad->animationTimestamp) < sad->ticksPerFrame) {
+        unsigned int elapsed = getTicksBetween(time, sad->animationTimestamp);
+        if (elapsed < sad->ticksPerFrame) {
             continue;
         }
 
-        sad->animationTimestamp = time;
-
-        if (animationRunSequence(sad->animationSequenceIndex) == -1) {
-            continue;
-        }
-
-        if (sad->length > 0) {
-            if ((sad->flags & ANIM_SAD_STRAIGHT) != 0) {
-                _object_straight_move(index);
-            } else {
-                int savedTile = object->tile;
-                _object_move(index);
-                if (savedTile != object->tile) {
-                    scriptsExecSpatialProc(object, object->tile, object->elevation);
-                }
-            }
-            continue;
-        }
-
-        if (sad->step == 0) {
-            for (int index = 0; index < gAnimationCurrentSad; index++) {
-                AnimationSad* otherSad = &(gAnimationSads[index]);
-                if (object == otherSad->obj && otherSad->step == SAD_INIT) {
-                    otherSad->step = ANIM_COMPLETE;
-                    _anim_set_continue(otherSad->animationSequenceIndex, 1);
-                }
-            }
-            sad->step = SAD_INIT;
-        }
-
-        Rect dirtyRect;
-        Rect tempRect;
-
-        objectGetRect(object, &dirtyRect);
-
-        if (object->fid == sad->fid) {
-            if ((sad->flags & ANIM_SAD_REVERSE) == 0) {
-                CacheEntry* cacheHandle;
-                Art* art = artLock(FrmId(object), &cacheHandle);
-                if (art != nullptr) {
-                    if ((sad->flags & ANIM_SAD_FOREVER) == 0 && object->frame == artGetFrameCount(art) - 1) {
-                        sad->step = ANIM_COMPLETE;
-                        artUnlock(cacheHandle);
-
-                        if ((sad->flags & ANIM_SAD_HIDE_ON_END) != 0) {
-                            // NOTE: Uninline.
-                            _anim_hide(object, -1);
-                        }
-
-                        _anim_set_continue(sad->animationSequenceIndex, 1);
-                        continue;
-                    } else {
-                        objectSetNextFrame(object, &tempRect);
-                        rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-                        int frameX;
-                        int frameY;
-                        artGetFrameOffsets(art, object->frame, object->rotation, &frameX, &frameY);
-
-                        _obj_offset(object, frameX, frameY, &tempRect);
-                        rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-                        artUnlock(cacheHandle);
-                    }
-                }
-
-                tileWindowRefreshRect(&dirtyRect, gElevation);
-
-                continue;
-            }
-
-            if ((sad->flags & ANIM_SAD_FOREVER) != 0 || object->frame != 0) {
-                int x = 0;
-                int y = 0;
-
-                CacheEntry* cacheHandle;
-                Art* art = artLock(FrmId(object), &cacheHandle);
-                if (art != nullptr) {
-                    artGetFrameOffsets(art, object->frame, object->rotation, &x, &y);
-                    artUnlock(cacheHandle);
-                }
-
-                objectSetPrevFrame(object, &tempRect);
-                rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-                _obj_offset(object, -x, -y, &tempRect);
-                rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-                tileWindowRefreshRect(&dirtyRect, gElevation);
-                continue;
-            }
-
-            sad->step = ANIM_COMPLETE;
-            _anim_set_continue(sad->animationSequenceIndex, 1);
+        // CE: The game shows one frame per pass of its loop, so an animation
+        // faster than the loop (combat speed on a slow device) slowed down to
+        // it. Frames the loop was late for are taken now too, each with
+        // everything it triggers (steps, action points, sounds, hits). The
+        // first frame, and after a stall (a menu, loading) the next one,
+        // start the timing anew.
+        // Only in combat, where combat speed makes animations fast;
+        // elsewhere the game's pace is kept as it was.
+        int frames = 1;
+        if (isInCombat() && sad->animationTimestamp != 0 && elapsed <= kAnimationCatchUpLimit) {
+            frames = static_cast<int>(elapsed / sad->ticksPerFrame);
+            sad->animationTimestamp += frames * sad->ticksPerFrame;
         } else {
-            int x;
-            int y;
+            sad->animationTimestamp = time;
+        }
 
-            CacheEntry* cacheHandle;
-            Art* art = artLock(FrmId(object), &cacheHandle);
-            if (art != nullptr) {
-                artGetRotationOffsets(art, object->rotation, &x, &y);
-                artUnlock(cacheHandle);
-            } else {
-                x = 0;
-                y = 0;
+        for (int frame = 0; frame < frames; frame++) {
+            if (!animationAdvanceSad(index)) {
+                break;
             }
-
-            objectSetFrmId(object, FrmId(sad->fid), &tempRect);
-            rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-            art = artLock(FrmId(object), &cacheHandle);
-            if (art != nullptr) {
-                int frame;
-                if ((sad->flags & ANIM_SAD_REVERSE) != 0) {
-                    frame = artGetFrameCount(art) - 1;
-                } else {
-                    frame = 0;
-                }
-
-                objectSetFrame(object, frame, &tempRect);
-                rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-                int frameX;
-                int frameY;
-                artGetFrameOffsets(art, object->frame, object->rotation, &frameX, &frameY);
-
-                Rect tempRect;
-                _obj_offset(object, x + frameX, y + frameY, &tempRect);
-                rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-
-                artUnlock(cacheHandle);
-            } else {
-                objectSetFrame(object, 0, &tempRect);
-                rectUnion(&dirtyRect, &tempRect, &dirtyRect);
-            }
-
-            tileWindowRefreshRect(&dirtyRect, gElevation);
         }
     }
+
+    tileEndDeferredRefresh();
 
     _anim_in_bk = 0;
 
@@ -3050,6 +3091,8 @@ static void _object_anim_compact()
     gAnimationCurrentSad = index;
 }
 
+// CE: Mouse position -> tile, see `dudeCheckMoveTile`.
+//
 // 0x417FFC
 int _check_move(int* actionPointsPtr)
 {
@@ -3057,7 +3100,17 @@ int _check_move(int* actionPointsPtr)
     int y;
     mouseGetPosition(&x, &y);
 
-    int tile = tileFromScreenXY(x, y);
+    // CE: Map may be zoomed and panned (see world_view.h).
+    worldViewScreenToWorld(x, y, &x, &y);
+
+    return dudeCheckMoveTile(tileFromScreenXY(x, y), actionPointsPtr);
+}
+
+// CE: Checks moving dude to [tile] (from `_check_move`): in combat Ctrl keeps
+// action points for an attack, out of combat a new move interrupts the
+// current walk. Returns the tile or -1.
+int dudeCheckMoveTile(int tile, int* actionPointsPtr)
+{
     if (tile == -1) {
         return -1;
     }
@@ -3087,16 +3140,36 @@ int _check_move(int* actionPointsPtr)
 // 0x4180B4
 int _dude_move(int actionPoints)
 {
+    int x;
+    int y;
+    mouseGetPosition(&x, &y);
+    worldViewScreenToWorld(x, y, &x, &y);
+    return dudeMoveToTile(tileFromScreenXY(x, y), actionPoints);
+}
+
+// 0x41810C
+int _dude_run(int actionPoints)
+{
+    int x;
+    int y;
+    mouseGetPosition(&x, &y);
+    worldViewScreenToWorld(x, y, &x, &y);
+    return dudeRunToTile(tileFromScreenXY(x, y), actionPoints);
+}
+
+// CE: `_dude_move` to an explicit tile. The same tile twice in a row runs.
+int dudeMoveToTile(int tile, int actionPoints)
+{
     // 0x51072C
     static int lastDestination = -2;
 
-    int tile = _check_move(&actionPoints);
+    tile = dudeCheckMoveTile(tile, &actionPoints);
     if (tile == -1) {
         return -1;
     }
 
     if (lastDestination == tile) {
-        return _dude_run(actionPoints);
+        return dudeRunToTile(tile, actionPoints);
     }
 
     lastDestination = tile;
@@ -3108,10 +3181,10 @@ int _dude_move(int actionPoints)
     return reg_anim_end();
 }
 
-// 0x41810C
-int _dude_run(int actionPoints)
+// CE: `_dude_run` to an explicit tile.
+int dudeRunToTile(int tile, int actionPoints)
 {
-    int tile = _check_move(&actionPoints);
+    tile = dudeCheckMoveTile(tile, &actionPoints);
     if (tile == -1) {
         return -1;
     }
@@ -3140,6 +3213,12 @@ void _dude_fidget()
     static Object* candidates[100];
 
     if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
+        return;
+    }
+
+    // CE: No idle fidgets in automated tests: their random timing changes
+    // critters' sprites under the tests' taps and the traces between runs.
+    if (devAutotestIsEnabled()) {
         return;
     }
 
@@ -3174,8 +3253,12 @@ void _dude_fidget()
             Rect rect;
             objectGetRect(object, &rect);
 
+            // CE: Only critters visible on screen are animated.
+            Rect visibleRect;
+            worldViewGetVisibleRect(&visibleRect);
+
             Rect intersection;
-            if (rectIntersection(&rect, &_scr_size, &intersection) == 0 && (gMapHeader.index != MAP_SPECIAL_RND_WOODSMAN || object->pid != 0x10000FA)) {
+            if (rectIntersection(&rect, &visibleRect, &intersection) == 0 && (gMapHeader.index != MAP_SPECIAL_RND_WOODSMAN || object->pid != 0x10000FA)) {
                 candidates[candidatesLength++] = object;
             }
         }
@@ -3401,6 +3484,13 @@ static int _check_gravity(int tile, int elevation)
     return elevation;
 }
 
+// Combat speed preference's range.
+static constexpr int kCombatSpeedMax = 50;
+
+// CE: At the fastest combat speed animations other than walking and running
+// play this many times faster (`combat_speed_all_animations`).
+static constexpr double kCombatSpeedMaxFactor = 2.0;
+
 // 0x418794
 static unsigned int animationComputeTicksPerFrame(Object* object, const FrmId& frmId)
 {
@@ -3415,15 +3505,47 @@ static unsigned int animationComputeTicksPerFrame(Object* object, const FrmId& f
         fps = 10;
     }
 
-    if (isInCombat()) {
-        if (frmId.animationType() == ANIM_WALK) {
-            if (object != gDude || settings.preferences.player_speedup) {
-                fps += settings.preferences.combat_speed;
+    // Combat speed (preferences, 0-50) adds to walking's frames per second,
+    // dude's only with "player speedup" (the game's rule). CE enhancement:
+    // running the same, other animations as `animationGetCombatSpeedFactor`.
+    if (animationIsSpedUpInCombat(object)) {
+        int combatSpeed = std::clamp(settings.preferences.combat_speed, 0, kCombatSpeedMax);
+        AnimationType anim = frmId.animationType();
+        if (anim == ANIM_WALK) {
+            fps += combatSpeed;
+        } else if (settings.enhancements.combat_speed_all_animations) {
+            if (anim == ANIM_RUNNING) {
+                fps += combatSpeed;
+            } else {
+                fps = static_cast<int>(std::lround(fps * animationGetCombatSpeedFactor(object)));
             }
         }
     }
 
-    return std::max(1000 / fps, 1);
+    return std::max(1000 / std::max(fps, 1), 1);
+}
+
+// Combat speed applies to [object]'s animations: in combat, dude's only
+// with "player speedup".
+static bool animationIsSpedUpInCombat(Object* object)
+{
+    return isInCombat() && (object != gDude || settings.preferences.player_speedup);
+}
+
+double animationGetCombatSpeedFactor(Object* object)
+{
+    if (!settings.enhancements.combat_speed_all_animations || !animationIsSpedUpInCombat(object)) {
+        return 1.0;
+    }
+
+    int combatSpeed = std::clamp(settings.preferences.combat_speed, 0, kCombatSpeedMax);
+    return 1.0 + (kCombatSpeedMaxFactor - 1.0) * combatSpeed / kCombatSpeedMax;
+}
+
+Sound* animationLoadSoundEffect(Object* owner, const char* soundEffectName)
+{
+    int volume = _gsound_compute_relative_volume(owner);
+    return soundEffectLoadWithVolume(soundEffectName, owner, volume, animationGetCombatSpeedFactor(owner));
 }
 
 int animationRegisterSetLightIntensity(Object* owner, int lightDistance, int lightIntensity, int delay)

@@ -17,6 +17,7 @@
 #include "mouse.h"
 #include "movie.h"
 #include "movie_effect.h"
+#include "mui.h"
 #include "palette.h"
 #include "platform_compat.h"
 #include "settings.h"
@@ -30,6 +31,7 @@ namespace fallout {
 static char* gameMovieBuildSubtitlesFilePath(char* movieFilePath);
 static bool gameMovieFindFilePath(char* movieFilePath, size_t movieFilePathSize, const char* movieFileName);
 static bool gameMovieFindFilePathInDir(char* movieFilePath, size_t movieFilePathSize, const char* dir, const char* movieFileName);
+static int gameMoviePlayMobile(int movie, int flags);
 static void gameMovieInitFileNames();
 static bool gameMovieIsValidFileName(const char* fileName);
 static void gameMovieLoadConfigFileNames();
@@ -155,6 +157,10 @@ int gameMoviePlay(int movie, int flags)
         return -1;
     }
 
+    if (muiIsEnabled()) {
+        return gameMoviePlayMobile(movie, flags);
+    }
+
     gGameMovieIsPlaying = true;
 
     const char* movieFileName = movieFileNames[movie].c_str();
@@ -250,6 +256,10 @@ int gameMoviePlay(int movie, int flags)
     int pressed = 0;
     int buttons;
     do {
+        // CE: Don't spin without pause - on Android busy loop starves touch
+        // input delivery and triggers "app not responding".
+        sharedFpsLimiter.mark();
+
         if (!_moviePlaying() || _game_user_wants_to_quit || inputGetInput() != -1) {
             break;
         }
@@ -264,6 +274,8 @@ int gameMoviePlay(int movie, int flags)
         _mouse_get_raw_state(&x, &y, &buttons);
 
         pressed |= buttons;
+
+        sharedFpsLimiter.throttle();
         // Exit on mouse only after a click cycle: observe left/right down at
         // least once, then wait until both are released.
     } while (((pressed & 1) == 0 && (pressed & 2) == 0) || (buttons & 1) != 0 || (buttons & 2) != 0);
@@ -309,6 +321,126 @@ int gameMoviePlay(int movie, int flags)
             colorPaletteLoad("color.pal");
         }
 
+        paletteFadeTo(_cmap);
+        gGameMovieFaded = false;
+    }
+
+    gGameMovieIsPlaying = false;
+    return 0;
+}
+
+// Movie playing in the mobile UI player.
+static int gGameMovieMobile = -1;
+
+// The movie starts playing into the player's texture: its file, subtitles
+// when on and there are some (the player draws them, no subtitles palette),
+// movie effects. Music is the callers' business.
+static bool gameMovieBeginMobile(int movie)
+{
+    if (gGameMovieMobile != -1 || movie < 0 || movie >= GAME_MOVIE_MAX_COUNT || movieFileNames[movie].empty()) {
+        return false;
+    }
+
+    char movieFilePath[COMPAT_MAX_PATH];
+    if (!gameMovieFindFilePath(movieFilePath, sizeof(movieFilePath), movieFileNames[movie].c_str())) {
+        debugPrint("\ngmovie_play() - Error: Unable to open %s\n", movieFileNames[movie].c_str());
+        return false;
+    }
+
+    bool subtitlesEnabled = settings.preferences.subtitles;
+    if (subtitlesEnabled) {
+        int subtitlesFileSize;
+        if (dbGetFileSize(gameMovieBuildSubtitlesFilePath(movieFilePath), &subtitlesFileSize) != 0) {
+            subtitlesEnabled = false;
+        }
+    }
+
+    colorCycleDisable();
+    movieEffectsLoad(movieFilePath);
+
+    if (movieStartMobile(movieFilePath, subtitlesEnabled) != 0) {
+        _moviefx_stop();
+        colorCycleEnable();
+        return false;
+    }
+
+    gGameMovieMobile = movie;
+    return true;
+}
+
+// Stops the movie and marks it seen; the palette stays the movie's.
+static void gameMovieEndMobile()
+{
+    if (gGameMovieMobile == -1) {
+        return;
+    }
+
+    _movieStop();
+    _moviefx_stop();
+    _movieUpdate();
+
+    gameMovieMarkSeen(gGameMovieMobile);
+    gGameMovieMobile = -1;
+
+    colorCycleEnable();
+}
+
+bool gameMovieStartMobile(int movie)
+{
+    if (!gameMovieBeginMobile(movie)) {
+        return false;
+    }
+
+    backgroundSoundPause();
+    return true;
+}
+
+void gameMovieFinishMobile()
+{
+    if (gGameMovieMobile == -1) {
+        return;
+    }
+
+    gameMovieEndMobile();
+
+    // The movie set its colors.
+    paletteSetEntries(_cmap);
+    backgroundSoundResume();
+}
+
+// CE: `gameMoviePlay` under the mobile UI: the movie screen of the mobile UI
+// plays it (a tap or a key skips it, like the game's), the game's fades and
+// music flags as they were.
+static int gameMoviePlayMobile(int movie, int flags)
+{
+    gGameMovieIsPlaying = true;
+
+    if ((flags & GAME_MOVIE_FADE_IN) != 0) {
+        paletteFadeTo(gPaletteBlack);
+        gGameMovieFaded = true;
+    }
+
+    if ((flags & GAME_MOVIE_STOP_MUSIC) != 0) {
+        backgroundSoundDelete();
+    } else if ((flags & GAME_MOVIE_PAUSE_MUSIC) != 0) {
+        backgroundSoundPause();
+    }
+
+    if (gameMovieBeginMobile(movie)) {
+        muiMovieScreenRun();
+        gameMovieEndMobile();
+    }
+
+    paletteSetEntries(gPaletteBlack);
+
+    // The game's windows under the movie screen are drawn again.
+    windowRefreshAll(&_scr_size);
+
+    if ((flags & GAME_MOVIE_PAUSE_MUSIC) != 0) {
+        backgroundSoundResume();
+    }
+
+    if ((flags & GAME_MOVIE_FADE_OUT) != 0) {
         paletteFadeTo(_cmap);
         gGameMovieFaded = false;
     }

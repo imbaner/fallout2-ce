@@ -15,3 +15,5 @@ FetchContent_MakeAvailable(zlib)
 
 set(ZLIB_LIBRARIES "zlibstatic" PARENT_SCOPE)
 set(ZLIB_INCLUDE_DIRS "${zlib_SOURCE_DIR}" "${zlib_BINARY_DIR}" PARENT_SCOPE)
+# Its contrib/infback9 (Deflate64) for the game's import.
+set(ZLIB_SOURCE_DIR "${zlib_SOURCE_DIR}" PARENT_SCOPE)

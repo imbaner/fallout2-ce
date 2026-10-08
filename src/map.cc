@@ -15,6 +15,7 @@
 #include "content_config.h"
 #include "critter.h"
 #include "cycle.h"
+#include "dbox.h"
 #include "debug.h"
 #include "draw.h"
 #include "elevator.h"
@@ -30,6 +31,7 @@
 #include "map_defs.h"
 #include "map_edge.h"
 #include "memory.h"
+#include "mui.h"
 #include "object.h"
 #include "party_member.h"
 #include "proto.h"
@@ -46,6 +48,7 @@
 #include "tile_hires_stencil.h"
 #include "window_manager.h"
 #include "window_manager_private.h"
+#include "world_view.h"
 #include "worldmap.h"
 
 namespace fallout {
@@ -81,6 +84,10 @@ static char byte_50B058[] = "";
 
 // 0x50B30C aErrorF2
 static char _aErrorF2[] = "ERROR! F2";
+
+// CE: Between the old map's objects going away and the party back on the new
+// one (see `mapIsLoading`).
+static bool gMapLoading = false;
 
 // 0x519540 map_scroll_refresh
 static IsoWindowRefreshProc* _map_scroll_refresh = isoWindowRefreshRectGame;
@@ -209,6 +216,26 @@ int isoInit()
         return -1;
     }
 
+    // CE: Render map into separate zoomable world buffer. From now on
+    // `gIsoWindowBuffer` and `gIsoWindowRect` describe that buffer, while
+    // isometric window only reserves its place on screen.
+    if (!worldViewInit(rectGetWidth(&gIsoWindowRect), rectGetHeight(&gIsoWindowRect))) {
+        debugPrint("world_view_init failed in iso_init\n");
+    }
+
+    worldViewSetWindow(gIsoWindow);
+
+    if (worldViewIsEnabled()) {
+        gIsoWindowBuffer = worldViewGetBuffer();
+        gIsoWindowRect.left = 0;
+        gIsoWindowRect.top = 0;
+        gIsoWindowRect.right = worldViewGetWidth() - 1;
+        gIsoWindowRect.bottom = worldViewGetHeight() - 1;
+    }
+
+    int isoBufferWidth = rectGetWidth(&gIsoWindowRect);
+    int isoBufferHeight = rectGetHeight(&gIsoWindowRect);
+
     if (artInit() != 0) {
         debugPrint("art_init failed in iso_init\n");
         return -1;
@@ -216,14 +243,14 @@ int isoInit()
 
     debugPrint(">art_init\t\t");
 
-    if (tileInit(_square, SQUARE_GRID_WIDTH, SQUARE_GRID_HEIGHT, HEX_GRID_WIDTH, HEX_GRID_HEIGHT, gIsoWindowBuffer, screenGetWidth(), screenGetVisibleHeight(), screenGetWidth(), isoWindowRefreshRect) != 0) {
+    if (tileInit(_square, SQUARE_GRID_WIDTH, SQUARE_GRID_HEIGHT, HEX_GRID_WIDTH, HEX_GRID_HEIGHT, gIsoWindowBuffer, isoBufferWidth, isoBufferHeight, isoBufferWidth, isoWindowRefreshRect) != 0) {
         debugPrint("tile_init failed in iso_init\n");
         return -1;
     }
 
     debugPrint(">tile_init\t\t");
 
-    if (objectsInit(gIsoWindowBuffer, screenGetWidth(), screenGetVisibleHeight(), screenGetWidth()) != 0) {
+    if (objectsInit(gIsoWindowBuffer, isoBufferWidth, isoBufferHeight, isoBufferWidth) != 0) {
         debugPrint("obj_init failed in iso_init\n");
         return -1;
     }
@@ -286,6 +313,7 @@ void isoExit()
     tileExit();
     artExit();
 
+    worldViewExit();
     windowDestroy(gIsoWindow);
 
     // NOTE: Uninline.
@@ -630,6 +658,15 @@ int mapScroll(int dx, int dy)
 
     gIsoWindowScrollTimestamp = getTicks();
 
+    // Cursor stays in place on screen while map moves below it.
+    gameMouseObjectsHide();
+
+    return mapScrollImmediate(dx, dy);
+}
+
+// CE: Scrolls map by the given number of scroll steps without throttling.
+int mapScrollImmediate(int dx, int dy)
+{
     int screenDx = dx * 32;
     int screenDy = dy * 24;
 
@@ -637,7 +674,8 @@ int mapScroll(int dx, int dy)
         return -1;
     }
 
-    gameMouseObjectsHide();
+    // CE: Game mouse objects are not hidden here, world view panning keeps
+    // cursor attached to the map (see `mapScroll`).
 
     int centerScreenX;
     int centerScreenY;
@@ -654,15 +692,20 @@ int mapScroll(int dx, int dy)
         return -1;
     }
 
+    // CE: The world view's GPU copy follows the move instead of being
+    // uploaded again (only the strips drawn below are).
+    worldViewScrolled(screenDx, screenDy);
+
     Rect r1;
     rectCopy(&r1, &gIsoWindowRect);
 
     Rect r2;
     rectCopy(&r2, &r1);
 
-    int width = screenGetWidth();
+    int width = rectGetWidth(&gIsoWindowRect);
     int pitch = width;
-    int height = screenGetVisibleHeight();
+    int height = rectGetHeight(&gIsoWindowRect);
+    int bufferHeight = height;
 
     if (screenDx != 0) {
         width -= 32;
@@ -684,7 +727,7 @@ int mapScroll(int dx, int dy)
     if (screenDy < 0) {
         r1.bottom = r1.top - screenDy;
         src = gIsoWindowBuffer + pitch * (height - 1);
-        dest = gIsoWindowBuffer + pitch * (screenGetVisibleHeight() - 1);
+        dest = gIsoWindowBuffer + pitch * (bufferHeight - 1);
         if (screenDx < 0) {
             dest -= screenDx;
         } else {
@@ -710,15 +753,35 @@ int mapScroll(int dx, int dy)
         src += step;
     }
 
+    // CE: The strips are drawn without telling the world view (the whole
+    // window was refreshed after them originally).
+    // CE: While the view is dragged over several steps, the uncovered parts
+    // are drawn once after the last (`worldViewEnsureRendered`).
+    if (worldViewIsPanning()) {
+        screenDx = 0;
+        screenDy = 0;
+    }
+
     if (screenDx != 0) {
         _map_scroll_refresh(&r2);
+        if (worldViewIsEnabled()) {
+            worldViewInvalidate(&r2);
+        }
     }
 
     if (screenDy != 0) {
         _map_scroll_refresh(&r1);
+        if (worldViewIsEnabled()) {
+            worldViewInvalidate(&r1);
+        }
     }
 
-    windowRefresh(gIsoWindow);
+    if (worldViewIsEnabled()) {
+        // CE: Strips beyond the view weren't drawn, the view's are now.
+        worldViewEnsureRendered();
+    } else {
+        windowRefresh(gIsoWindow);
+    }
 
     return 0;
 }
@@ -898,6 +961,11 @@ int mapLoadById(Map map)
 }
 
 // 0x482B74 map_load_file
+bool mapIsLoading()
+{
+    return gMapLoading;
+}
+
 static int mapLoad(File* stream)
 {
     int mapLoadSoundId = 0;
@@ -922,17 +990,12 @@ static int mapLoad(File* stream)
     }
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_PLANET);
     fileSetReadProgressHandler(gameMouseRefreshImmediately, 32768);
+    gMapLoading = true;
     tileDisable();
 
     int rc = 0;
 
-    windowFill(gIsoWindow,
-        0,
-        0,
-        windowGetWidth(gIsoWindow),
-        windowGetHeight(gIsoWindow),
-        COLOR_BLACK);
-    windowRefresh(gIsoWindow);
+    isoWindowClear();
     animationStop();
     scriptsDisable();
 
@@ -1107,6 +1170,7 @@ err:
     _proto_dude_update_gender();
     _map_place_dude_and_mouse();
     fileSetReadProgressHandler(nullptr, 0);
+    gMapLoading = false;
     isoEnable();
     _gmouse_disable_scrolling();
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_PLANET);
@@ -1467,6 +1531,16 @@ int _map_save(bool isInGame)
     return rc;
 }
 
+// CE: The mobile UI's dialog box instead of the game's message window.
+static void mapShowSaveError(const char* message)
+{
+    if (muiIsEnabled()) {
+        showDialogBox(message, nullptr, 0, 80, 80, COLOR_RED, nullptr, COLOR_RED, 0);
+    } else {
+        _win_msg(message, 80, 80, COLOR_RED);
+    }
+}
+
 // 0x483980
 static int _map_save_file(File* stream)
 {
@@ -1537,12 +1611,12 @@ static int _map_save_file(File* stream)
 
     if (scriptSaveAll(stream) == -1) {
         snprintf(err, sizeof(err), "Error saving scripts in %s", gMapHeader.name);
-        _win_msg(err, 80, 80, COLOR_RED);
+        mapShowSaveError(err);
     }
 
     if (objectSaveAll(stream) == -1) {
         snprintf(err, sizeof(err), "Error saving objects in %s", gMapHeader.name);
-        _win_msg(err, 80, 80, COLOR_RED);
+        mapShowSaveError(err);
     }
 
     scriptsEnable();
@@ -1627,7 +1701,34 @@ static void mapMakeMapsDirectory()
 // 0x483ED0
 static void isoWindowRefreshRect(Rect* rect)
 {
-    windowRefreshRect(gIsoWindow, rect);
+    if (worldViewIsEnabled()) {
+        worldViewInvalidate(rect);
+    } else {
+        windowRefreshRect(gIsoWindow, rect);
+    }
+}
+
+// CE: Fills map with black, both on screen and in world view buffer.
+void isoWindowClear()
+{
+    windowFill(gIsoWindow,
+        0,
+        0,
+        windowGetWidth(gIsoWindow),
+        windowGetHeight(gIsoWindow),
+        COLOR_BLACK);
+
+    if (worldViewIsEnabled()) {
+        bufferFill(gIsoWindowBuffer,
+            rectGetWidth(&gIsoWindowRect),
+            rectGetHeight(&gIsoWindowRect),
+            rectGetWidth(&gIsoWindowRect),
+            COLOR_BLACK);
+        worldViewForgetRendered();
+        worldViewInvalidateAll();
+    }
+
+    windowRefresh(gIsoWindow);
 }
 
 // 0x483EE4 map_scroll_refresh_game

@@ -4,6 +4,8 @@
 #include <TargetConditionals.h>
 #endif
 
+#include <vector>
+
 #include "color.h"
 #include "dinput.h"
 #include "input.h"
@@ -14,11 +16,15 @@
 #include "svga.h"
 #include "touch.h"
 #include "window_manager.h"
+#include "world_view.h"
+#include "touch_controls.h"
 
 namespace fallout {
 
 static void mousePrepareDefaultCursor();
+#if !FALLOUT_TOUCH_ONLY
 static void _mouse_anim();
+#endif
 static void _mouse_clip();
 
 // The default mouse cursor buffer.
@@ -51,11 +57,36 @@ static int _mouse_idling = 0;
 // 0x51E294 mouse_buf
 static unsigned char* gMouseCursorData = nullptr;
 
+// CE: Layer tags of `gMouseCursorData` pixels, see world_view.h.
+static std::vector<unsigned char> gMouseCursorLayers;
+
+#if !FALLOUT_TOUCH_ONLY
+// CE: See `mouseSetTouchCursorVisible`.
+static bool gTouchCursorVisible = false;
+
+// CE: With touch controls one finger drag over the UI is emulated as mouse
+// drag (left button held while moving).
+static bool gTouchDragActive = false;
+
+// CE: Frames left before the press of a tap on UI (see kTap below).
+static int gTouchTapPending = 0;
+static int gTouchTapPendingX = 0;
+static int gTouchTapPendingY = 0;
+
+// CE: Gesture which pressed emulated mouse button (see
+// `mouseIsTouchDrag`).
+static GestureType gTouchButtonGesture = kUnrecognized;
+#endif
+
+#if !FALLOUT_TOUCH_ONLY
 // 0x51E298 mouse_shape
 static unsigned char* _mouse_shape = nullptr;
+#endif
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x51E29C mouse_fptr
 static unsigned char* _mouse_fptr = nullptr;
+#endif
 
 // 0x51E2A0 mouse_sensitivity
 static double gMouseSensitivity = 1.0;
@@ -90,23 +121,31 @@ static int _mouse_disabled;
 // 0x6AC7B0 mouse_buttons
 static int gMouseEvent;
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x6AC7B4 mouse_speed
 static unsigned int _mouse_speed;
+#endif
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x6AC7B8 mouse_curr_frame
 static int _mouse_curr_frame;
+#endif
 
 // 0x6AC7BC have_mouse
 static bool gMouseInitialized;
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x6AC7C0 mouse_pitch
 static int gMouseCursorPitch;
+#endif
 
 // 0x6AC7C4 mouse_width
 static int gMouseCursorWidth;
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x6AC7C8 mouse_num_frames
 static int _mouse_num_frames;
+#endif
 
 // 0x6AC7CC mouse_hoty
 static int _mouse_hoty;
@@ -123,8 +162,10 @@ WindowDrawingProc2* _mouse_blit_trans;
 // 0x6AC7DC mouse_blit
 WINDOWDRAWINGPROC _mouse_blit;
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x6AC7E0 mouse_trans
 static char _mouse_trans;
+#endif
 
 static int gMouseWheelX = 0;
 static int gMouseWheelY = 0;
@@ -167,10 +208,12 @@ void mouseFree()
         gMouseCursorData = nullptr;
     }
 
+#if !FALLOUT_TOUCH_ONLY
     if (_mouse_fptr != nullptr) {
         tickersRemove(_mouse_anim);
         _mouse_fptr = nullptr;
     }
+#endif
 }
 
 // 0x4CA01C
@@ -191,6 +234,28 @@ static void mousePrepareDefaultCursor()
     }
 }
 
+#if FALLOUT_TOUCH_ONLY
+// CE: No cursor in the touch-only build (touch.h): its art isn't kept and
+// nothing is drawn, the game only knows whether it's shown.
+int mouseSetFrame(unsigned char* frame, int width, int height, int pitch, int hotX, int hotY, char transparentColor)
+{
+    return 0;
+}
+
+void mouseShowCursor()
+{
+    if (gMouseInitialized) {
+        gCursorIsHidden = false;
+    }
+}
+
+void mouseHideCursor()
+{
+    if (gMouseInitialized) {
+        gCursorIsHidden = true;
+    }
+}
+#else
 // 0x4CA0AC
 int mouseSetFrame(unsigned char* frame, int width, int height, int pitch, int hotX, int hotY, char transparentColor)
 {
@@ -297,16 +362,28 @@ void mouseShowCursor()
 
     cursorData = gMouseCursorData;
     if (gMouseInitialized) {
+        gMouseCursorLayers.resize(static_cast<size_t>(gMouseCursorWidth) * gMouseCursorHeight, kScreenLayerUi);
+
         if (!_mouse_blit_trans || !gCursorIsHidden) {
-            _win_get_mouse_buf(gMouseCursorData);
+            _win_get_mouse_buf(gMouseCursorData, gMouseCursorLayers.data());
             cursorData = gMouseCursorData;
             cursorDataIndex = 0;
 
-            for (int y = 0; y < gMouseCursorHeight; y++) {
+            // CE: With touch controls there is no cursor, except when an item
+            // is dragged (cursor shows dragged item).
+#if FALLOUT_TOUCH_ONLY
+            // CE: No cursor in the touch-only build.
+            bool drawCursorShape = false;
+#else
+            bool drawCursorShape = !touchControlsIsEnabled() || gTouchCursorVisible;
+#endif
+
+            for (int y = 0; y < gMouseCursorHeight && drawCursorShape; y++) {
                 for (int x = 0; x < gMouseCursorWidth; x++) {
                     unsigned char pixel = _mouse_shape[y * gMouseCursorPitch + x];
                     if (pixel != _mouse_trans) {
                         cursorData[cursorDataIndex] = pixel;
+                        gMouseCursorLayers[cursorDataIndex] = kScreenLayerUi;
                     }
                     cursorDataIndex++;
                 }
@@ -343,7 +420,9 @@ void mouseShowCursor()
         if (_mouse_blit_trans && gCursorIsHidden) {
             _mouse_blit_trans(_mouse_shape, gMouseCursorPitch, gMouseCursorHeight, clipX, clipY, clipWidth, clipHeight, clipX + gMouseCursorX, clipY + gMouseCursorY, _mouse_trans);
         } else {
+            screenLayersSetBlitSource(gMouseCursorLayers.data());
             _mouse_blit(gMouseCursorData, gMouseCursorWidth, gMouseCursorHeight, clipX, clipY, clipWidth, clipHeight, clipX + gMouseCursorX, clipY + gMouseCursorY);
+            screenLayersSetBlitSource(nullptr);
         }
 
         cursorData = gMouseCursorData;
@@ -369,7 +448,13 @@ void mouseHideCursor()
         }
     }
 }
+#endif
 
+#if FALLOUT_TOUCH_ONLY
+void mouseResetTouchGesture()
+{
+}
+#else
 #if __APPLE__ && TARGET_OS_IOS
 // Checks whether a tap lands on an interface-bar button and, if so,
 // injects the corresponding keyCode so the cursor never moves.
@@ -421,25 +506,78 @@ static bool handleHudTapThrough(const Gesture& gesture)
 }
 #endif
 
-// 0x4CA59C
-void _mouse_info()
+void mouseResetTouchGesture()
 {
-    if (!gMouseInitialized) {
-        return;
+    bool held = gTouchDragActive || gTouchButtonGesture != kUnrecognized;
+    gTouchDragActive = false;
+    gTouchButtonGesture = kUnrecognized;
+    if (held) {
+        _mouse_simulate_input(0, 0, 0);
+    }
+}
+
+// CE: Mouse emulated from touches for the game's windows (the legacy UI,
+// `touchControlsIsNative` false): a tap moves the cursor and clicks, a long
+// press holds a button (or right clicks), a one finger drag drags or scrolls,
+// multi-finger shortcuts; map gestures still go to touch controls first.
+// Returns true when the mouse's state for this call is set.
+static bool mouseEmulateTouch()
+{
+    // CE: Gestures made meanwhile would be handled all at once later (taps
+    // long after they were made): they're dropped, a held button let go.
+    if (gCursorIsHidden || _mouse_disabled) {
+        Gesture dropped;
+        bool any = false;
+        while (touch_get_gesture(&dropped)) {
+            any = true;
+        }
+        if (any) {
+            mouseResetTouchGesture();
+        }
+        return true;
     }
 
-    if (gCursorIsHidden) {
-        return;
-    }
-
-    if (_mouse_disabled) {
-        return;
-    }
-
+    // CE: Gestures handled by the map (touch controls, view movement) are
+    // processed all at once, so the view keeps up with fingers. Mouse
+    // emulation still gets one gesture per call.
     Gesture gesture;
-    if (touch_get_gesture(&gesture)) {
+    // CE: Press of a tap on UI is delayed (see kTap below).
+    if (gTouchTapPending > 0) {
+        gTouchTapPending--;
+        if (gTouchTapPending > 0) {
+            // Cursor stays, buttons up.
+            if (mouseDeviceUsesRelativeMode()) {
+                _mouse_simulate_input(0, 0, 0);
+            } else {
+                _mouse_simulate_input(gTouchTapPendingX, gTouchTapPendingY, 0);
+            }
+            return true;
+        }
+
+        gTouchButtonGesture = kTap;
+        if (mouseDeviceUsesRelativeMode()) {
+            _mouse_simulate_input(0, 0, MOUSE_STATE_LEFT_BUTTON_DOWN);
+        } else {
+            _mouse_simulate_input(gTouchTapPendingX, gTouchTapPendingY, MOUSE_STATE_LEFT_BUTTON_DOWN);
+        }
+        return true;
+    }
+
+    bool hadGesture = false;
+    while (touch_get_gesture(&gesture)) {
+        hadGesture = true;
+
         static int prevx;
         static int prevy;
+
+        // CE: Touch controls have no hidden multi-finger gestures: two finger
+        // tap/long press (right mouse button) and three/four finger
+        // shortcuts are ignored (two finger pan moves the map).
+        if (touchControlsIsEnabled()
+            && gesture.numberOfTouches >= 2
+            && !(gesture.type == kPan && gesture.numberOfTouches == 2)) {
+            continue;
+        }
 
         // Multi-finger gestures for keyboard-less touch play:
         //   3-finger swipe down → ESC (options menu)
@@ -455,7 +593,7 @@ void _mouse_info()
                     enqueueInputEvent(KEY_ESCAPE);
                 }
             }
-            return;
+            return true;
         }
 
         // Four-finger long press → F6 (quicksave). Long-press is more
@@ -466,7 +604,7 @@ void _mouse_info()
             if (gesture.state == kBegan) {
                 enqueueInputEvent(KEY_F6);
             }
-            return;
+            return true;
         }
 
         // FO2tweaks' highlighting uses sfall's key_pressed(), which reads
@@ -489,7 +627,12 @@ void _mouse_info()
                 SDL_PushEvent(&ev);
                 shiftHeld = false;
             }
-            return;
+            return true;
+        }
+
+        // CE: Touch-first controls on the map (two fingers: its view).
+        if (touchControlsHandleGesture(&gesture)) {
+            continue;
         }
 
         switch (gesture.type) {
@@ -511,6 +654,36 @@ void _mouse_info()
                 goto tap_done;
             }
 #endif
+
+            gTouchButtonGesture = kTap;
+
+            // CE: Window manager needs a frame to leave the button the cursor
+            // was over and a frame to enter the new one before it takes a
+            // press. A quick tap (finger up in the same frame as down) moved
+            // the cursor and pressed at once, so the press was lost (e.g.
+            // attack mode chips kept the previous mode). Move the cursor now,
+            // press two frames later (no gesture handling meanwhile).
+            if (touchControlsIsEnabled() && gesture.numberOfTouches == 1 && touchControlsWantsCursorWarp(gesture.x, gesture.y)) {
+                int x = gesture.x;
+                int y = gesture.y;
+                touchControlsAdjustUiTouch(&x, &y);
+
+                mouseHideCursor();
+                _mouse_set_position(x, y);
+                mouseShowCursor();
+
+                gTouchTapPending = 2;
+                gTouchTapPendingX = x;
+                gTouchTapPendingY = y;
+
+                // Cursor moved with buttons up this frame.
+                if (mouseDeviceUsesRelativeMode()) {
+                    _mouse_simulate_input(0, 0, 0);
+                } else {
+                    _mouse_simulate_input(x, y, 0);
+                }
+                break;
+            }
 
             if (mouseDeviceUsesRelativeMode()) {
                 if (gesture.numberOfTouches == 1) {
@@ -541,13 +714,73 @@ void _mouse_info()
             }
 
             if (gesture.type == kLongPress) {
-                if (gesture.numberOfTouches == 1) {
+                gTouchButtonGesture = kLongPress;
+
+                // CE: With touch controls long press on a button with right
+                // click action is its right click (e.g. weapon button cycles
+                // attack modes: single, aimed, burst).
+                static bool touchLongPressIsRightClick = false;
+                if (gesture.state == kBegan) {
+                    touchLongPressIsRightClick = touchControlsIsEnabled()
+                        && gesture.numberOfTouches == 1
+                        && windowButtonAtPointHasRightClick(gesture.startX, gesture.startY);
+                }
+
+                if (touchLongPressIsRightClick) {
+                    _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MOUSE_STATE_RIGHT_BUTTON_DOWN);
+                } else if (gesture.numberOfTouches == 1) {
                     _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MOUSE_STATE_LEFT_BUTTON_DOWN);
                 } else if (gesture.numberOfTouches == 2) {
                     _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MOUSE_STATE_RIGHT_BUTTON_DOWN);
                 }
             } else if (gesture.type == kPan) {
-                if (!touch_get_pan_mode() && gesture.numberOfTouches == 1) {
+                // CE: With touch controls nearly vertical one finger swipes
+                // over UI scroll lists (natural direction: content follows
+                // the finger), other directions drag things (items,
+                // sliders). Two fingers do nothing over UI.
+                bool touchDrag = false;
+                bool touchScroll = false;
+                if (gesture.numberOfTouches == 1 && touchControlsHandleUiDrag(&gesture, gesture.x - prevx, gesture.y - prevy)) {
+                    // Taken over by the screen (e.g. world map scrolling).
+                    touchScroll = true;
+                } else if (touchControlsIsEnabled()) {
+                    static bool touchScrollGesture = false;
+                    static int touchScrollRemainder = 0;
+                    if (gesture.numberOfTouches == 1) {
+                        if (gesture.state == kBegan) {
+                            // Dragging an item towards hands and other lists
+                            // is diagonal.
+                            touchScrollGesture = abs(gesture.x - gesture.startX) * 2 < abs(gesture.y - gesture.startY);
+                            touchScrollRemainder = gesture.y - gesture.startY;
+                        } else {
+                            touchScrollRemainder += gesture.y - prevy;
+                        }
+                        touchDrag = !touchScrollGesture;
+                        touchScroll = touchScrollGesture;
+                    }
+
+                    if (touchScroll) {
+                        // One list line per this many pixels of finger
+                        // movement.
+                        constexpr int kScrollStep = 20;
+                        int lines = touchScrollRemainder / kScrollStep;
+                        touchScrollRemainder -= lines * kScrollStep;
+                        if (lines != 0) {
+                            gMouseWheelX = 0;
+                            gMouseWheelY = lines;
+                            gMouseEvent |= MOUSE_EVENT_WHEEL;
+                            _raw_buttons |= MOUSE_EVENT_WHEEL;
+                        }
+                    }
+                }
+
+                if (touchScroll || (touchControlsIsEnabled() && gesture.numberOfTouches != 1)) {
+                    // Handled above / ignored.
+                } else if (touchDrag) {
+                    gTouchButtonGesture = kPan;
+                    gTouchDragActive = gesture.state != kEnded;
+                    _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MOUSE_STATE_LEFT_BUTTON_DOWN);
+                } else if (!touch_get_pan_mode() && gesture.numberOfTouches == 1) {
                     _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, 0);
                 } else if (touch_get_pan_mode() || gesture.numberOfTouches == 2) {
                     int coefficient = touch_get_pan_mode() ? 8 : 2;
@@ -568,6 +801,43 @@ void _mouse_info()
             break;
         }
 
+        return true;
+    }
+
+    if (hadGesture) {
+        return true;
+    }
+
+    // CE: Keep button held between drag events.
+    if (gTouchDragActive) {
+        _mouse_simulate_input(0, 0, MOUSE_STATE_LEFT_BUTTON_DOWN);
+        return true;
+    }
+
+    return false;
+}
+#endif
+
+// 0x4CA59C
+void _mouse_info()
+{
+    if (!gMouseInitialized) {
+        return;
+    }
+
+#if FALLOUT_TOUCH_ONLY
+    // CE: No mouse: fingers' gestures are the map's
+    // (`touchControlsProcessGestures`), a connected mouse is ignored.
+    return;
+#else
+    // CE: Touch-native input: fingers' gestures are the map's
+    // (`touchControlsProcessGestures`), the mouse is only a real one.
+    if (!touchControlsIsNative() && mouseEmulateTouch()) {
+        return;
+    }
+#endif
+
+    if (gCursorIsHidden || _mouse_disabled) {
         return;
     }
 
@@ -610,6 +880,37 @@ void _mouse_info()
         _raw_buttons |= MOUSE_EVENT_WHEEL;
     }
 }
+
+#if FALLOUT_TOUCH_ONLY
+void mouseSetTouchCursorVisible(bool visible)
+{
+}
+
+bool mouseIsTouchDrag()
+{
+    return false;
+}
+
+bool mouseIsTouchLongPress()
+{
+    return false;
+}
+#else
+void mouseSetTouchCursorVisible(bool visible)
+{
+    gTouchCursorVisible = visible;
+}
+
+bool mouseIsTouchDrag()
+{
+    return gTouchButtonGesture == kPan;
+}
+
+bool mouseIsTouchLongPress()
+{
+    return gTouchButtonGesture == kLongPress;
+}
+#endif
 
 // 0x4CA698
 void _mouse_simulate_input(int delta_x, int delta_y, int buttons)
@@ -883,6 +1184,33 @@ void convertMouseWheelToArrowKey(int* keyCodePtr)
 int mouse_get_last_buttons()
 {
     return last_buttons;
+}
+
+int mouseGetPointerButtons()
+{
+    // CE: Touch-native input: the left button while a finger is on the map.
+    if (touchControlsIsNative()) {
+        return touch_any_finger_down() ? MOUSE_STATE_LEFT_BUTTON_DOWN : 0;
+    }
+
+    return last_buttons;
+}
+
+void mouseGetPointerPosition(int* x, int* y)
+{
+    // CE: Touch-native input has no cursor: the last point touched on the
+    // map (the screen's center before the first touch in the touch-only
+    // build).
+    if (touchControlsIsNative() && touchControlsGetLastPoint(x, y)) {
+        return;
+    }
+
+#if FALLOUT_TOUCH_ONLY
+    *x = screenGetWidth() / 2;
+    *y = screenGetHeight() / 2;
+#else
+    mouseGetPosition(x, y);
+#endif
 }
 
 } // namespace fallout

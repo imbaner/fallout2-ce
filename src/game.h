@@ -1,6 +1,8 @@
 #ifndef GAME_H
 #define GAME_H
 
+#include <vector>
+
 #include "game_vars.h"
 #include "message.h"
 #include "skilldex.h"
@@ -50,6 +52,11 @@ int showQuitConfirmationDialog();
 
 int gameLoadGlobalVars();
 int gameShowDeathDialog(const char* message);
+
+// Loading screen picture [index] (`art\splash\splash<index>.rix`, the
+// language's one, else the English one) as the game shows it: palette indices and its own
+// palette (768 bytes, 6 bits per channel). False when there's none.
+bool gameReadSplash(int index, std::vector<unsigned char>* pixels, unsigned char* palette, int* width, int* height);
 void gameHandleSkilldexResult(SkilldexRC rc);
 void showHelp();
 void* gameGetGlobalPointer(GameGlobalVar var);

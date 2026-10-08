@@ -54,6 +54,14 @@ void renderFpsCounter();
 void renderPresent();
 bool screenIsExclusiveFullscreen();
 
+// CE: Screen layers (see world_view.h). Every screen pixel is tagged with the
+// layer it came from. By default `_scr_blit` tags blitted pixels with the
+// current blit layer (UI unless changed). When blit layer source is set, tags
+// are copied from it instead, using the same pitch and offsets as blitted
+// pixels.
+void screenLayersSetBlitLayer(unsigned char layer);
+void screenLayersSetBlitSource(const unsigned char* layers);
+
 } // namespace fallout
 
 #endif /* FALLOUT_SVGA_H_ */

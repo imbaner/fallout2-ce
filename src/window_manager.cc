@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <vector>
 
 #include <SDL.h>
 
@@ -18,6 +19,7 @@
 #include "text_font.h"
 #include "win32.h"
 #include "window_manager_private.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -69,6 +71,13 @@ int _GNW_wcolor[6] = {
 
 // 0x51E3FC screen_buffer
 static unsigned char* _screen_buffer = nullptr;
+
+// CE: Layer tags parallel to `_screen_buffer`, see world_view.h.
+static std::vector<unsigned char> gScreenBufferLayers;
+
+// CE: Layer tags parallel to `dest` buffer of `_GNW_win_refresh`, when
+// composing area under mouse cursor.
+static unsigned char* gRefreshDestLayers = nullptr;
 
 // 0x51E400 insideWinExit
 static bool _insideWinExit = false;
@@ -796,6 +805,40 @@ void windowRefreshRect(int win, const Rect* rect)
 }
 
 // 0x4D6FD8
+// CE: Returns layer tags buffer parallel to `_screen_buffer`.
+static unsigned char* windowGetScreenBufferLayers()
+{
+    size_t size = static_cast<size_t>(_scr_size.bottom - _scr_size.top + 1) * (_scr_size.right - _scr_size.left + 1);
+    if (gScreenBufferLayers.size() != size) {
+        gScreenBufferLayers.assign(size, kScreenLayerUi);
+    }
+    return gScreenBufferLayers.data();
+}
+
+// CE: Tags area covered by opaque window.
+static void windowLayersFill(unsigned char* layers, int width, int height, int pitch, unsigned char layer)
+{
+    for (int y = 0; y < height; y++) {
+        memset(layers, layer, width);
+        layers += pitch;
+    }
+}
+
+// CE: Tags area covered by transparent window. Transparent pixels (see
+// `blitBufferToBufferTrans`) keep tags of windows below.
+static void windowLayersFillTrans(const unsigned char* src, int width, int height, int srcPitch, unsigned char* layers, int pitch)
+{
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            if (src[x] != 0) {
+                layers[x] = kScreenLayerUi;
+            }
+        }
+        src += srcPitch;
+        layers += pitch;
+    }
+}
+
 void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
 {
     // dest is only used when refreshing the portion of the screen containing the cursor (which is subsequently drawn on the buffer)
@@ -844,7 +887,21 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                 while (clipRect) {
                     _GNW_button_refresh(window, &(clipRect->rect));
 
+                    unsigned char* windowSrc = window->buffer + clipRect->rect.left - window->rect.left + (clipRect->rect.top - window->rect.top) * window->width;
+                    int clipWidth = clipRect->rect.right - clipRect->rect.left + 1;
+                    int clipHeight = clipRect->rect.bottom - clipRect->rect.top + 1;
+                    unsigned char layer = worldViewIsWorldWindow(window->id) ? kScreenLayerWorld : kScreenLayerUi;
+
                     if (dest) {
+                        if (gRefreshDestLayers != nullptr) {
+                            unsigned char* layers = gRefreshDestLayers + dest_pitch * (clipRect->rect.top - rect->top) + clipRect->rect.left - rect->left;
+                            if (_buffering && (window->flags & WINDOW_TRANSPARENT)) {
+                                windowLayersFillTrans(windowSrc, clipWidth, clipHeight, window->width, layers, dest_pitch);
+                            } else {
+                                windowLayersFill(layers, clipWidth, clipHeight, dest_pitch, layer);
+                            }
+                        }
+
                         if (_buffering && (window->flags & WINDOW_TRANSPARENT)) {
                             // window->blitProc is always blitBufferToBufferTrans
                             window->blitProc(window->buffer + clipRect->rect.left - window->rect.left + (clipRect->rect.top - window->rect.top) * window->width,
@@ -864,6 +921,14 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                         }
                     } else {
                         if (_buffering) {
+                            int screenPitch = _scr_size.right - _scr_size.left + 1;
+                            unsigned char* layers = windowGetScreenBufferLayers() + clipRect->rect.top * screenPitch + clipRect->rect.left;
+                            if (window->flags & WINDOW_TRANSPARENT) {
+                                windowLayersFillTrans(windowSrc, clipWidth, clipHeight, window->width, layers, screenPitch);
+                            } else {
+                                windowLayersFill(layers, clipWidth, clipHeight, screenPitch, layer);
+                            }
+
                             if (window->flags & WINDOW_TRANSPARENT) {
                                 window->blitProc(
                                     window->buffer + clipRect->rect.left - window->rect.left + (clipRect->rect.top - window->rect.top) * window->width,
@@ -882,6 +947,7 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                                     _scr_size.right - _scr_size.left + 1);
                             }
                         } else {
+                            screenLayersSetBlitLayer(layer);
                             _scr_blit(
                                 window->buffer + clipRect->rect.left - window->rect.left + (clipRect->rect.top - window->rect.top) * window->width,
                                 window->width,
@@ -892,6 +958,7 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                                 clipRect->rect.bottom - clipRect->rect.top + 1,
                                 clipRect->rect.left,
                                 clipRect->rect.top);
+                            screenLayersSetBlitLayer(kScreenLayerUi);
                         }
                     }
 
@@ -907,6 +974,10 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                     if (buf != nullptr) {
                         bufferFill(buf, width, height, width, _bk_color);
                         if (dest_pitch != 0) {
+                            if (gRefreshDestLayers != nullptr) {
+                                windowLayersFill(gRefreshDestLayers + dest_pitch * (clipRect->rect.top - rect->top) + clipRect->rect.left - rect->left, width, height, dest_pitch, kScreenLayerUi);
+                            }
+
                             blitBufferToBuffer(
                                 buf,
                                 width,
@@ -916,6 +987,12 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                                 dest_pitch);
                         } else {
                             if (_buffering) {
+                                windowLayersFill(windowGetScreenBufferLayers() + static_cast<size_t>(clipRect->rect.top) * (_scr_size.right - _scr_size.left + 1) + clipRect->rect.left,
+                                    width,
+                                    height,
+                                    _scr_size.right - _scr_size.left + 1,
+                                    kScreenLayerUi);
+
                                 blitBufferToBuffer(buf,
                                     width,
                                     height,
@@ -939,6 +1016,7 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
 
                 // if double-buffering, copy double buffer to screen
                 if (_buffering && !dest) {
+                    screenLayersSetBlitSource(windowGetScreenBufferLayers() + screenRect->rect.left + (_scr_size.right - _scr_size.left + 1) * screenRect->rect.top);
                     _scr_blit(
                         _screen_buffer + screenRect->rect.left + (_scr_size.right - _scr_size.left + 1) * screenRect->rect.top,
                         _scr_size.right - _scr_size.left + 1,
@@ -949,6 +1027,7 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
                         screenRect->rect.bottom - screenRect->rect.top + 1,
                         screenRect->rect.left,
                         screenRect->rect.top);
+                    screenLayersSetBlitSource(nullptr);
                 }
 
                 _rect_free(screenRect); // this is where we clean up the main linkedList
@@ -1093,11 +1172,13 @@ void win_drag(int win)
 }
 
 // 0x4D77F8
-void _win_get_mouse_buf(unsigned char* dest)
+void _win_get_mouse_buf(unsigned char* dest, unsigned char* destLayers)
 {
     Rect rect;
     mouseGetRect(&rect);
+    gRefreshDestLayers = destLayers;
     _refresh_all(&rect, dest);
+    gRefreshDestLayers = nullptr;
 }
 
 // 0x4D7814
@@ -1172,6 +1253,41 @@ Buffer2D windowGetBuffer2D(int win)
 }
 
 // 0x4D78CC
+// CE: Topmost window visible at the point: hidden windows and transparent
+// pixels of transparent windows (e.g. gaps in touch HUD groups) let the
+// point through.
+int windowGetVisibleAtPoint(int x, int y)
+{
+    for (int index = gWindowsLength - 1; index >= 0; index--) {
+        Window* window = gWindows[index];
+        if ((window->flags & WINDOW_HIDDEN) != 0) {
+            continue;
+        }
+
+        if (x >= window->rect.left && x <= window->rect.right
+            && y >= window->rect.top && y <= window->rect.bottom) {
+            if ((window->flags & WINDOW_TRANSPARENT) != 0 && window->buffer != nullptr
+                && window->buffer[(y - window->rect.top) * window->width + x - window->rect.left] == 0) {
+                continue;
+            }
+            return window->id;
+        }
+    }
+
+    return -1;
+}
+
+bool windowIsModalShown()
+{
+    for (int index = 1; index < gWindowsLength; index++) {
+        Window* window = gWindows[index];
+        if ((window->flags & (WINDOW_MODAL | WINDOW_HIDDEN)) == WINDOW_MODAL) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int windowGetAtPoint(int x, int y)
 {
     for (int index = gWindowsLength - 1; index >= 0; index--) {
@@ -1183,6 +1299,70 @@ int windowGetAtPoint(int x, int y)
     }
 
     return -1;
+}
+
+bool windowButtonAtPointHasRightClick(int x, int y)
+{
+    Window* window = windowGetWindow(windowGetAtPoint(x, y));
+    if (window == nullptr) {
+        return false;
+    }
+
+    for (Button* button = window->buttonListHead; button != nullptr; button = button->next) {
+        if ((button->flags & BUTTON_FLAG_DISABLED) != 0) {
+            continue;
+        }
+
+        // Button rect is in window coordinates.
+        int buttonX = x - window->rect.left;
+        int buttonY = y - window->rect.top;
+        if (buttonX >= button->rect.left && buttonX <= button->rect.right
+            && buttonY >= button->rect.top && buttonY <= button->rect.bottom) {
+            return button->rightMouseDownEventCode != -1
+                || button->rightMouseUpEventCode != -1
+                || button->rightMouseDownProc != nullptr
+                || button->rightMouseUpProc != nullptr;
+        }
+    }
+
+    return false;
+}
+
+bool windowFindNearestButton(int x, int y, int radius, int* buttonX, int* buttonY)
+{
+    Window* window = windowGetWindow(windowGetAtPoint(x, y));
+    if (window == nullptr) {
+        return false;
+    }
+
+    int bestDistance = radius + 1;
+    for (Button* button = window->buttonListHead; button != nullptr; button = button->next) {
+        if ((button->flags & BUTTON_FLAG_DISABLED) != 0) {
+            continue;
+        }
+
+        // Button rect is in window coordinates.
+        Rect rect;
+        rect.left = window->rect.left + button->rect.left;
+        rect.top = window->rect.top + button->rect.top;
+        rect.right = window->rect.left + button->rect.right;
+        rect.bottom = window->rect.top + button->rect.bottom;
+
+        int dx = std::max(std::max(rect.left - x, x - rect.right), 0);
+        int dy = std::max(std::max(rect.top - y, y - rect.bottom), 0);
+        if (dx == 0 && dy == 0) {
+            return false;
+        }
+
+        int distance = std::max(dx, dy);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            *buttonX = (rect.left + rect.right) / 2;
+            *buttonY = (rect.top + rect.bottom) / 2;
+        }
+    }
+
+    return bestDistance <= radius;
 }
 
 // 0x4D7918

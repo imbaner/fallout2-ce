@@ -3,6 +3,7 @@
 #include "debug.h"
 #include "game_config.h"
 #include "platform_compat.h"
+#include "touch.h"
 
 #include <algorithm>
 #include <functional>
@@ -192,6 +193,7 @@ void initSettingsRegistry(bool isMapper)
     SETTING(party_member_extra_info);
     SETTING(dialog_border);
     SETTING_P(auto_quick_save, clamp(0, 10));
+    SETTING_P(auto_quick_save_page, clamp(0, 99));
     SETTING(enable_high_resolution_stencil);
     SETTING(extend_ap_bar);
     SETTING(expand_barter_window);
@@ -246,6 +248,9 @@ void initSettingsRegistry(bool isMapper)
 #define SECT debug
     SETTING(mode);
     SETTING(show_fps);
+    SETTING(perf_log);
+    SETTING(touch_log);
+    SETTING(action_log);
     SETTING(show_tile_num);
     SETTING(show_script_messages);
     SETTING(show_load_info);
@@ -266,6 +271,29 @@ void initSettingsRegistry(bool isMapper)
     SETTING(party_trade_from_menu);
     SETTING(party_loot_and_barter);
     SETTING(fast_ammo_load);
+#undef SECT
+
+#define SECT enhancements
+    SETTING(combat_speed_all_animations);
+    SETTING(main_menu_continue);
+    SETTING(worldmap_follow_party);
+    SETTING(save_compatibility);
+#undef SECT
+
+#define SECT touch
+    SETTING(controls);
+    SETTING(hud);
+    SETTING(mobile_ui);
+    SETTING_P(hud_scale, clamp(50, 200));
+    SETTING_P(hud_density, clamp(0.0, 8.0));
+#undef SECT
+
+#define SECT world_view
+    SETTING(enabled);
+    SETTING_P(zoom_min, clamp(0.25, 1.0));
+    SETTING_P(zoom_max, clamp(1.0, 8.0));
+    SETTING_P(zoom, clamp(0.25, 8.0));
+    SETTING_P(filter, clamp(0, 2));
 #undef SECT
 
     if (isMapper) {
@@ -305,6 +333,25 @@ bool settingsInit(bool isMapper, int argc, char** argv)
     for (const auto& descriptor : settingsRegistry) {
         descriptor.read();
     }
+
+#if FALLOUT_TOUCH_ONLY
+    // CE: The touch-only build has no other interface (touch.h).
+    settings.touch.mobile_ui = true;
+    settings.touch.controls = true;
+    settings.touch.hud = true;
+    settings.world_view.enabled = true;
+
+#if FALLOUT_DIAGNOSTICS
+    // The recorders are there when a rare glitch happens in a test build:
+    // cheap (touches are written only when they go wrong, the journal in
+    // batches). Set after the reading: `gameConfigInit` puts the defaults
+    // into the config first, and a saved config has them (as touch_log=0 on
+    // a phone, which turned the touch recorder off there). The release
+    // leaves them to the config (off unless turned on).
+    settings.debug.touch_log = true;
+    settings.debug.action_log = true;
+#endif
+#endif
 
     return true;
 }

@@ -49,6 +49,7 @@
 #include "tile.h"
 #include "trait.h"
 #include "worldmap.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -400,7 +401,10 @@ static int tileIsVisible(int tile)
     }
 
     Rect tileRect = { tileScreenX, tileScreenY, tileScreenX + 32 - 1, tileScreenY + 16 - 1 };
-    Rect screenRect = { 0, 0, screenGetWidth() - 1, screenGetVisibleHeight() - 1 };
+
+    // CE: Visible part of the map (see world_view.h).
+    Rect screenRect;
+    worldViewGetVisibleRect(&screenRect);
 
     return rectIntersection(&tileRect, &screenRect, &tileRect) == 0;
 }

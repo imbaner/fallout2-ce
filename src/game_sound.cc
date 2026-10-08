@@ -29,6 +29,7 @@
 #include "svga.h"
 #include "window_manager.h"
 #include "worldmap.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -1087,7 +1088,7 @@ int _gsound_play_sfx_file_volume(const char* a1, int a2)
 }
 
 // 0x4510DC
-Sound* soundEffectLoad(const char* name, Object* object)
+Sound* soundEffectLoad(const char* name, Object* object, double tempo)
 {
     if (!gGameSoundInitialized) {
         return nullptr;
@@ -1119,6 +1120,8 @@ Sound* soundEffectLoad(const char* name, Object* object)
     }
 
     ++_gsound_active_effect_counter;
+
+    soundSetTempo(sound, tempo);
 
     char path[COMPAT_MAX_PATH];
     snprintf(path, sizeof(path), "%s%s%s", _sound_sfx_path, name, ".ACM");
@@ -1204,9 +1207,9 @@ Sound* soundEffectLoad(const char* name, Object* object)
 }
 
 // 0x45145C
-Sound* soundEffectLoadWithVolume(const char* name, Object* object, int volume)
+Sound* soundEffectLoadWithVolume(const char* name, Object* object, int volume, double tempo)
 {
-    Sound* sound = soundEffectLoad(name, object);
+    Sound* sound = soundEffectLoad(name, object, tempo);
 
     if (sound != nullptr) {
         soundSetVolume(sound, (volume * gSoundEffectsVolume) / VOLUME_MAX);
@@ -1309,7 +1312,8 @@ int _gsound_compute_relative_volume(Object* obj)
 
             objectGetRect(v7, &v14);
 
-            windowGetRect(gIsoWindow, &iso_win_rect);
+            // CE: Object rect is in world view coordinates.
+            worldViewGetVisibleRect(&iso_win_rect);
 
             if (rectIntersection(&v14, &iso_win_rect, &v12) == -1) {
                 distance = objectGetDistanceBetween(v7, gDude);

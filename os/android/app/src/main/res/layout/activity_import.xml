@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The game's files and saves (see ImportActivity). One panel, its texts
+     and buttons change by step: the title and the buttons stay, what is
+     between them scrolls: weighted, it gives way when the panel would be
+     taller than the screen. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/import_background">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:id="@+id/import_panel"
+            android:layout_width="560dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/import_panel"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/import_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/import_accent"
+                android:textSize="22sp" />
+
+            <ScrollView
+                android:id="@+id/import_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fadeScrollbars="false">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/import_message"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/import_text"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/import_details"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/import_text_dim"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+                </LinearLayout>
+            </ScrollView>
+
+            <com.alexbatalov.fallout2ce.ImportProgressView
+                android:id="@+id/import_progress"
+                android:layout_width="match_parent"
+                android:layout_height="12dp"
+                android:layout_marginTop="16dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/import_progress_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:ellipsize="middle"
+                android:singleLine="true"
+                android:textColor="@color/import_text_dim"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/import_secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="10dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/import_button"
+                    android:textAllCaps="false"
+                    android:textColor="@color/import_button_text"
+                    android:textSize="15sp" />
+
+                <Button
+                    android:id="@+id/import_primary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/import_button_primary"
+                    android:textAllCaps="false"
+                    android:textColor="@color/import_button_primary_text"
+                    android:textSize="15sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Back to the game when opened from it: as the game's back button, at
+         the top right. -->
+    <ImageButton
+        android:id="@+id/import_back"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="10dp"
+        android:background="@drawable/import_button"
+        android:contentDescription="@string/import_back_to_game"
+        android:src="@drawable/import_back"
+        android:visibility="gone" />
+</FrameLayout>

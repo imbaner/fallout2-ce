@@ -21,6 +21,9 @@ void MVE_rmFrameCounts(int* frame_count_ptr, int* frame_drop_count_ptr);
 int MVE_rmPrepMovie(void* handle, int dx, int dy, unsigned char track);
 int _MVE_rmStepMovie();
 void MVE_rmResetSync();
+// CE: Holds the movie (its caller stops stepping it): the sound pauses; on
+// release it goes on with the timing started again.
+void MVE_rmHoldMovie(bool hold);
 void MVE_rmEndMovie();
 void MVE_ReleaseMem();
 

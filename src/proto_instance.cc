@@ -623,6 +623,10 @@ int objectPickup(Object* critter, Object* item)
             Rect rect;
             _obj_disconnect(item, &rect);
             tileWindowRefreshRect(&rect, item->elevation);
+
+            // CE: Outlines are for the map (item highlighting), they don't go
+            // into inventories (sfall's highlighting mod does the same).
+            item->outline = OUTLINE_TYPE_NONE;
         } else {
             MessageListItem messageListItem;
             // You cannot pick up that item. You are at your maximum weight capacity.

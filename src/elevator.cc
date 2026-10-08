@@ -3,6 +3,8 @@
 #include <ctype.h>
 #include <string.h>
 
+#include <stdlib.h>
+
 #include <algorithm>
 
 #include "art.h"
@@ -18,6 +20,7 @@
 #include "interface.h"
 #include "kb.h"
 #include "map.h"
+#include "mui.h"
 #include "pipboy.h"
 #include "scripts.h"
 #include "settings.h"
@@ -337,6 +340,97 @@ static FrmImage _elevatorFrmImages[ELEVATOR_FRM_COUNT];
 static FrmImage _elevatorBackgroundFrmImage;
 static FrmImage _elevatorPanelFrmImage;
 
+// The level the dude is at on elevator [elevator] (its panel's lit level),
+// from the map and elevation the elevator was used at.
+static int elevatorStartLevel(int elevator, Map map, int elevation)
+{
+    const ElevatorDescription* elevatorDescription = gElevatorDescriptions[elevator];
+
+    int index;
+    for (index = 0; index < ELEVATOR_LEVEL_MAX; index++) {
+        if (elevatorDescription[index].map == map) {
+            break;
+        }
+    }
+
+    if (index < ELEVATOR_LEVEL_MAX) {
+        int adjustedIndex = elevation + index;
+        if (adjustedIndex >= 0 && adjustedIndex < ELEVATOR_LEVEL_MAX && elevatorDescription[adjustedIndex].tile != -1) {
+            elevation = adjustedIndex;
+        }
+    }
+
+    if (elevator == ELEVATOR_SIERRA_2) {
+        if (elevation <= 2) {
+            elevation -= 2;
+        } else {
+            elevation -= 3;
+        }
+    } else if (elevator == ELEVATOR_MILITARY_BASE_LOWER) {
+        if (elevation >= 2) {
+            elevation -= 2;
+        }
+    } else if (elevator == ELEVATOR_MILITARY_BASE_UPPER && elevation == 4) {
+        elevation -= 2;
+    }
+
+    if (elevation > 3) {
+        elevation -= 3;
+    }
+
+    return std::clamp(elevation, 0, gElevatorLevels[elevator] - 1);
+}
+
+// CE: Mobile UI: the panel is a mobile screen (mui_elevator.cc) with the same
+// levels, gauge and sounds; the game's state around it as the game's panel.
+static int elevatorSelectLevelMobile(int elevator, Map* mapPtr, int* elevationPtr, int* tilePtr)
+{
+    gElevatorWindowIsoWasEnabled = isoDisable();
+    colorCycleDisable();
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+    gameMouseObjectsHide();
+    scriptsDisable();
+
+    int levels = gElevatorLevels[elevator];
+    MuiElevatorView view;
+    view.background = gElevatorBackgrounds[elevator].backgroundFrmId;
+    view.panel = gElevatorBackgrounds[elevator].panelFrmId;
+    view.levels = levels;
+    view.level = elevatorStartLevel(elevator, *mapPtr, *elevationPtr);
+    for (int index = 0; index < ELEVATOR_LEVEL_MAX; index++) {
+        view.keys[index] = gElevatorLevelLabels[elevator][index];
+    }
+    // As the game's panel: the gauge's needle moves one of its 12 steps in
+    // this time.
+    view.gaugeStepTime = static_cast<float>(276.92307f / settings.ui.anim_speed);
+    view.onTravel = [levels](int from, int to) {
+        soundPlayFile(gElevatorSoundEffects[levels - 2][std::abs(to - from)]);
+    };
+
+    int level = muiElevatorRun(view);
+
+    // Back: the level the dude is at, as the game's Esc.
+    if (level < 0) {
+        level = elevatorGetLevelFromEscKey(elevator, *mapPtr);
+    }
+
+    scriptsEnable();
+    if (gElevatorWindowIsoWasEnabled) {
+        isoEnable();
+    }
+    colorCycleEnable();
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+
+    if (level >= 0 && level < levels) {
+        const ElevatorDescription* description = &(gElevatorDescriptions[elevator][level]);
+        *mapPtr = description->map;
+        *elevationPtr = description->elevation;
+        *tilePtr = description->tile;
+    }
+
+    return 0;
+}
+
 // Presents elevator dialog for player to pick a desired level.
 //
 // 0x43EF5C elevator_select
@@ -357,6 +451,10 @@ int elevatorSelectLevel(int elevator, Map* mapPtr, int* elevationPtr, int* tileP
         return -1;
     }
 
+    if (muiIsEnabled()) {
+        return elevatorSelectLevelMobile(elevator, mapPtr, elevationPtr, tilePtr);
+    }
+
     // SFALL
     if (elevatorWindowInit(elevator) == -1) {
         return -1;
@@ -365,42 +463,7 @@ int elevatorSelectLevel(int elevator, Map* mapPtr, int* elevationPtr, int* tileP
     const ElevatorDescription* elevatorDescription = gElevatorDescriptions[elevator];
     touch_set_touchscreen_mode(true);
 
-    int index;
-    for (index = 0; index < ELEVATOR_LEVEL_MAX; index++) {
-        if (elevatorDescription[index].map == *mapPtr) {
-            break;
-        }
-    }
-
-    if (index < ELEVATOR_LEVEL_MAX) {
-        int adjustedIndex = *elevationPtr + index;
-        if (adjustedIndex >= 0 && adjustedIndex < ELEVATOR_LEVEL_MAX && elevatorDescription[adjustedIndex].tile != -1) {
-            *elevationPtr = adjustedIndex;
-        }
-    }
-
-    if (elevator == ELEVATOR_SIERRA_2) {
-        if (*elevationPtr <= 2) {
-            *elevationPtr -= 2;
-        } else {
-            *elevationPtr -= 3;
-        }
-    } else if (elevator == ELEVATOR_MILITARY_BASE_LOWER) {
-        if (*elevationPtr >= 2) {
-            *elevationPtr -= 2;
-        }
-    } else if (elevator == ELEVATOR_MILITARY_BASE_UPPER && *elevationPtr == 4) {
-        *elevationPtr -= 2;
-    }
-
-    if (*elevationPtr > 3) {
-        *elevationPtr -= 3;
-    }
-
-    int clampedElevation = std::clamp(*elevationPtr, 0, gElevatorLevels[elevator] - 1);
-    if (clampedElevation != *elevationPtr) {
-        *elevationPtr = clampedElevation;
-    }
+    *elevationPtr = elevatorStartLevel(elevator, *mapPtr, *elevationPtr);
 
     debugPrint("\n the start elev level %d\n", *elevationPtr);
 

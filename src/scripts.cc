@@ -43,6 +43,7 @@
 #include "stat.h"
 #include "svga.h"
 #include "tile.h"
+#include "touch.h"
 #include "window.h"
 #include "window_manager.h"
 #include "window_manager_private.h"
@@ -1883,6 +1884,14 @@ int scriptsClearDudeScript()
     return 0;
 }
 
+#if FALLOUT_TOUCH_ONLY
+static int scriptsOutputToLog(const char* string)
+{
+    debugPrint("%s", string);
+    return 0;
+}
+#endif
+
 // scr_init
 // 0x4A50A8
 int scriptsInit()
@@ -1898,7 +1907,13 @@ int scriptsInit()
     }
 
     _scr_remove_all();
+#if FALLOUT_TOUCH_ONLY
+    // CE: The interpreter's messages (script errors) go to the log: the
+    // game's debug window can't be closed without a mouse (touch.h).
+    _interpretOutputFunc(scriptsOutputToLog);
+#else
     _interpretOutputFunc(_win_debug);
+#endif
     interpreterRegisterOpcodeHandlers();
     _scr_header_load();
 

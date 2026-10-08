@@ -17,6 +17,7 @@
 #include "db.h"
 #include "dbox.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "delay.h"
 #include "draw.h"
 #include "game.h"
@@ -31,6 +32,7 @@
 #include "map.h"
 #include "memory.h"
 #include "message.h"
+#include "mui.h"
 #include "mouse.h"
 #include "object.h"
 #include "palette.h"
@@ -262,13 +264,15 @@ typedef struct KillInfo {
     int kills;
 } KillInfo;
 
+static int characterEditorShowMobile();
+static int characterEditorStateInit();
+static int characterEditorDrawFolder(CharacterEditorFolder folder);
+static void characterEditorStateFree();
 static int characterEditorWindowInit();
 static void characterEditorWindowFree();
 static int _get_input_str(int win, int cancelKeyCode, char* text, int maxLength, int x, int y, ColorWithFlags textColor, Color backgroundColor, int flags);
 static void characterEditorDrawFolders();
-static void characterEditorDrawPerksFolder();
 static int characterEditorKillsCompare(const void* a1, const void* a2);
-static int characterEditorDrawKillsFolder();
 static void characterEditorDrawBigNumber(int x, int y, int flags, int value, int previousValue, int windowHandle);
 static void characterEditorDrawPcStats();
 static void characterEditorDrawPrimaryStat(Stat stat, bool animate, int previousValue);
@@ -300,8 +304,8 @@ static void characterEditorHandleAdjustSkillButtonPressed(int a1);
 static void characterEditorToggleTaggedSkill(Skill skill);
 static void characterEditorDrawOptionalTraits();
 static void characterEditorToggleOptionalTrait(Trait trait);
-static void characterEditorDrawKarmaFolder();
 static int characterEditorUpdateLevel();
+static void characterEditorApplyLevelUps();
 static void perkDialogRefreshPerks();
 static int perkDialogShow();
 static int perkDialogHandleInput(int count, void (*refreshProc)());
@@ -855,6 +859,46 @@ struct CustomKarmaFolderDescription {
 static std::vector<CustomKarmaFolderDescription> gCustomKarmaFolderDescriptions;
 static std::vector<TownReputationEntry> gCustomTownReputationEntries;
 
+// CE: Mobile UI: the character screen (mui_character.cc) instead of the
+// game's window, over the same state and rules.
+static int characterEditorShowMobile()
+{
+    if (characterEditorStateInit() == -1) {
+        debugPrint("\n ** Error loading character editor data! **\n");
+        return -1;
+    }
+
+    // Skill points of new levels are where the screen starts from (reverting
+    // keeps them), owed perks are chosen on the screen.
+    if (!gCharacterEditorIsCreationMode) {
+        characterEditorApplyLevelUps();
+        critterUpdateDerivedStats(gDude);
+    }
+
+    characterEditorSavePlayer();
+
+    int rc = muiCharacterScreenRun();
+
+    if (rc == 0 && gCharacterEditorIsCreationMode) {
+        _proto_dude_update_gender();
+        paletteFadeTo(gPaletteBlack);
+    }
+
+    characterEditorStateFree();
+
+    if (rc == 1) {
+        characterEditorRestorePlayer();
+    }
+
+    if (dudeHasState(DUDE_STATE_LEVEL_UP_AVAILABLE)) {
+        dudeDisableState(DUDE_STATE_LEVEL_UP_AVAILABLE);
+    }
+
+    interfaceRenderHitPoints(false);
+
+    return rc;
+}
+
 // 0x431DF8 editor_design
 int characterEditorShow(bool isCreationMode)
 {
@@ -867,6 +911,10 @@ int characterEditorShow(bool isCreationMode)
 
     gCharacterEditorIsCreationMode = isCreationMode;
     tagSkill4LevelBase = -1;
+
+    if (muiIsEnabled()) {
+        return characterEditorShowMobile();
+    }
 
     characterEditorSavePlayer();
 
@@ -894,6 +942,7 @@ int characterEditorShow(bool isCreationMode)
 
         _frame_time = getTicks();
         int keyCode = inputGetInput();
+        devAutotestTick();
 
         convertMouseWheelToArrowKey(&keyCode);
 
@@ -1272,68 +1321,46 @@ int characterEditorShow(bool isCreationMode)
     return rc;
 }
 
-// 0x4329EC CharEditStart
-static int characterEditorWindowInit()
+// Editor state the game's window and the mobile screen work over: tag
+// skills and traits being chosen, texts, karma and reputations.
+static int characterEditorStateInit()
 {
-    int i;
-    int v1;
-    int v3;
     char path[COMPAT_MAX_PATH];
-    char* str;
-    int len;
-    int btn;
-    int x;
-    int y;
-    char perks[32];
-    char karma[32];
-    char kills[32];
 
     gCharacterEditorOldFont = fontGetCurrent();
-    gCharacterEditorOldTaggedSkillCount = 0;
-    gCharacterEditorIsoWasEnabled = 0;
-    gPerkDialogCardFrmId = SkillDexFrameId::Invalid;
-    gCharacterEditorCardFrmId = SkillDexFrameId::Invalid;
-    gPerkDialogCardDrawn = false;
-    gCharacterEditorCardDrawn = false;
-    gCharacterEditorIsSkillsFirstDraw = 1;
-    gPerkDialogCardTitle[0] = '\0';
-    gCharacterEditorCardTitle[0] = '\0';
-
-    fontSetCurrent(101);
-
-    gCharacterEditorSkillValueAdjustmentSliderY = gCharacterEditorCurrentSkill * (fontGetLineHeight() + 1) + 27;
+    gCharacterEditorIsoWasEnabled = false;
 
     // skills
     skillsGetTagged(gCharacterEditorTempTaggedSkills, NUM_TAGGED_SKILLS);
 
-    v1 = 0;
-    for (i = 3; i >= 0; i--) {
-        if (gCharacterEditorTempTaggedSkills[i] != -1) {
+    int tagSkillsLeft = 0;
+    for (int index = NUM_TAGGED_SKILLS - 1; index >= 0; index--) {
+        if (gCharacterEditorTempTaggedSkills[index] != -1) {
             break;
         }
 
-        v1++;
+        tagSkillsLeft++;
     }
 
     if (gCharacterEditorIsCreationMode) {
-        v1--;
+        tagSkillsLeft--;
     }
 
-    gCharacterEditorTaggedSkillCount = v1;
+    gCharacterEditorTaggedSkillCount = tagSkillsLeft;
 
     // traits
     traitsGetSelected(&(gCharacterEditorTempTraits[0]), &(gCharacterEditorTempTraits[1]));
 
-    v3 = 0;
-    for (i = 1; i >= 0; i--) {
-        if (gCharacterEditorTempTraits[i] != -1) {
+    int traitsLeft = 0;
+    for (int index = 1; index >= 0; index--) {
+        if (gCharacterEditorTempTraits[index] != -1) {
             break;
         }
 
-        v3++;
+        traitsLeft++;
     }
 
-    gCharacterEditorTempTraitCount = v3;
+    gCharacterEditorTempTraitCount = traitsLeft;
 
     if (!gCharacterEditorIsCreationMode) {
         gCharacterEditorIsoWasEnabled = isoDisable();
@@ -1356,15 +1383,7 @@ static int characterEditorWindowInit()
     }
     messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_EDITOR, &gCharacterEditorMessageList);
 
-    const InterfaceFrmId frmId = gCharacterEditorIsCreationMode ? InterfaceFrameId::CharacterEditorCreateBackground : InterfaceFrameId::CharacterEditorEditBackground;
-    if (!_editorBackgroundFrmImage.lock(frmId)) {
-        characterEditorMessageListReset();
-        characterEditorWindowRestoreState();
-        return -1;
-    }
-
     if (karmaInit() == -1) {
-        _editorBackgroundFrmImage.unlock();
         characterEditorMessageListReset();
         characterEditorWindowRestoreState();
         return -1;
@@ -1372,8 +1391,6 @@ static int characterEditorWindowInit()
 
     if (genericReputationInit() == -1) {
         karmaFree();
-        _editorBackgroundFrmImage.unlock();
-
         characterEditorMessageListReset();
         characterEditorWindowRestoreState();
         return -1;
@@ -1384,6 +1401,75 @@ static int characterEditorWindowInit()
 
     // SFALL: Custom town reputation.
     customTownReputationInit();
+
+    soundContinueAll();
+
+    return 0;
+}
+
+static void characterEditorStateFree()
+{
+    // NOTE: Uninline.
+    genericReputationFree();
+
+    // NOTE: Uninline.
+    karmaFree();
+
+    // SFALL: Custom karma folder.
+    customKarmaFolderFree();
+
+    // SFALL: Custom town reputation.
+    customTownReputationFree();
+
+    characterEditorMessageListReset();
+
+    interfaceBarRefresh();
+
+    characterEditorWindowRestoreState();
+
+    if (gCharacterEditorIsCreationMode) {
+        skillsSetTagged(gCharacterEditorTempTaggedSkills, 3);
+        traitsSetSelected(gCharacterEditorTempTraits[0], gCharacterEditorTempTraits[1]);
+        characterEditorSelectedItem = EDITOR_FIRST_PRIMARY_STAT;
+        critterAdjustHitPoints(gDude, 1000);
+    }
+}
+
+// 0x4329EC CharEditStart
+static int characterEditorWindowInit()
+{
+    int i;
+    char* str;
+    int len;
+    int btn;
+    int x;
+    int y;
+    char perks[32];
+    char karma[32];
+    char kills[32];
+
+    gCharacterEditorOldTaggedSkillCount = 0;
+    gPerkDialogCardFrmId = SkillDexFrameId::Invalid;
+    gCharacterEditorCardFrmId = SkillDexFrameId::Invalid;
+    gPerkDialogCardDrawn = false;
+    gCharacterEditorCardDrawn = false;
+    gCharacterEditorIsSkillsFirstDraw = 1;
+    gPerkDialogCardTitle[0] = '\0';
+    gCharacterEditorCardTitle[0] = '\0';
+
+    if (characterEditorStateInit() == -1) {
+        return -1;
+    }
+
+    fontSetCurrent(101);
+
+    gCharacterEditorSkillValueAdjustmentSliderY = gCharacterEditorCurrentSkill * (fontGetLineHeight() + 1) + 27;
+
+    const InterfaceFrmId frmId = gCharacterEditorIsCreationMode ? InterfaceFrameId::CharacterEditorCreateBackground : InterfaceFrameId::CharacterEditorEditBackground;
+    if (!_editorBackgroundFrmImage.lock(frmId)) {
+        characterEditorStateFree();
+        return -1;
+    }
 
     soundContinueAll();
 
@@ -1399,9 +1485,7 @@ static int characterEditorWindowInit()
         }
         _editorBackgroundFrmImage.unlock();
 
-        characterEditorMessageListReset();
-
-        characterEditorWindowRestoreState();
+        characterEditorStateFree();
         return -1;
     }
 
@@ -1432,8 +1516,7 @@ static int characterEditorWindowInit()
 
         _editorBackgroundFrmImage.unlock();
 
-        characterEditorMessageListReset();
-        characterEditorWindowRestoreState();
+        characterEditorStateFree();
 
         return -1;
     }
@@ -1456,8 +1539,7 @@ static int characterEditorWindowInit()
 
         _editorBackgroundFrmImage.unlock();
 
-        characterEditorMessageListReset();
-        characterEditorWindowRestoreState();
+        characterEditorStateFree();
 
         return -1;
     }
@@ -1931,37 +2013,7 @@ static void characterEditorWindowFree()
 
     _editorBackgroundFrmImage.unlock();
 
-    // NOTE: Uninline.
-    genericReputationFree();
-
-    // NOTE: Uninline.
-    karmaFree();
-
-    // SFALL: Custom karma folder.
-    customKarmaFolderFree();
-
-    // SFALL: Custom town reputation.
-    customTownReputationFree();
-
-    characterEditorMessageListReset();
-
-    interfaceBarRefresh();
-
-    if (gCharacterEditorIsoWasEnabled) {
-        isoEnable();
-    }
-
-    colorCycleEnable();
-    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
-
-    fontSetCurrent(gCharacterEditorOldFont);
-
-    if (gCharacterEditorIsCreationMode) {
-        skillsSetTagged(gCharacterEditorTempTaggedSkills, 3);
-        traitsSetSelected(gCharacterEditorTempTraits[0], gCharacterEditorTempTraits[1]);
-        characterEditorSelectedItem = EDITOR_FIRST_PRIMARY_STAT;
-        critterAdjustHitPoints(gDude, 1000);
-    }
+    characterEditorStateFree();
 
     indicatorBarShow();
 }
@@ -2145,7 +2197,7 @@ static void characterEditorDrawFolders()
             _editorFrmImages[EDITOR_GRAPHIC_PERKS_FOLDER_SELECTED].getWidth(),
             gCharacterEditorWindowBuffer + (327 * 640) + 11,
             640);
-        characterEditorDrawPerksFolder();
+        characterEditorDrawFolder(CharacterEditorFolder::Perks);
         break;
     case EDITOR_FOLDER_KARMA:
         blitBufferToBuffer(gCharacterEditorFrmCopy[EDITOR_GRAPHIC_KARMA_FOLDER_SELECTED],
@@ -2154,7 +2206,7 @@ static void characterEditorDrawFolders()
             _editorFrmImages[EDITOR_GRAPHIC_PERKS_FOLDER_SELECTED].getWidth(),
             gCharacterEditorWindowBuffer + (327 * 640) + 11,
             640);
-        characterEditorDrawKarmaFolder();
+        characterEditorDrawFolder(CharacterEditorFolder::Karma);
         break;
     case EDITOR_FOLDER_KILLS:
         blitBufferToBuffer(gCharacterEditorFrmCopy[EDITOR_GRAPHIC_KILLS_FOLDER_SELECTED],
@@ -2163,7 +2215,7 @@ static void characterEditorDrawFolders()
             _editorFrmImages[EDITOR_GRAPHIC_PERKS_FOLDER_SELECTED].getWidth(),
             gCharacterEditorWindowBuffer + (327 * 640) + 11,
             640);
-        gCharacterEditorKillsCount = characterEditorDrawKillsFolder();
+        gCharacterEditorKillsCount = characterEditorDrawFolder(CharacterEditorFolder::Kills);
         break;
     default:
         debugPrint("\n ** Unknown folder type! **\n");
@@ -2171,111 +2223,66 @@ static void characterEditorDrawFolders()
     }
 }
 
-// 0x434238 list_perks
-static void characterEditorDrawPerksFolder()
+static CharacterEditorCard characterEditorMakeCard(const SkillDexFrmId& frmId, const char* title, const char* description)
 {
-    const char* string;
-    char perkName[80];
-    int perkLevel;
-    bool hasContent = false;
+    CharacterEditorCard card;
+    card.frmId = frmId;
+    card.title = title != nullptr ? title : "";
+    card.description = description != nullptr ? description : "";
+    return card;
+}
 
-    characterEditorFolderViewClear();
+static CharacterEditorFolderEntry characterEditorMakeEntry(const char* text, bool heading)
+{
+    CharacterEditorFolderEntry entry;
+    entry.text = text != nullptr ? text : "";
+    entry.heading = heading;
+    return entry;
+}
 
+// Lines of the perks list: traits, then perks with their ranks.
+static void characterEditorBuildPerksFolder(std::vector<CharacterEditorFolderEntry>& entries)
+{
     if (gCharacterEditorTempTraits[0] != -1) {
         // TRAITS
-        string = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 156);
-        if (characterEditorFolderViewDrawHeading(string)) {
-            gCharacterEditorFolderCardFrmId = SkillDexFrameId::Traits;
-            // Optional Traits
-            gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 146);
-            gCharacterEditorFolderCardSubtitle = nullptr;
-            // Optional traits describe your character in more detail. All traits will have positive and negative effects. You may choose up to two traits during creation.
-            gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 147);
-            hasContent = true;
-        }
+        CharacterEditorFolderEntry heading = characterEditorMakeEntry(getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 156), true);
+        heading.hasCard = true;
+        // Optional Traits
+        heading.card = characterEditorMakeCard(SkillDexFrameId::Traits,
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 146),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 147));
+        entries.push_back(heading);
 
-        if (gCharacterEditorTempTraits[0] != -1) {
-            string = traitGetName(gCharacterEditorTempTraits[0]);
-            if (characterEditorFolderViewDrawString(string)) {
-                gCharacterEditorFolderCardFrmId = traitGetFrmId(gCharacterEditorTempTraits[0]);
-                gCharacterEditorFolderCardTitle = traitGetName(gCharacterEditorTempTraits[0]);
-                gCharacterEditorFolderCardSubtitle = nullptr;
-                gCharacterEditorFolderCardDescription = traitGetDescription(gCharacterEditorTempTraits[0]);
-                hasContent = true;
-            }
-        }
-
-        if (gCharacterEditorTempTraits[1] != -1) {
-            string = traitGetName(gCharacterEditorTempTraits[1]);
-            if (characterEditorFolderViewDrawString(string)) {
-                gCharacterEditorFolderCardFrmId = traitGetFrmId(gCharacterEditorTempTraits[1]);
-                gCharacterEditorFolderCardTitle = traitGetName(gCharacterEditorTempTraits[1]);
-                gCharacterEditorFolderCardSubtitle = nullptr;
-                gCharacterEditorFolderCardDescription = traitGetDescription(gCharacterEditorTempTraits[1]);
-                hasContent = true;
+        for (int index = 0; index < TRAITS_MAX_SELECTED_COUNT; index++) {
+            Trait trait = gCharacterEditorTempTraits[index];
+            if (trait != -1) {
+                CharacterEditorFolderEntry entry = characterEditorMakeEntry(traitGetName(trait), false);
+                entry.hasCard = true;
+                entry.card = characterEditorMakeCard(traitGetFrmId(trait), traitGetName(trait), traitGetDescription(trait));
+                entries.push_back(entry);
             }
         }
     }
 
-    Perk perk;
-
-    for (perk = PERK_FIRST; perk < PERK_COUNT; perk++) {
-        if (perkGetRank(gDude, perk) != 0) {
-            break;
+    bool hasPerksHeading = false;
+    for (Perk perk = PERK_FIRST; perk < PERK_COUNT; perk++) {
+        int rank = perkGetRank(gDude, perk);
+        if (rank == 0) {
+            continue;
         }
-    }
 
-    if (perk != PERK_COUNT) {
-        // PERKS
-        string = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 109);
-        characterEditorFolderViewDrawHeading(string);
-    }
-
-    for (perk = PERK_FIRST; perk < PERK_COUNT; perk++) {
-        perkLevel = perkGetRank(gDude, perk);
-        if (perkLevel != 0) {
-            int maxRank = perkGetMaxRank(perk);
-            bool useProgressBar = settings.ui.perks_progress_bar && (maxRank > 1);
-
-            if (useProgressBar) {
-                string = perkGetName(perk);
-            } else {
-                if (perkLevel == 1) {
-                    snprintf(perkName, sizeof(perkName), "%s", perkGetName(perk));
-                } else {
-                    snprintf(perkName, sizeof(perkName), "%s (%d)", perkGetName(perk), perkLevel);
-                }
-                string = perkName;
-            }
-
-            // keep Y index before characterEditorFolderViewDrawString
-            int currentY = gCharacterEditorFolderViewNextY;
-            int currentLineIndex = gCharacterEditorFolderViewCurrentLine;
-
-            bool isHighlighted = characterEditorFolderViewDrawString(string);
-            if (isHighlighted) {
-                gCharacterEditorFolderCardFrmId = perkGetFrmId(perk);
-                gCharacterEditorFolderCardTitle = perkGetName(perk);
-                gCharacterEditorFolderCardSubtitle = nullptr;
-                gCharacterEditorFolderCardDescription = perkGetDescription(perk);
-                hasContent = true;
-            }
-
-            if (useProgressBar && currentLineIndex >= gCharacterEditorFolderViewTopLine
-                && currentLineIndex < gCharacterEditorFolderViewTopLine + gCharacterEditorFolderViewMaxLines) {
-                characterEditorDrawPerkProgressBar(
-                    currentY, perkLevel, maxRank, isHighlighted ? COLOR_LIGHT_YELLOW : COLOR_GREEN);
-            }
+        if (!hasPerksHeading) {
+            // PERKS
+            entries.push_back(characterEditorMakeEntry(getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 109), true));
+            hasPerksHeading = true;
         }
-    }
 
-    if (!hasContent) {
-        gCharacterEditorFolderCardFrmId = SkillDexFrameId::Perks;
-        // Perks
-        gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 124);
-        gCharacterEditorFolderCardSubtitle = nullptr;
-        // Perks add additional abilities. Every third experience level, you can choose one perk.
-        gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 127);
+        CharacterEditorFolderEntry entry = characterEditorMakeEntry(perkGetName(perk), false);
+        entry.rank = rank;
+        entry.maxRank = perkGetMaxRank(perk);
+        entry.hasCard = true;
+        entry.card = characterEditorMakeCard(perkGetFrmId(perk), perkGetName(perk), perkGetDescription(perk));
+        entries.push_back(entry);
     }
 }
 
@@ -2287,14 +2294,11 @@ static int characterEditorKillsCompare(const void* a1, const void* a2)
     return compat_stricmp(v1->name, v2->name);
 }
 
-// 0x4344A4 ListKills
-static int characterEditorDrawKillsFolder()
+// Lines of the kills list: kill types by name.
+static void characterEditorBuildKillsFolder(std::vector<CharacterEditorFolderEntry>& entries)
 {
     KillInfo kills[KILL_TYPE_DEFAULT_COUNT];
     int usedKills = 0;
-    bool hasContent = false;
-
-    characterEditorFolderViewClear();
 
     for (KillType killType = KILL_TYPE_FIRST; killType < KILL_TYPE_DEFAULT_COUNT; killType++) {
         int killsCount = killsGetByType(killType);
@@ -2307,30 +2311,255 @@ static int characterEditorDrawKillsFolder()
         }
     }
 
-    if (usedKills != 0) {
-        qsort(kills, usedKills, sizeof(*kills), characterEditorKillsCompare);
+    qsort(kills, usedKills, sizeof(*kills), characterEditorKillsCompare);
 
-        for (int i = 0; i < usedKills; i++) {
-            KillInfo* killInfo = &(kills[i]);
-            if (characterEditorFolderViewDrawKillsEntry(killInfo->name, killInfo->kills)) {
-                gCharacterEditorFolderCardFrmId = SkillDexFrameId::Kills;
-                gCharacterEditorFolderCardTitle = gCharacterEditorFolderCardString;
-                gCharacterEditorFolderCardSubtitle = nullptr;
-                gCharacterEditorFolderCardDescription = killTypeGetDescription(kills[i].killType);
-                snprintf(gCharacterEditorFolderCardString, sizeof(gCharacterEditorFolderCardString), "%s %s", killInfo->name, getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 126));
-                hasContent = true;
+    for (int index = 0; index < usedKills; index++) {
+        KillInfo* killInfo = &(kills[index]);
+        CharacterEditorFolderEntry entry = characterEditorMakeEntry(killInfo->name, false);
+        entry.count = killInfo->kills;
+        entry.hasCard = true;
+        entry.card = characterEditorMakeCard(SkillDexFrameId::Kills, nullptr, killTypeGetDescription(killInfo->killType));
+        entry.card.title = std::string(killInfo->name) + " " + getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 126);
+        entries.push_back(entry);
+    }
+}
+
+// Lines of the karma list: karma and titles, town reputations, addictions.
+static void characterEditorBuildKarmaFolder(std::vector<CharacterEditorFolderEntry>& entries)
+{
+    char formattedText[256];
+
+    for (int index = 0; index < gKarmaEntriesLength; index++) {
+        KarmaEntry* karmaDescription = &(gKarmaEntries[index]);
+        if (karmaDescription->gvar == GVAR_PLAYER_REPUTATION) {
+            int reputation;
+            for (reputation = 0; reputation < gGenericReputationEntriesLength; reputation++) {
+                GenericReputationEntry* reputationDescription = &(gGenericReputationEntries[reputation]);
+                if (gGameGlobalVars[GVAR_PLAYER_REPUTATION] >= reputationDescription->threshold) {
+                    break;
+                }
+            }
+
+            if (reputation != gGenericReputationEntriesLength) {
+                GenericReputationEntry* reputationDescription = &(gGenericReputationEntries[reputation]);
+
+                char reputationValue[32];
+                compat_itoa(gGameGlobalVars[GVAR_PLAYER_REPUTATION], reputationValue, 10);
+
+                snprintf(formattedText, sizeof(formattedText),
+                    "%s: %s (%s)",
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125),
+                    reputationValue,
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, reputationDescription->name));
+
+                CharacterEditorFolderEntry entry = characterEditorMakeEntry(formattedText, false);
+                entry.hasCard = true;
+                entry.card = characterEditorMakeCard(karmaDescription->art_num,
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125),
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->description));
+                entries.push_back(entry);
+            }
+        } else {
+            if (gGameGlobalVars[karmaDescription->gvar] != 0) {
+                const char* name = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->name);
+                CharacterEditorFolderEntry entry = characterEditorMakeEntry(name, false);
+                entry.hasCard = true;
+                entry.card = characterEditorMakeCard(karmaDescription->art_num,
+                    name,
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->description));
+                entries.push_back(entry);
             }
         }
     }
 
-    if (!hasContent) {
-        gCharacterEditorFolderCardFrmId = SkillDexFrameId::Kills;
-        gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 126);
-        gCharacterEditorFolderCardSubtitle = nullptr;
-        gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 129);
+    bool hasTownReputationHeading = false;
+    // SFALL
+    for (int index = 0; index < gCustomTownReputationEntries.size(); index++) {
+        const TownReputationEntry* pair = &(gCustomTownReputationEntries[index]);
+        if (wmAreaIsKnown(pair->city)) {
+            if (!hasTownReputationHeading) {
+                const char* heading = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4000);
+                CharacterEditorFolderEntry entry = characterEditorMakeEntry(heading, true);
+                entry.hasCard = true;
+                entry.card = characterEditorMakeCard(SkillDexFrameId::Reputation,
+                    heading,
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4100));
+                entries.push_back(entry);
+                hasTownReputationHeading = true;
+            }
+
+            char cityShortName[40];
+            wmGetAreaIdxName(pair->city, cityShortName);
+
+            int townReputation = gGameGlobalVars[pair->gvar];
+
+            SkillDexFrmId townReputationFrmId;
+            int townReputationBaseMessageId;
+
+            if (townReputation < -30) {
+                townReputationFrmId = SkillDexFrameId::VillifiedReputation;
+                townReputationBaseMessageId = 2006; // Vilified
+            } else if (townReputation < -15) {
+                townReputationFrmId = SkillDexFrameId::HatedReputation;
+                townReputationBaseMessageId = 2005; // Hated
+            } else if (townReputation < 0) {
+                townReputationFrmId = SkillDexFrameId::HatedReputation;
+                townReputationBaseMessageId = 2004; // Antipathy
+            } else if (townReputation == 0) {
+                townReputationFrmId = SkillDexFrameId::NeutralReputation;
+                townReputationBaseMessageId = 2003; // Neutral
+            } else if (townReputation < 15) {
+                townReputationFrmId = SkillDexFrameId::LikedReputation;
+                townReputationBaseMessageId = 2002; // Accepted
+            } else if (townReputation < 30) {
+                townReputationFrmId = SkillDexFrameId::LikedReputation;
+                townReputationBaseMessageId = 2001; // Liked
+            } else {
+                townReputationFrmId = SkillDexFrameId::IdolizedReputation;
+                townReputationBaseMessageId = 2000; // Idolized
+            }
+
+            const char* reputationName = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationBaseMessageId);
+            snprintf(formattedText, sizeof(formattedText),
+                "%s: %s",
+                cityShortName,
+                reputationName);
+
+            CharacterEditorFolderEntry entry = characterEditorMakeEntry(formattedText, false);
+            entry.hasCard = true;
+            entry.card = characterEditorMakeCard(townReputationFrmId,
+                reputationName,
+                getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationBaseMessageId + 100));
+            entries.push_back(entry);
+        }
     }
 
-    return usedKills;
+    bool hasAddictionsHeading = false;
+    for (int index = 0; index < ADDICTION_REPUTATION_COUNT; index++) {
+        if (gGameGlobalVars[gAddictionReputationVars[index]] != 0) {
+            if (!hasAddictionsHeading) {
+                // Addictions
+                const char* heading = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4001);
+                CharacterEditorFolderEntry entry = characterEditorMakeEntry(heading, true);
+                entry.hasCard = true;
+                entry.card = characterEditorMakeCard(SkillDexFrameId::DrugAddiction,
+                    heading,
+                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4101));
+                entries.push_back(entry);
+                hasAddictionsHeading = true;
+            }
+
+            const char* name = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 1004 + index);
+            CharacterEditorFolderEntry entry = characterEditorMakeEntry(name, false);
+            entry.hasCard = true;
+            entry.card = characterEditorMakeCard(gAddictionReputationFrmIds[index],
+                name,
+                getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 1104 + index));
+            entries.push_back(entry);
+        }
+    }
+}
+
+CharacterEditorCard characterEditorGetFolderCard(CharacterEditorFolder folder)
+{
+    switch (folder) {
+    case CharacterEditorFolder::Perks:
+        // Perks add additional abilities. Every third experience level, you can choose one perk.
+        return characterEditorMakeCard(SkillDexFrameId::Perks,
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 124),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 127));
+    case CharacterEditorFolder::Karma:
+        // SFALL: Custom karma folder.
+        return characterEditorMakeCard(customKarmaFolderGetFrmId(),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 128));
+    case CharacterEditorFolder::Kills:
+        return characterEditorMakeCard(SkillDexFrameId::Kills,
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 126),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 129));
+    }
+
+    return CharacterEditorCard();
+}
+
+std::vector<CharacterEditorFolderEntry> characterEditorGetFolder(CharacterEditorFolder folder)
+{
+    std::vector<CharacterEditorFolderEntry> entries;
+    switch (folder) {
+    case CharacterEditorFolder::Perks:
+        characterEditorBuildPerksFolder(entries);
+        break;
+    case CharacterEditorFolder::Karma:
+        characterEditorBuildKarmaFolder(entries);
+        break;
+    case CharacterEditorFolder::Kills:
+        characterEditorBuildKillsFolder(entries);
+        break;
+    }
+    return entries;
+}
+
+// Lines of the folder shown in the game's window; the card shows the
+// highlighted line (they stay until the next draw).
+static std::vector<CharacterEditorFolderEntry> gCharacterEditorFolderEntries;
+
+static int characterEditorDrawFolder(CharacterEditorFolder folder)
+{
+    characterEditorFolderViewClear();
+
+    gCharacterEditorFolderEntries = characterEditorGetFolder(folder);
+
+    bool hasSelection = false;
+    for (CharacterEditorFolderEntry& entry : gCharacterEditorFolderEntries) {
+        bool highlighted;
+        if (entry.heading) {
+            highlighted = characterEditorFolderViewDrawHeading(entry.text.c_str()) != 0;
+        } else if (entry.count != -1) {
+            highlighted = characterEditorFolderViewDrawKillsEntry(entry.text.c_str(), entry.count);
+        } else if (entry.maxRank != 0) {
+            bool useProgressBar = settings.ui.perks_progress_bar && (entry.maxRank > 1);
+
+            char perkName[80];
+            if (useProgressBar || entry.rank == 1) {
+                snprintf(perkName, sizeof(perkName), "%s", entry.text.c_str());
+            } else {
+                snprintf(perkName, sizeof(perkName), "%s (%d)", entry.text.c_str(), entry.rank);
+            }
+
+            // keep Y index before characterEditorFolderViewDrawString
+            int currentY = gCharacterEditorFolderViewNextY;
+            int currentLineIndex = gCharacterEditorFolderViewCurrentLine;
+
+            highlighted = characterEditorFolderViewDrawString(perkName);
+
+            if (useProgressBar && currentLineIndex >= gCharacterEditorFolderViewTopLine
+                && currentLineIndex < gCharacterEditorFolderViewTopLine + gCharacterEditorFolderViewMaxLines) {
+                characterEditorDrawPerkProgressBar(
+                    currentY, entry.rank, entry.maxRank, highlighted ? COLOR_LIGHT_YELLOW : COLOR_GREEN);
+            }
+        } else {
+            highlighted = characterEditorFolderViewDrawString(entry.text.c_str());
+        }
+
+        if (highlighted && entry.hasCard) {
+            gCharacterEditorFolderCardFrmId = entry.card.frmId;
+            gCharacterEditorFolderCardTitle = entry.card.title.data();
+            gCharacterEditorFolderCardSubtitle = nullptr;
+            gCharacterEditorFolderCardDescription = entry.card.description.data();
+            hasSelection = true;
+        }
+    }
+
+    if (!hasSelection) {
+        static CharacterEditorCard card;
+        card = characterEditorGetFolderCard(folder);
+        gCharacterEditorFolderCardFrmId = card.frmId;
+        gCharacterEditorFolderCardTitle = card.title.data();
+        gCharacterEditorFolderCardSubtitle = nullptr;
+        gCharacterEditorFolderCardDescription = card.description.data();
+    }
+
+    return static_cast<int>(gCharacterEditorFolderEntries.size());
 }
 
 // 0x4345DC PrintBigNum
@@ -5607,159 +5836,6 @@ static void characterEditorToggleOptionalTrait(Trait trait)
     windowRefresh(gCharacterEditorWindow);
 }
 
-// 0x43BCE0 list_karma
-static void characterEditorDrawKarmaFolder()
-{
-    char* msg;
-    char formattedText[256];
-
-    characterEditorFolderViewClear();
-
-    bool hasSelection = false;
-    for (int index = 0; index < gKarmaEntriesLength; index++) {
-        KarmaEntry* karmaDescription = &(gKarmaEntries[index]);
-        if (karmaDescription->gvar == GVAR_PLAYER_REPUTATION) {
-            int reputation;
-            for (reputation = 0; reputation < gGenericReputationEntriesLength; reputation++) {
-                GenericReputationEntry* reputationDescription = &(gGenericReputationEntries[reputation]);
-                if (gGameGlobalVars[GVAR_PLAYER_REPUTATION] >= reputationDescription->threshold) {
-                    break;
-                }
-            }
-
-            if (reputation != gGenericReputationEntriesLength) {
-                GenericReputationEntry* reputationDescription = &(gGenericReputationEntries[reputation]);
-
-                char reputationValue[32];
-                compat_itoa(gGameGlobalVars[GVAR_PLAYER_REPUTATION], reputationValue, 10);
-
-                snprintf(formattedText, sizeof(formattedText),
-                    "%s: %s (%s)",
-                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125),
-                    reputationValue,
-                    getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, reputationDescription->name));
-
-                if (characterEditorFolderViewDrawString(formattedText)) {
-                    gCharacterEditorFolderCardFrmId = karmaDescription->art_num;
-                    gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125);
-                    gCharacterEditorFolderCardSubtitle = nullptr;
-                    gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->description);
-                    hasSelection = true;
-                }
-            }
-        } else {
-            if (gGameGlobalVars[karmaDescription->gvar] != 0) {
-                msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->name);
-                if (characterEditorFolderViewDrawString(msg)) {
-                    gCharacterEditorFolderCardFrmId = karmaDescription->art_num;
-                    gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->name);
-                    gCharacterEditorFolderCardSubtitle = nullptr;
-                    gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaDescription->description);
-                    hasSelection = true;
-                }
-            }
-        }
-    }
-
-    bool hasTownReputationHeading = false;
-    // SFALL
-    for (int index = 0; index < gCustomTownReputationEntries.size(); index++) {
-        const TownReputationEntry* pair = &(gCustomTownReputationEntries[index]);
-        if (wmAreaIsKnown(pair->city)) {
-            if (!hasTownReputationHeading) {
-                msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4000);
-                if (characterEditorFolderViewDrawHeading(msg)) {
-                    gCharacterEditorFolderCardFrmId = SkillDexFrameId::Reputation;
-                    gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4000);
-                    gCharacterEditorFolderCardSubtitle = nullptr;
-                    gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4100);
-                }
-                hasTownReputationHeading = true;
-            }
-
-            char cityShortName[40];
-            wmGetAreaIdxName(pair->city, cityShortName);
-
-            int townReputation = gGameGlobalVars[pair->gvar];
-
-            SkillDexFrmId townReputationFrmId;
-            int townReputationBaseMessageId;
-
-            if (townReputation < -30) {
-                townReputationFrmId = SkillDexFrameId::VillifiedReputation;
-                townReputationBaseMessageId = 2006; // Vilified
-            } else if (townReputation < -15) {
-                townReputationFrmId = SkillDexFrameId::HatedReputation;
-                townReputationBaseMessageId = 2005; // Hated
-            } else if (townReputation < 0) {
-                townReputationFrmId = SkillDexFrameId::HatedReputation;
-                townReputationBaseMessageId = 2004; // Antipathy
-            } else if (townReputation == 0) {
-                townReputationFrmId = SkillDexFrameId::NeutralReputation;
-                townReputationBaseMessageId = 2003; // Neutral
-            } else if (townReputation < 15) {
-                townReputationFrmId = SkillDexFrameId::LikedReputation;
-                townReputationBaseMessageId = 2002; // Accepted
-            } else if (townReputation < 30) {
-                townReputationFrmId = SkillDexFrameId::LikedReputation;
-                townReputationBaseMessageId = 2001; // Liked
-            } else {
-                townReputationFrmId = SkillDexFrameId::IdolizedReputation;
-                townReputationBaseMessageId = 2000; // Idolized
-            }
-
-            msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationBaseMessageId);
-            snprintf(formattedText, sizeof(formattedText),
-                "%s: %s",
-                cityShortName,
-                msg);
-
-            if (characterEditorFolderViewDrawString(formattedText)) {
-                gCharacterEditorFolderCardFrmId = townReputationFrmId;
-                gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationBaseMessageId);
-                gCharacterEditorFolderCardSubtitle = nullptr;
-                gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationBaseMessageId + 100);
-                hasSelection = 1;
-            }
-        }
-    }
-
-    bool hasAddictionsHeading = false;
-    for (int index = 0; index < ADDICTION_REPUTATION_COUNT; index++) {
-        if (gGameGlobalVars[gAddictionReputationVars[index]] != 0) {
-            if (!hasAddictionsHeading) {
-                // Addictions
-                msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4001);
-                if (characterEditorFolderViewDrawHeading(msg)) {
-                    gCharacterEditorFolderCardFrmId = SkillDexFrameId::DrugAddiction;
-                    gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4001);
-                    gCharacterEditorFolderCardSubtitle = nullptr;
-                    gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4101);
-                    hasSelection = 1;
-                }
-                hasAddictionsHeading = true;
-            }
-
-            msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 1004 + index);
-            if (characterEditorFolderViewDrawString(msg)) {
-                gCharacterEditorFolderCardFrmId = gAddictionReputationFrmIds[index];
-                gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 1004 + index);
-                gCharacterEditorFolderCardSubtitle = nullptr;
-                gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 1104 + index);
-                hasSelection = 1;
-            }
-        }
-    }
-
-    if (!hasSelection) {
-        // SFALL: Custom karma folder.
-        gCharacterEditorFolderCardFrmId = customKarmaFolderGetFrmId();
-        gCharacterEditorFolderCardTitle = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125);
-        gCharacterEditorFolderCardSubtitle = nullptr;
-        gCharacterEditorFolderCardDescription = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 128);
-    }
-}
-
 // 0x43C1B0 editor_save
 int characterEditorSave(File* stream)
 {
@@ -6020,7 +6096,8 @@ int characterEditorGetWindow()
 
 void characterEditorDisplayStats()
 {
-    if (windowGetWindow(gCharacterEditorWindow) == nullptr) {
+    // CE: The mobile character screen draws itself (no editor window).
+    if (muiIsEnabled() || windowGetWindow(gCharacterEditorWindow) == nullptr) {
         return;
     }
 
@@ -6040,6 +6117,32 @@ void characterEditorDisplayStats()
 //
 // 0x43C228 UpdateLevel
 static int characterEditorUpdateLevel()
+{
+    characterEditorApplyLevelUps();
+
+    while (characterEditorGetPerkOwed() != 0) {
+        characterEditorWindowSelectedFolder = EDITOR_FOLDER_PERKS;
+        characterEditorDrawFolders();
+        windowRefresh(gCharacterEditorWindow);
+
+        int rc = perkDialogShow();
+        if (rc == -1) {
+            debugPrint("\n *** Error running perks dialog! ***\n");
+            return -1;
+        }
+
+        characterEditorDrawFolders();
+        if (rc == 0) { // skipped perk selection
+            break;
+        }
+    }
+
+    return 1;
+}
+
+// Skill points of the levels gained since the editor was open last (and
+// perks of old saves, see below); owed perks are chosen next.
+static void characterEditorApplyLevelUps()
 {
     int level = pcGetStat(PC_STAT_LEVEL);
     if (level != gCharacterEditorLastLevel && level <= PC_LEVEL_MAX) {
@@ -6069,26 +6172,7 @@ static int characterEditorUpdateLevel()
         }
     }
 
-    while (characterEditorGetPerkOwed() != 0) {
-        characterEditorWindowSelectedFolder = EDITOR_FOLDER_PERKS;
-        characterEditorDrawFolders();
-        windowRefresh(gCharacterEditorWindow);
-
-        int rc = perkDialogShow();
-        if (rc == -1) {
-            debugPrint("\n *** Error running perks dialog! ***\n");
-            return -1;
-        }
-
-        characterEditorDrawFolders();
-        if (rc == 0) { // skipped perk selection
-            break;
-        }
-    }
-
     gCharacterEditorLastLevel = level;
-
-    return 1;
 }
 
 // 0x43C398 RedrwDPrks
@@ -7767,6 +7851,660 @@ static void customTownReputationInit()
 static void customTownReputationFree()
 {
     gCustomTownReputationEntries.clear();
+}
+
+// CE: Mobile UI character screen over the editor's state (see
+// character_editor.h).
+
+// Perk waiting for its extra steps (Tag!, Mutate!), ranks before it.
+static Perk gCharacterEditorPendingPerk = PERK_INVALID;
+static int gCharacterEditorPendingPerkRanks[PERK_COUNT];
+
+// Labels of the derived stats list (`gCharacterEditorDerivedStatsMap`).
+static const int kCharacterEditorDerivedStatNames[EDITOR_DERIVED_STAT_COUNT] = {
+    302,
+    301,
+    311,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+};
+
+static constexpr SkillDexFrmId kCharacterEditorConditionFrmIds[kCharacterEditorConditionCount] = {
+    SkillDexFrameId::Poisoned,
+    SkillDexFrameId::Radiated,
+    SkillDexFrameId::EyeDamage,
+    SkillDexFrameId::CrippledRightArm,
+    SkillDexFrameId::CrippledLeftArm,
+    SkillDexFrameId::CrippledRightLeg,
+    SkillDexFrameId::CrippledLeftLeg,
+};
+
+static_assert(kCharacterEditorDerivedStatCount == EDITOR_DERIVED_STAT_COUNT, "derived stats list");
+
+bool characterEditorIsCreating()
+{
+    return gCharacterEditorIsCreationMode;
+}
+
+const char* characterEditorGetText(int id)
+{
+    return getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, id);
+}
+
+int characterEditorGetCharacterPoints()
+{
+    return gCharacterEditorRemainingCharacterPoints;
+}
+
+int characterEditorGetTagSkillsLeft()
+{
+    return gCharacterEditorTaggedSkillCount;
+}
+
+int characterEditorGetTraitsLeft()
+{
+    int left = 0;
+    for (int index = 0; index < TRAITS_MAX_SELECTED_COUNT; index++) {
+        if (gCharacterEditorTempTraits[index] == TRAIT_INVALID) {
+            left++;
+        }
+    }
+    return left;
+}
+
+int characterEditorGetPrimaryStat(Stat stat)
+{
+    if (gCharacterEditorIsCreationMode) {
+        return critterGetBaseStatWithTraitModifier(gDude, stat) + critterGetBonusStat(gDude, stat);
+    }
+
+    return critterGetStat(gDude, stat);
+}
+
+const char* characterEditorGetPrimaryStatDescription(Stat stat)
+{
+    if (gCharacterEditorIsCreationMode) {
+        int messageId = std::min(critterGetStat(gDude, stat) + 199, 210);
+        return getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, messageId);
+    }
+
+    return statGetValueDescription(std::min(critterGetStat(gDude, stat), 10));
+}
+
+bool characterEditorAdjustPrimaryStat(Stat stat, int delta)
+{
+    if (!gCharacterEditorIsCreationMode || stat < STAT_FIRST || stat >= PRIMARY_STAT_COUNT) {
+        return false;
+    }
+
+    bool changed = false;
+    if (delta < 0) {
+        if (critterDecBaseStat(gDude, stat) == 0) {
+            gCharacterEditorRemainingCharacterPoints++;
+            changed = true;
+        }
+    } else if (delta > 0) {
+        if (gCharacterEditorRemainingCharacterPoints > 0 && characterEditorGetPrimaryStat(stat) < 10 && critterIncBaseStat(gDude, stat) == 0) {
+            gCharacterEditorRemainingCharacterPoints--;
+            changed = true;
+        }
+    }
+
+    critterUpdateDerivedStats(gDude);
+    return changed;
+}
+
+bool characterEditorIsSkillTagged(Skill skill)
+{
+    for (int index = 0; index < NUM_TAGGED_SKILLS; index++) {
+        if (gCharacterEditorTempTaggedSkills[index] == skill) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Tag skills left to choose (creation keeps the 4th slot for Tag!).
+static void characterEditorCountTaggedSkills()
+{
+    int left = 0;
+    for (int index = NUM_TAGGED_SKILLS - 1; index >= 0; index--) {
+        if (gCharacterEditorTempTaggedSkills[index] != SKILL_INVALID) {
+            break;
+        }
+        left++;
+    }
+
+    if (gCharacterEditorIsCreationMode) {
+        left -= 1;
+    }
+
+    gCharacterEditorTaggedSkillCount = left;
+}
+
+bool characterEditorToggleTagSkill(Skill skill)
+{
+    bool changed = true;
+    if (characterEditorIsSkillTagged(skill)) {
+        if (skill == gCharacterEditorTempTaggedSkills[0]) {
+            gCharacterEditorTempTaggedSkills[0] = gCharacterEditorTempTaggedSkills[1];
+            gCharacterEditorTempTaggedSkills[1] = gCharacterEditorTempTaggedSkills[2];
+            gCharacterEditorTempTaggedSkills[2] = SKILL_INVALID;
+        } else if (skill == gCharacterEditorTempTaggedSkills[1]) {
+            gCharacterEditorTempTaggedSkills[1] = gCharacterEditorTempTaggedSkills[2];
+            gCharacterEditorTempTaggedSkills[2] = SKILL_INVALID;
+        } else {
+            gCharacterEditorTempTaggedSkills[2] = SKILL_INVALID;
+        }
+    } else if (gCharacterEditorTaggedSkillCount > 0) {
+        for (int index = 0; index < NUM_TAGGED_SKILLS - 1; index++) {
+            if (gCharacterEditorTempTaggedSkills[index] == SKILL_INVALID) {
+                gCharacterEditorTempTaggedSkills[index] = skill;
+                break;
+            }
+        }
+    } else {
+        changed = false;
+    }
+
+    characterEditorCountTaggedSkills();
+    skillsSetTagged(gCharacterEditorTempTaggedSkills, NUM_TAGGED_SKILLS);
+    return changed;
+}
+
+bool characterEditorIsTraitSelected(Trait trait)
+{
+    return trait != TRAIT_INVALID && (trait == gCharacterEditorTempTraits[0] || trait == gCharacterEditorTempTraits[1]);
+}
+
+bool characterEditorToggleTrait(Trait trait)
+{
+    bool changed = true;
+    if (characterEditorIsTraitSelected(trait)) {
+        if (trait == gCharacterEditorTempTraits[0]) {
+            gCharacterEditorTempTraits[0] = gCharacterEditorTempTraits[1];
+        }
+        gCharacterEditorTempTraits[1] = TRAIT_INVALID;
+    } else if (gCharacterEditorTempTraits[0] == TRAIT_INVALID) {
+        gCharacterEditorTempTraits[0] = trait;
+    } else if (gCharacterEditorTempTraits[1] == TRAIT_INVALID) {
+        gCharacterEditorTempTraits[1] = trait;
+    } else {
+        changed = false;
+    }
+
+    gCharacterEditorTempTraitCount = gCharacterEditorTempTraits[1] == TRAIT_INVALID ? 1 : 0;
+
+    traitsSetSelected(gCharacterEditorTempTraits[0], gCharacterEditorTempTraits[1]);
+    critterUpdateDerivedStats(gDude);
+    return changed;
+}
+
+bool characterEditorCanLowerSkill(Skill skill)
+{
+    int minimumSkillValue = gCharacterEditorSkillsBackup[skill];
+    if (tagSkill4LevelBase != -1 && skill == gCharacterEditorTempTaggedSkills[NUM_TAGGED_SKILLS - 1]) {
+        minimumSkillValue = tagSkill4LevelBase;
+    }
+
+    return skillGetValue(gDude, skill) > minimumSkillValue;
+}
+
+CharacterEditorSkillChange characterEditorAdjustSkill(Skill skill, int delta)
+{
+    if (gCharacterEditorIsCreationMode) {
+        return CharacterEditorSkillChange::AtMinimum;
+    }
+
+    gCharacterEditorCurrentSkill = skill;
+
+    if (delta > 0) {
+        if (pcGetStat(PC_STAT_UNSPENT_SKILL_POINTS) <= 0) {
+            return CharacterEditorSkillChange::NoPoints;
+        }
+
+        switch (skillAdd(gDude, skill)) {
+        case 0:
+            return CharacterEditorSkillChange::Changed;
+        case -4:
+            return CharacterEditorSkillChange::NoPoints;
+        default:
+            return CharacterEditorSkillChange::AtMaximum;
+        }
+    }
+
+    if (!characterEditorCanLowerSkill(skill) || skillSub(gDude, skill) != 0) {
+        return CharacterEditorSkillChange::AtMinimum;
+    }
+
+    return CharacterEditorSkillChange::Changed;
+}
+
+void characterEditorGetHitPoints(int* current, int* maximum)
+{
+    *maximum = critterGetStat(gDude, STAT_MAXIMUM_HIT_POINTS);
+    *current = gCharacterEditorIsCreationMode ? *maximum : critterGetHitPoints(gDude);
+}
+
+bool characterEditorConditionIsActive(int condition)
+{
+    int results = gDude->data.critter.combat.results;
+    switch (condition) {
+    case 0:
+        return critterGetPoison(gDude) != 0;
+    case 1:
+        return critterGetRadiation(gDude) != 0;
+    case 2:
+        return (results & DAM_BLIND) != 0;
+    case 3:
+        return (results & DAM_CRIP_ARM_RIGHT) != 0;
+    case 4:
+        return (results & DAM_CRIP_ARM_LEFT) != 0;
+    case 5:
+        return (results & DAM_CRIP_LEG_RIGHT) != 0;
+    case 6:
+        return (results & DAM_CRIP_LEG_LEFT) != 0;
+    }
+    return false;
+}
+
+const char* characterEditorGetConditionName(int condition)
+{
+    return getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 312 + condition);
+}
+
+const char* characterEditorGetDerivedStatName(int index)
+{
+    return getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, kCharacterEditorDerivedStatNames[index]);
+}
+
+std::string characterEditorFormatDerivedStat(int index, bool* warning)
+{
+    Stat stat = gCharacterEditorDerivedStatsMap[index];
+    int value = critterGetStat(gDude, stat);
+    *warning = false;
+
+    char text[32];
+    switch (stat) {
+    case STAT_CARRY_WEIGHT:
+        *warning = critterIsEncumbered(gDude);
+        snprintf(text, sizeof(text), "%d", value);
+        break;
+    case STAT_MELEE_DAMAGE:
+        // SFALL: Display melee damage without "Bonus HtH Damage" bonus.
+        if (!damageModGetDisplayBonusDamage()) {
+            value -= 2 * perkGetRank(gDude, PERK_BONUS_HTH_DAMAGE);
+        }
+        snprintf(text, sizeof(text), "%d", value);
+        break;
+    case STAT_DAMAGE_RESISTANCE:
+    case STAT_POISON_RESISTANCE:
+    case STAT_RADIATION_RESISTANCE:
+    case STAT_CRITICAL_CHANCE:
+        snprintf(text, sizeof(text), "%d%%", value);
+        break;
+    default:
+        snprintf(text, sizeof(text), "%d", value);
+        break;
+    }
+    return text;
+}
+
+CharacterEditorCard characterEditorGetPrimaryStatCard(Stat stat)
+{
+    return characterEditorMakeCard(statGetFrmId(stat), statGetName(stat), statGetDescription(stat));
+}
+
+CharacterEditorCard characterEditorGetDerivedStatCard(int index)
+{
+    Stat stat = gCharacterEditorDerivedStatsMap[index];
+    return characterEditorMakeCard(gCharacterEditorDerivedStatFrmIds[index], statGetName(stat), statGetDescription(stat));
+}
+
+CharacterEditorCard characterEditorGetHitPointsCard()
+{
+    return characterEditorMakeCard(statGetFrmId(STAT_MAXIMUM_HIT_POINTS),
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 300),
+        statGetDescription(STAT_MAXIMUM_HIT_POINTS));
+}
+
+CharacterEditorCard characterEditorGetConditionCard(int condition)
+{
+    return characterEditorMakeCard(kCharacterEditorConditionFrmIds[condition],
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 312 + condition),
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 400 + condition));
+}
+
+CharacterEditorCard characterEditorGetSkillCard(Skill skill)
+{
+    CharacterEditorCard card = characterEditorMakeCard(skillGetFrmId(skill), skillGetName(skill), skillGetDescription(skill));
+
+    char formatted[150];
+    snprintf(formatted, sizeof(formatted), "%s %d%% %s",
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 137),
+        skillGetDefaultValue(skill),
+        skillGetAttributes(skill));
+    card.subtitle = formatted;
+    return card;
+}
+
+CharacterEditorCard characterEditorGetTraitCard(Trait trait)
+{
+    return characterEditorMakeCard(traitGetFrmId(trait), traitGetName(trait), traitGetDescription(trait));
+}
+
+CharacterEditorCard characterEditorGetPerkCard(Perk perk)
+{
+    return characterEditorMakeCard(perkGetFrmId(perk), perkGetName(perk), perkGetDescription(perk));
+}
+
+CharacterEditorCard characterEditorGetLevelCard(int line)
+{
+    if (gCharacterEditorIsCreationMode) {
+        // Character Points
+        return characterEditorMakeCard(SkillDexFrameId::Level,
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 120),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 121));
+    }
+
+    switch (line) {
+    case 0:
+        return characterEditorMakeCard(SkillDexFrameId::Level, pcStatGetName(PC_STAT_LEVEL), pcStatGetDescription(PC_STAT_LEVEL));
+    case 1:
+        return characterEditorMakeCard(SkillDexFrameId::Experience, pcStatGetName(PC_STAT_EXPERIENCE), pcStatGetDescription(PC_STAT_EXPERIENCE));
+    default:
+        // Next Level
+        return characterEditorMakeCard(SkillDexFrameId::NextLevel,
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 122),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 123));
+    }
+}
+
+CharacterEditorCard characterEditorGetSkillPointsCard()
+{
+    if (gCharacterEditorIsCreationMode) {
+        // Tag Skill
+        return characterEditorMakeCard(SkillDexFrameId::Skills,
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 144),
+            getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 145));
+    }
+
+    // Skill Points
+    return characterEditorMakeCard(SkillDexFrameId::Skills,
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 130),
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 131));
+}
+
+CharacterEditorCard characterEditorGetTraitsCard()
+{
+    // Optional Traits
+    return characterEditorMakeCard(SkillDexFrameId::Traits,
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 146),
+        getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 147));
+}
+
+bool characterEditorHasChanges()
+{
+    if (pcGetStat(PC_STAT_UNSPENT_SKILL_POINTS) != gCharacterEditorUnspentSkillPointsBackup
+        || gCharacterEditorHasFreePerk != gCharacterEditorHasFreePerkBackup) {
+        return true;
+    }
+
+    for (Perk perk = PERK_FIRST; perk < PERK_COUNT; perk++) {
+        if (perkGetRank(gDude, perk) != gCharacterEditorPerksBackup[perk]) {
+            return true;
+        }
+    }
+
+    for (Skill skill = SKILL_FIRST; skill < SKILL_COUNT; skill++) {
+        if (skillGetValue(gDude, skill) != gCharacterEditorSkillsBackup[skill]) {
+            return true;
+        }
+    }
+
+    for (int index = 0; index < TRAITS_MAX_SELECTED_COUNT; index++) {
+        if (gCharacterEditorTempTraits[index] != gCharacterEditorOptionalTraitsBackup[index]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void characterEditorRevert()
+{
+    gCharacterEditorPendingPerk = PERK_INVALID;
+    characterEditorRestorePlayer();
+}
+
+int characterEditorCheckReady()
+{
+    if (gCharacterEditorRemainingCharacterPoints != 0) {
+        // You must use all character points
+        return 118;
+    }
+
+    if (gCharacterEditorTaggedSkillCount > 0) {
+        // You must select all tag skills
+        return 142;
+    }
+
+    if (_is_supper_bonus()) {
+        // All stats must be between 1 and 10
+        return 157;
+    }
+
+    return 0;
+}
+
+bool characterEditorNameIsDefault()
+{
+    return compat_stricmp(critterGetName(gDude), "None") == 0;
+}
+
+void characterEditorSetName(const char* name)
+{
+    if (name != nullptr && name[0] != '\0') {
+        dudeSetName(name);
+    }
+}
+
+bool characterEditorAdjustAge(int delta)
+{
+    if (delta > 0) {
+        return critterIncBaseStat(gDude, STAT_AGE) == 0;
+    }
+
+    if (delta < 0) {
+        return critterDecBaseStat(gDude, STAT_AGE) == 0;
+    }
+
+    return false;
+}
+
+void characterEditorSetGender(int gender)
+{
+    critterSetBaseStat(gDude, STAT_GENDER, gender);
+    critterUpdateDerivedStats(gDude);
+}
+
+static bool characterEditorNameLess(const char* a, const char* b)
+{
+    return strcmp(a, b) < 0;
+}
+
+std::vector<Perk> characterEditorGetAvailablePerks()
+{
+    Perk perks[PERK_COUNT];
+    int count = perkGetAvailablePerks(gDude, characterEditorGetPerkSelectionLevel(), perks);
+
+    std::vector<Perk> result(perks, perks + count);
+    std::sort(result.begin(), result.end(), [](Perk a, Perk b) {
+        return characterEditorNameLess(perkGetName(a), perkGetName(b));
+    });
+    return result;
+}
+
+// The chosen perk (and its extra steps) is taken: owed perk used, perks
+// changing stats of their own right away.
+static CharacterEditorPerkStep characterEditorAcceptPerk()
+{
+    characterEditorConsumeOwedPerk();
+
+    if (perkGetRank(gDude, PERK_LIFEGIVER) != gCharacterEditorPendingPerkRanks[PERK_LIFEGIVER]) {
+        int maxHp = critterGetBonusStat(gDude, STAT_MAXIMUM_HIT_POINTS);
+        int bonus = perkGetLifegiverBonus();
+        critterSetBonusStat(gDude, STAT_MAXIMUM_HIT_POINTS, maxHp + bonus);
+        critterAdjustHitPoints(gDude, bonus);
+    } else if (perkGetRank(gDude, PERK_EDUCATED) != gCharacterEditorPendingPerkRanks[PERK_EDUCATED]) {
+        int sp = pcGetStat(PC_STAT_UNSPENT_SKILL_POINTS);
+        pcSetStat(PC_STAT_UNSPENT_SKILL_POINTS, sp + perkGetEducatedBonus());
+    }
+
+    gCharacterEditorPendingPerk = PERK_INVALID;
+    critterUpdateDerivedStats(gDude);
+    return CharacterEditorPerkStep::Done;
+}
+
+CharacterEditorPerkStep characterEditorChoosePerk(Perk perk)
+{
+    if (characterEditorGetPerkOwed() == 0) {
+        return CharacterEditorPerkStep::Failed;
+    }
+
+    for (Perk index = PERK_FIRST; index < PERK_COUNT; index++) {
+        gCharacterEditorPendingPerkRanks[index] = perkGetRank(gDude, index);
+    }
+
+    if (perkAddAtLevel(gDude, perk, characterEditorGetPerkSelectionLevel()) == -1) {
+        debugPrint("\n*** Unable to add perk! ***\n");
+        return CharacterEditorPerkStep::Failed;
+    }
+
+    gCharacterEditorPendingPerk = perk;
+
+    if (perkGetRank(gDude, PERK_TAG) != 0 && gCharacterEditorPendingPerkRanks[PERK_TAG] == 0) {
+        return CharacterEditorPerkStep::TagSkill;
+    }
+
+    if (perkGetRank(gDude, PERK_MUTATE) != 0 && gCharacterEditorPendingPerkRanks[PERK_MUTATE] == 0) {
+        return characterEditorGetTraitsLeft() < TRAITS_MAX_SELECTED_COUNT ? CharacterEditorPerkStep::LoseTrait : CharacterEditorPerkStep::NewTrait;
+    }
+
+    return characterEditorAcceptPerk();
+}
+
+std::vector<Skill> characterEditorGetNewTagSkillOptions()
+{
+    std::vector<Skill> skills;
+    for (Skill skill = SKILL_FIRST; skill < SKILL_COUNT; skill++) {
+        if (!characterEditorIsSkillTagged(skill)) {
+            skills.push_back(skill);
+        }
+    }
+
+    std::sort(skills.begin(), skills.end(), [](Skill a, Skill b) {
+        return characterEditorNameLess(skillGetName(a), skillGetName(b));
+    });
+    return skills;
+}
+
+CharacterEditorPerkStep characterEditorChooseTagSkill(Skill skill)
+{
+    if (gCharacterEditorPendingPerk != PERK_TAG || characterEditorIsSkillTagged(skill)) {
+        return CharacterEditorPerkStep::Failed;
+    }
+
+    gCharacterEditorTempTaggedSkills[NUM_TAGGED_SKILLS - 1] = skill;
+    skillsSetTagged(gCharacterEditorTempTaggedSkills, NUM_TAGGED_SKILLS);
+    tagSkill4LevelBase = skillGetValue(gDude, skill);
+
+    return characterEditorAcceptPerk();
+}
+
+std::vector<Trait> characterEditorGetLoseTraitOptions()
+{
+    std::vector<Trait> traits;
+    for (int index = 0; index < TRAITS_MAX_SELECTED_COUNT; index++) {
+        if (gCharacterEditorTempTraits[index] != TRAIT_INVALID) {
+            traits.push_back(gCharacterEditorTempTraits[index]);
+        }
+    }
+
+    std::sort(traits.begin(), traits.end(), [](Trait a, Trait b) {
+        return characterEditorNameLess(traitGetName(a), traitGetName(b));
+    });
+    return traits;
+}
+
+CharacterEditorPerkStep characterEditorChooseLoseTrait(Trait trait)
+{
+    if (gCharacterEditorPendingPerk != PERK_MUTATE || !characterEditorIsTraitSelected(trait)) {
+        return CharacterEditorPerkStep::Failed;
+    }
+
+    if (trait == gCharacterEditorTempTraits[0]) {
+        gCharacterEditorTempTraits[0] = gCharacterEditorTempTraits[1];
+    }
+    gCharacterEditorTempTraits[1] = TRAIT_INVALID;
+
+    return CharacterEditorPerkStep::NewTrait;
+}
+
+std::vector<Trait> characterEditorGetNewTraitOptions()
+{
+    std::vector<Trait> traits;
+    for (Trait trait = TRAIT_FIRST; trait < TRAIT_COUNT; trait++) {
+        if (trait != gCharacterEditorOptionalTraitsBackup[0] && trait != gCharacterEditorOptionalTraitsBackup[1]) {
+            traits.push_back(trait);
+        }
+    }
+
+    std::sort(traits.begin(), traits.end(), [](Trait a, Trait b) {
+        return characterEditorNameLess(traitGetName(a), traitGetName(b));
+    });
+    return traits;
+}
+
+CharacterEditorPerkStep characterEditorChooseNewTrait(Trait trait)
+{
+    if (gCharacterEditorPendingPerk != PERK_MUTATE || characterEditorIsTraitSelected(trait)) {
+        return CharacterEditorPerkStep::Failed;
+    }
+
+    if (gCharacterEditorTempTraits[0] == TRAIT_INVALID) {
+        gCharacterEditorTempTraits[0] = trait;
+    } else {
+        gCharacterEditorTempTraits[1] = trait;
+    }
+
+    traitsSetSelected(gCharacterEditorTempTraits[0], gCharacterEditorTempTraits[1]);
+
+    return characterEditorAcceptPerk();
+}
+
+void characterEditorCancelPerk()
+{
+    if (gCharacterEditorPendingPerk == PERK_INVALID) {
+        return;
+    }
+
+    if (gCharacterEditorPendingPerk == PERK_TAG) {
+        memcpy(gCharacterEditorTempTaggedSkills, gCharacterEditorTaggedSkillsBackup, sizeof(gCharacterEditorTempTaggedSkills));
+        skillsSetTagged(gCharacterEditorTaggedSkillsBackup, NUM_TAGGED_SKILLS);
+        tagSkill4LevelBase = -1;
+    } else if (gCharacterEditorPendingPerk == PERK_MUTATE) {
+        memcpy(gCharacterEditorTempTraits, gCharacterEditorOptionalTraitsBackup, sizeof(gCharacterEditorTempTraits));
+    }
+
+    perkRemove(gDude, gCharacterEditorPendingPerk);
+    gCharacterEditorPendingPerk = PERK_INVALID;
+    critterUpdateDerivedStats(gDude);
 }
 
 } // namespace fallout

@@ -82,7 +82,10 @@ extern Color _colorTable[COLOR_PALETTE_SIZE_15BIT];
 
 Color _calculateColor(int intensity, Color color);
 int Color2RGB(Color c);
-void colorPaletteFadeBetween(unsigned char* oldPalette, unsigned char* newPalette, int steps);
+// CE: Fades over [durationMs] by time, not by a number of frames: a slow
+// frame (a palette change re-uploads the whole map) skips steps instead of
+// stretching the fade.
+void colorPaletteFadeBetween(unsigned char* oldPalette, unsigned char* newPalette, unsigned int durationMs);
 void colorPaletteSetTransitionCallback(ColorTransitionCallback* callback);
 void _setSystemPalette(unsigned char* palette);
 unsigned char* _getSystemPalette();

@@ -482,6 +482,11 @@ bool xbaseReopenAll(char* paths)
     return true;
 }
 
+const XBase* xbaseGetFirst()
+{
+    return gXbaseHead;
+}
+
 // 0x4DF938 xaddpath
 bool xbaseOpen(const char* path)
 {

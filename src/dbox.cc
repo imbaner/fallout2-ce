@@ -1,5 +1,7 @@
 #include "dbox.h"
 
+#include "mui.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -150,6 +152,11 @@ static constexpr InterfaceFrmId kSaveFileDialogFrmIds[FILE_DIALOG_FRM_COUNT] = {
 // 0x41CF20 dialog_out
 int showDialogBox(const char* title, const char** body, int bodyLength, int x, int y, ColorWithFlags titleColor, const char* secondaryButtonText, ColorWithFlags bodyColor, int flags)
 {
+    // CE: Mobile UI dialog.
+    if (muiIsEnabled()) {
+        return muiShowDialogBox(title, body, bodyLength, secondaryButtonText, flags);
+    }
+
     MessageList messageList;
     MessageListItem messageListItem;
     int savedFont = fontGetCurrent();

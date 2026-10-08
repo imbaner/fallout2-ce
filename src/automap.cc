@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <vector>
 
 #include "art.h"
 #include "automap.h"
@@ -20,12 +21,14 @@
 #include "item.h"
 #include "kb.h"
 #include "map.h"
+#include "mui.h"
 #include "memory.h"
 #include "object.h"
 #include "platform_compat.h"
 #include "settings.h"
 #include "svga.h"
 #include "text_font.h"
+#include "touch.h"
 #include "window_manager.h"
 #include "worldmap.h"
 
@@ -42,7 +45,9 @@ namespace fallout {
 #define AUTOMAP_ENTRY_DATA_SIZE (10000)
 #define AUTOMAP_ENTRY_BUFFER_SIZE (11024)
 
+#if !FALLOUT_TOUCH_ONLY
 static void automapRenderInMapWindow(int window, int elevation, unsigned char* backgroundData, AutomapFlags flags);
+#endif
 static int automapSaveEntry(File* stream);
 static int automapLoadEntry(Map map, int elevation);
 static int automapSaveHeader(File* stream);
@@ -245,6 +250,7 @@ static int _displayMapList[AUTOMAP_MAP_COUNT] = {
     -1,
 };
 
+#if !FALLOUT_TOUCH_ONLY
 // 0x41B7E0
 static constexpr InterfaceFrmId kAutomapFrmIds[AUTOMAP_FRM_COUNT] = {
     InterfaceFrameId::AutomapWindow,
@@ -253,6 +259,7 @@ static constexpr InterfaceFrmId kAutomapFrmIds[AUTOMAP_FRM_COUNT] = {
     InterfaceFrameId::AutoUp,
     InterfaceFrameId::AutoDown,
 };
+#endif
 
 // 0x5108C4 autoflags
 static AutomapFlags gAutomapFlags = AUTOMAP_NONE;
@@ -315,6 +322,30 @@ void automapShow(bool isInGame, bool isUsingScanner)
 {
     ScopedGameMode gm(GameMode::kAutomap);
 
+    // CE: Mobile UI: the map screen (mui_automap.cc) instead of the game's
+    // window, the same flags and rules.
+    if (isInGame && muiIsEnabled()) {
+        _obj_process_seen();
+
+        gAutomapFlags &= AUTOMAP_WTH_HIGH_DETAILS;
+        gAutomapFlags |= AUTOMAP_IN_GAME;
+        if (isUsingScanner) {
+            gAutomapFlags |= AUTOMAP_WITH_SCANNER;
+        }
+
+        bool isoWasEnabled = isoDisable();
+        muiAutomapScreenRun();
+        if (isoWasEnabled) {
+            isoEnable();
+        }
+        return;
+    }
+
+#if FALLOUT_TOUCH_ONLY
+    // CE: The game's window is the mapper's (not in game) there: no mapper
+    // in the touch-only build (touch.h).
+    debugPrint("\nautomap: not in game, no window in the touch-only build\n");
+#else
     FrmImage frmImages[AUTOMAP_FRM_COUNT];
     for (int index = 0; index < AUTOMAP_FRM_COUNT; index++) {
         if (!frmImages[index].lock(kAutomapFrmIds[index])) {
@@ -450,30 +481,12 @@ void automapShow(bool isInGame, bool isUsingScanner)
             }
 
             if ((gAutomapFlags & AUTOMAP_WITH_SCANNER) == 0) {
-                Object* scanner = nullptr;
-
-                Object* item1 = critterGetItem1(gDude);
-                if (item1 != nullptr && item1->pid == PROTO_ID_MOTION_SENSOR) {
-                    scanner = item1;
-                } else {
-                    Object* item2 = critterGetItem2(gDude);
-                    if (item2 != nullptr && item2->pid == PROTO_ID_MOTION_SENSOR) {
-                        scanner = item2;
-                    }
-                }
-
-                if (scanner != nullptr && miscItemGetCharges(scanner) > 0) {
+                const char* error = automapActivateScanner();
+                if (error == nullptr) {
                     needsRefresh = true;
-                    gAutomapFlags |= AUTOMAP_WITH_SCANNER;
-                    miscItemConsumeCharge(scanner);
                 } else {
                     soundPlayFile("iisxxxx1");
-
-                    MessageListItem messageListItem;
-                    // 17 - The motion sensor is not installed.
-                    // 18 - The motion sensor has no charges remaining.
-                    const char* title = getmsg(&gMiscMessageList, &messageListItem, scanner != nullptr ? 18 : 17);
-                    showDialogBox(title, nullptr, 0, 165, 140, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
+                    showDialogBox(error, nullptr, 0, 165, 140, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
                 }
             }
 
@@ -509,6 +522,105 @@ void automapShow(bool isInGame, bool isUsingScanner)
     gAutomapWindow = -1;
     fontSetCurrent(oldFont);
     touch_set_touchscreen_mode(false);
+#endif
+}
+
+const char* automapActivateScanner()
+{
+    Object* scanner = nullptr;
+
+    Object* item1 = critterGetItem1(gDude);
+    if (item1 != nullptr && item1->pid == PROTO_ID_MOTION_SENSOR) {
+        scanner = item1;
+    } else {
+        Object* item2 = critterGetItem2(gDude);
+        if (item2 != nullptr && item2->pid == PROTO_ID_MOTION_SENSOR) {
+            scanner = item2;
+        }
+    }
+
+    if (scanner != nullptr && miscItemGetCharges(scanner) > 0) {
+        gAutomapFlags |= AUTOMAP_WITH_SCANNER;
+        miscItemConsumeCharge(scanner);
+        return nullptr;
+    }
+
+    MessageListItem messageListItem;
+    // 17 - The motion sensor is not installed.
+    // 18 - The motion sensor has no charges remaining.
+    return getmsg(&gMiscMessageList, &messageListItem, scanner != nullptr ? 18 : 17);
+}
+
+bool automapIsScannerActive()
+{
+    return (gAutomapFlags & AUTOMAP_WITH_SCANNER) != 0;
+}
+
+bool automapGetHighDetails()
+{
+    return (gAutomapFlags & AUTOMAP_WTH_HIGH_DETAILS) != 0;
+}
+
+void automapSetHighDetails(bool highDetails)
+{
+    if (highDetails) {
+        gAutomapFlags |= AUTOMAP_WTH_HIGH_DETAILS;
+    } else {
+        gAutomapFlags &= ~AUTOMAP_WTH_HIGH_DETAILS;
+    }
+}
+
+void automapGetView(int elevation, AutomapView* view)
+{
+    view->tiles.assign(HEX_GRID_WIDTH * HEX_GRID_HEIGHT, 0);
+    view->dudeX = -1;
+    view->dudeY = -1;
+    view->exits.clear();
+    view->critters.clear();
+
+    for (Object* object = objectFindFirstAtElevation(elevation); object != nullptr; object = objectFindNextAtElevation()) {
+        if (object->tile == -1) {
+            continue;
+        }
+
+        // Mirrored columns, as the automap and the Pip-Boy draw them.
+        int x = HEX_GRID_WIDTH - 1 - object->tile % HEX_GRID_WIDTH;
+        int y = object->tile / HEX_GRID_WIDTH;
+        ObjectType objectType = FrmId(object).objectType();
+
+        if (objectType == OBJ_TYPE_CRITTER
+            && (object->flags & OBJECT_HIDDEN) == OBJECT_NONE
+            && (gAutomapFlags & AUTOMAP_WITH_SCANNER) != AUTOMAP_NONE
+            && (object->data.critter.combat.results & DAM_DEAD) == DAM_NONE
+            && object != gDude) {
+            view->critters.push_back({ x, y });
+            continue;
+        }
+
+        if (object == gDude) {
+            view->dudeX = x;
+            view->dudeY = y;
+            continue;
+        }
+
+        if ((object->flags & OBJECT_SEEN) == OBJECT_NONE) {
+            continue;
+        }
+
+        if (object->pid == PROTO_ID_EXIT_GRID_MAP_MARKER) {
+            view->exits.push_back({ x, y });
+        } else if (objectType == OBJ_TYPE_WALL) {
+            view->tiles[y * HEX_GRID_WIDTH + x] = 1;
+        } else if (objectType == OBJ_TYPE_SCENERY
+            && (gAutomapFlags & AUTOMAP_WTH_HIGH_DETAILS) != AUTOMAP_NONE
+            && object->pid != PROTO_ID_BLOCK_HEX_AUTO_INVISO) {
+            // Walls win where both are.
+            unsigned char& tile = view->tiles[y * HEX_GRID_WIDTH + x];
+            if (tile == 0) {
+                tile = 2;
+            }
+        }
+    }
 }
 
 int automapGetWindow()
@@ -516,6 +628,7 @@ int automapGetWindow()
     return windowGetWindow(gAutomapWindow) != nullptr ? gAutomapWindow : -1;
 }
 
+#if !FALLOUT_TOUCH_ONLY
 // Renders automap in Map window.
 //
 // 0x41BD1C draw_top_down_map
@@ -639,24 +752,22 @@ static void automapRenderInMapWindow(int window, int elevation, unsigned char* b
 
     windowRefresh(window);
 }
+#endif
 
-// Renders automap in Pipboy window.
-//
-// 0x41C004 draw_top_down_map_pipboy
-int automapRenderInPipboyWindow(int window, Map map, int elevation)
+bool automapGetPipboyTiles(Map map, int elevation, std::vector<unsigned char>& tiles)
 {
-    Buffer2D windowBuffer = windowGetBuffer2D(window);
-
     gAutomapEntry.data = (unsigned char*)internal_malloc(AUTOMAP_ENTRY_BUFFER_SIZE);
     if (gAutomapEntry.data == nullptr) {
         debugPrint("\nAUTOMAP: Error allocating data buffer!\n");
-        return -1;
+        return false;
     }
 
     if (automapLoadEntry(map, elevation) == -1) {
         internal_free(gAutomapEntry.data);
-        return -1;
+        return false;
     }
+
+    tiles.assign(HEX_GRID_WIDTH * HEX_GRID_HEIGHT, 0);
 
     int bitsRemaining = 0; // Number of 2-bit tile entries left in `byte`.
     unsigned char byte = 0;
@@ -670,12 +781,36 @@ int automapRenderInPipboyWindow(int window, Map map, int elevation)
                 byte = *ptr++;
             }
 
+            tiles[y * HEX_GRID_WIDTH + x] = (byte & 0xC0) >> 6;
+            byte <<= 2;
+        }
+    }
+
+    internal_free(gAutomapEntry.data);
+
+    return true;
+}
+
+// Renders automap in Pipboy window.
+//
+// 0x41C004 draw_top_down_map_pipboy
+int automapRenderInPipboyWindow(int window, Map map, int elevation)
+{
+    Buffer2D windowBuffer = windowGetBuffer2D(window);
+
+    std::vector<unsigned char> tiles;
+    if (!automapGetPipboyTiles(map, elevation, tiles)) {
+        return -1;
+    }
+
+    for (int y = 0; y < HEX_GRID_HEIGHT; y++) {
+        for (int x = 0; x < HEX_GRID_WIDTH; x++) {
             int destX = AUTOMAP_PIPBOY_VIEW_X + x * 2;
             int destY = AUTOMAP_PIPBOY_VIEW_Y + y * 2;
             if (destX >= 0 && destX + 1 < windowBuffer.width && destY >= 0 && destY < windowBuffer.height) {
                 Color color;
                 bool shouldDraw = true;
-                switch ((byte & 0xC0) >> 6) {
+                switch (tiles[y * HEX_GRID_WIDTH + x]) {
                 case 1:
                     color = COLOR_GREEN;
                     break;
@@ -693,12 +828,8 @@ int automapRenderInPipboyWindow(int window, Map map, int elevation)
                     dest[1] = color;
                 }
             }
-
-            byte <<= 2;
         }
     }
-
-    internal_free(gAutomapEntry.data);
 
     return 0;
 }

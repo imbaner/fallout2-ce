@@ -219,12 +219,26 @@ void windowRefresh(int win);
 void windowRefreshRect(int win, const Rect* rect);
 void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest);
 void windowRefreshAll(Rect* rect);
-void _win_get_mouse_buf(unsigned char* dest);
+// CE: Returns true if there is a button at the point which reacts to the right
+// mouse button (e.g. weapon button cycles attack modes).
+bool windowButtonAtPointHasRightClick(int x, int y);
+
+// CE: Finds the button of the topmost window at the point which is closest to
+// the point (within `radius`). Returns false if the point is already over a
+// button or there is no button nearby. Used to make small buttons easier to
+// hit with a finger.
+bool windowFindNearestButton(int x, int y, int radius, int* buttonX, int* buttonY);
+
+// CE: `destLayers` receives layer tags (see world_view.h) when not null.
+void _win_get_mouse_buf(unsigned char* dest, unsigned char* destLayers = nullptr);
 bool windowIsValidWindowId(int win);
 Window* windowGetWindow(int win);
 unsigned char* windowGetBuffer(int win);
 Buffer2D windowGetBuffer2D(int win);
 int windowGetAtPoint(int x, int y);
+int windowGetVisibleAtPoint(int x, int y);
+// CE: A modal window (game screen or dialog) is shown.
+bool windowIsModalShown();
 int windowGetWidth(int win);
 int windowGetHeight(int win);
 int windowGetRect(int win, Rect* rect);

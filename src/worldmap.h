@@ -1,10 +1,14 @@
 #ifndef WORLD_MAP_H
 #define WORLD_MAP_H
 
+#include <string>
+#include <vector>
+
 #include "art_defs.h"
 #include "color.h"
 #include "config.h"
 #include "db.h"
+#include "geometry.h"
 
 namespace fallout {
 
@@ -398,6 +402,11 @@ int wmSfxIdxName(int sfxIdx, char** namePtr);
 int wmMapMusicStart();
 int wmSetMapMusic(Map mapIdx, const char* name);
 int wmMatchAreaContainingMapIdx(Map mapIdx, City* areaIdxPtr);
+
+// CE: World map interface state (for automated tests): viewport offset,
+// party position (world map coordinates), walking state and screen rect of
+// the map view.
+void wmGetInterfaceState(int* offsetX, int* offsetY, int* partyX, int* partyY, bool* isWalking, Rect* viewRect);
 int wmTeleportToArea(City areaIdx);
 
 // CE
@@ -415,6 +424,57 @@ const char* wmGetCurrentTerrainName();
 void wmSetTownTitle(City areaIdx, const char* title);
 void wmRemoveTownNames(bool state);
 int worldmapGetWindow();
+
+// CE: Mobile UI (mui_worldmap.cc): the world map's state its screen draws,
+// in world pixels (the terrain art's).
+struct WorldmapMobileCity {
+    int area;
+    // Center and radius of its circle.
+    float x;
+    float y;
+    float radius;
+    // Game text, empty - names hidden.
+    std::string name;
+    bool visited;
+};
+
+struct WorldmapMobileState {
+    int width = 0;
+    int height = 0;
+    // Terrain art, [tilesPerRow] a row.
+    int tileWidth = 0;
+    int tileHeight = 0;
+    int tilesPerRow = 0;
+    std::vector<int> tileFids;
+    // Explored parts, [subtilesPerRow] a row: 0 - unknown, 1 - known,
+    // 2 - visited.
+    int subtileSize = 0;
+    int subtilesPerRow = 0;
+    int subtileRows = 0;
+    std::vector<unsigned char> subtiles;
+    // Areas shown on the map.
+    std::vector<WorldmapMobileCity> cities;
+    // Known towns in the game's order of its town list (areas).
+    std::vector<int> destinations;
+    float partyX = 0.0f;
+    float partyY = 0.0f;
+    bool walking = false;
+    float destinationX = 0.0f;
+    float destinationY = 0.0f;
+    // The area walked to, -1 - a place in the wasteland.
+    int destinationArea = -1;
+    // The area the party stands at, -1 - the wasteland.
+    int currentArea = -1;
+    // An encounter's icon blinks over the party.
+    bool encounter = false;
+    bool encounterSpecial = false;
+    bool encounterBright = false;
+    bool inCar = false;
+    // Gas left, 0..1.
+    float fuel = 0.0f;
+};
+
+void wmMobileGetState(WorldmapMobileState* state);
 
 } // namespace fallout
 

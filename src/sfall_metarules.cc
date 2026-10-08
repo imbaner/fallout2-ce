@@ -25,6 +25,8 @@
 #include "mainmenu.h"
 #include "memory.h"
 #include "message.h"
+#include "mouse.h"
+#include "player_commands.h"
 #include "object.h"
 #include "opcode_context.h"
 #include "options.h"
@@ -48,6 +50,7 @@
 #include "window.h"
 #include "window_manager.h"
 #include "worldmap.h"
+#include "world_view.h"
 
 #include <assert.h>
 #include <cstddef>
@@ -1796,7 +1799,13 @@ void mf_obj_under_cursor(OpcodeContext& ctx)
     int onlyCritter = ctx.arg(0).asInt();
     int includeDude = ctx.arg(1).asInt();
 
-    Object* object = gameMouseGetObjectUnderCursor(onlyCritter ? OBJ_TYPE_CRITTER : OBJ_TYPE_INVALID, includeDude, gElevation);
+    // CE: Where the player points (with touch-native input the last point
+    // touched on the map), as the game picks objects.
+    int x;
+    int y;
+    mouseGetPointerPosition(&x, &y);
+    worldViewScreenToWorld(x, y, &x, &y);
+    Object* object = playerObjectAt(x, y, onlyCritter ? OBJ_TYPE_CRITTER : OBJ_TYPE_INVALID, includeDude, gElevation);
 
     ctx.setReturn(object);
 }
@@ -2174,6 +2183,11 @@ void mf_tile_by_position(OpcodeContext& ctx)
 {
     int x = ctx.arg(0).asInt();
     int y = ctx.arg(1).asInt();
+
+    // CE: Position is on screen, map may be zoomed and panned (see
+    // world_view.h).
+    worldViewScreenToWorld(x, y, &x, &y);
+
     ctx.setReturn(tileFromScreenXY(x, y));
 }
 

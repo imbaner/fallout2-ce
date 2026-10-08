@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include "platform_compat.h"
 #include "sfall_filesystem.h"
 #include "xfile.h"
@@ -35,8 +37,37 @@ static int gFileReadProgressBytesRead = 0;
 // 0x673040 read_threshold
 static int gFileReadProgressChunkSize;
 
+// CE: The handler is running. It draws a frame (`renderPresent`: the mobile
+// UI may read files then - the touch HUD reads protos the map load dropped),
+// and reads it makes don't report progress: their bytes would count for the
+// read going on, which would then ask for a chunk below zero - read to the
+// end of the file past its buffer (a map load overwrote memory after the
+// map's squares, the party's list among it) - and call the handler from
+// inside itself.
+static bool gFileReadProgressReporting = false;
+
 // 0x673044 db_file_lists
 static FileList* gFileListHead;
+
+// CE: Reads report progress (see `gFileReadProgressReporting`).
+static bool fileReadProgressActive()
+{
+    return gFileReadProgressHandler != nullptr && !gFileReadProgressReporting;
+}
+
+// CE: Bytes to read before the next report: never below one (a chunk below
+// zero would read to the end of the file, past the buffer).
+static long fileReadProgressNextChunk()
+{
+    return std::max(static_cast<long>(gFileReadProgressChunkSize) - gFileReadProgressBytesRead, 1L);
+}
+
+static void fileReadProgressReport()
+{
+    gFileReadProgressReporting = true;
+    gFileReadProgressHandler();
+    gFileReadProgressReporting = false;
+}
 
 static File* fileOpenImpl(const char* filename, const char* mode, bool useAliases);
 
@@ -106,11 +137,11 @@ int dbGetFileContents(const char* filePath, void* ptr)
     }
 
     long size = xfileGetSize(stream);
-    if (gFileReadProgressHandler != nullptr) {
+    if (fileReadProgressActive()) {
         unsigned char* byteBuffer = (unsigned char*)ptr;
 
         long remainingSize = size;
-        long chunkSize = gFileReadProgressChunkSize - gFileReadProgressBytesRead;
+        long chunkSize = fileReadProgressNextChunk();
 
         while (remainingSize >= chunkSize) {
             size_t bytesRead = xfileRead(byteBuffer, sizeof(*byteBuffer), chunkSize, stream);
@@ -118,9 +149,9 @@ int dbGetFileContents(const char* filePath, void* ptr)
             remainingSize -= bytesRead;
 
             gFileReadProgressBytesRead = 0;
-            gFileReadProgressHandler();
+            fileReadProgressReport();
 
-            chunkSize = gFileReadProgressChunkSize;
+            chunkSize = fileReadProgressNextChunk();
         }
 
         if (remainingSize != 0) {
@@ -186,12 +217,12 @@ int filePrintFormatted(File* stream, const char* format, ...)
 // 0x4C5F24 db_fgetc
 int fileReadChar(File* stream)
 {
-    if (gFileReadProgressHandler != nullptr) {
+    if (fileReadProgressActive()) {
         int ch = xfileReadChar(stream);
 
         gFileReadProgressBytesRead++;
         if (gFileReadProgressBytesRead >= gFileReadProgressChunkSize) {
-            gFileReadProgressHandler();
+            fileReadProgressReport();
             gFileReadProgressBytesRead = 0;
         }
 
@@ -204,14 +235,14 @@ int fileReadChar(File* stream)
 // 0x4C5F70 db_fgets
 char* fileReadString(char* string, size_t size, File* stream)
 {
-    if (gFileReadProgressHandler != nullptr) {
+    if (fileReadProgressActive()) {
         if (xfileReadString(string, size, stream) == nullptr) {
             return nullptr;
         }
 
         gFileReadProgressBytesRead += strlen(string);
         while (gFileReadProgressBytesRead >= gFileReadProgressChunkSize) {
-            gFileReadProgressHandler();
+            fileReadProgressReport();
             gFileReadProgressBytesRead -= gFileReadProgressChunkSize;
         }
 
@@ -230,12 +261,12 @@ int fileWriteString(const char* string, File* stream)
 // 0x4C5FFC db_fread
 size_t fileRead(void* ptr, size_t size, size_t count, File* stream)
 {
-    if (gFileReadProgressHandler != nullptr) {
+    if (fileReadProgressActive()) {
         unsigned char* byteBuffer = (unsigned char*)ptr;
 
         size_t totalBytesRead = 0;
         long remainingSize = size * count;
-        long chunkSize = gFileReadProgressChunkSize - gFileReadProgressBytesRead;
+        long chunkSize = fileReadProgressNextChunk();
 
         while (remainingSize >= chunkSize) {
             size_t bytesRead = xfileRead(byteBuffer, sizeof(*byteBuffer), chunkSize, stream);
@@ -244,9 +275,9 @@ size_t fileRead(void* ptr, size_t size, size_t count, File* stream)
             remainingSize -= bytesRead;
 
             gFileReadProgressBytesRead = 0;
-            gFileReadProgressHandler();
+            fileReadProgressReport();
 
-            chunkSize = gFileReadProgressChunkSize;
+            chunkSize = fileReadProgressNextChunk();
         }
 
         if (remainingSize != 0) {
@@ -730,6 +761,9 @@ int fileGetSize(File* stream)
 // 0x4C68C4 db_register_callback
 void fileSetReadProgressHandler(FileReadProgressHandler* handler, int size)
 {
+    // CE: A new reading counts from zero.
+    gFileReadProgressBytesRead = 0;
+
     if (handler != nullptr && size != 0) {
         gFileReadProgressHandler = handler;
         gFileReadProgressChunkSize = size;

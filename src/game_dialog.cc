@@ -6,7 +6,9 @@
 #include <string.h>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
+#include "action_log.h"
 #include "actions.h"
 #include "animation.h"
 #include "art.h"
@@ -32,6 +34,9 @@
 #include "lips.h"
 #include "map.h"
 #include "memory.h"
+#include "dev_autotest.h"
+#include "mui.h"
+#include "mui_notify.h"
 #include "mouse.h"
 #include "object.h"
 #include "party_member.h"
@@ -49,6 +54,7 @@
 #include "tile.h"
 #include "touch.h"
 #include "window_manager.h"
+#include "world_view.h"
 
 namespace fallout {
 
@@ -331,6 +337,10 @@ static int gameDialogBackgroundWindow = -1;
 // Dialog sub-window: barter, party control, customization
 // 0x518744 dialogueWindow
 static int gameDialogWindow = -1;
+
+// CE: Pixels of the dialog's background without its window (see
+// `gameDialogWindowless`).
+static std::vector<unsigned char> gGameDialogCanvas;
 
 static bool gameDialogUseHrArt = false;
 
@@ -713,6 +723,9 @@ static int gameDialogSetReviewOptionMessage(int messageListId, int messageId);
 static int gameDialogSetReviewOptionText(const char* text);
 static int _gdProcessInit();
 static void _gdProcessCleanup();
+static void gameDialogRunBarter();
+static void gameDialogRunWindowLoop();
+static void gameDialogRunTouchLoop();
 static int _gdProcessExit();
 static void gameDialogRenderCaps();
 static int gameDialogProcessUI();
@@ -749,6 +762,9 @@ static int partyMemberControlWindowInit();
 static void partyMemberControlWindowFree();
 static void partyMemberControlWindowUpdate();
 static void gameDialogCombatControlButtonOnMouseUp(int btn, int keyCode);
+static void partyMemberUseBestWeapon(Object* critter);
+static void partyMemberUseBestArmor(Object* critter);
+static void gameDialogPerformPartyControlActions();
 static int _gdPickAIUpdateMsg(Object* critter);
 static int _gdCanBarter();
 static void partyMemberControlWindowHandleEvents();
@@ -775,10 +791,46 @@ static void gameDialogHighlightsExit();
 static bool gameDialogFix;
 static bool numberOptions;
 
+// CE: The mobile UI's talk and barter screens show the dialog: the game's
+// windows of it (background, talk and barter panels, reply and options) aren't
+// made. What the game draws into its background (the talking head or the map
+// around the speaker, over the background art) goes into a canvas of the
+// same size instead, text and buttons aren't drawn. The game's logic runs the
+// same functions in the same order; only its loop waiting for the player's
+// choice is the screen's (`gameDialogRunTouchLoop`).
+static bool gameDialogWindowless()
+{
+    return muiIsEnabled();
+}
+
+// The dialog's 640x480 background: the window's pixels, or the canvas.
+static unsigned char* gameDialogBackgroundPixels()
+{
+    if (gameDialogWindowless()) {
+        return gGameDialogCanvas.empty() ? nullptr : gGameDialogCanvas.data();
+    }
+
+    return windowGetBuffer(gameDialogBackgroundWindow);
+}
+
+// The talking head is drawn: while one of the dialog's panels is there (the
+// game's rule), or while the canvas has it.
+static bool gameDialogHeadShown()
+{
+    if (gameDialogWindowless()) {
+        return gameDialogDisplayBuffer != nullptr;
+    }
+
+    return gameDialogWindow != -1;
+}
+
 // gdialog_init
 // 0x444D1C
 int gameDialogInit()
 {
+    muiGameDialogInit();
+    muiBarterInit();
+
     // SFALL: Prevents from using 0 to escape from dialogue at any time.
     gameDialogFix = true;
     configGetBool(&gContentConfig, CONTENT_CONFIG_DIALOG_SECTION, "no_exit_hotkey", &gameDialogFix);
@@ -805,6 +857,8 @@ int gameDialogReset()
 // NOTE: Uncollapsed 0x444D20.
 int gameDialogExit()
 {
+    muiBarterExit();
+    muiGameDialogExit();
     return _gdialogReset();
 }
 
@@ -843,6 +897,8 @@ void gameDialogEnter(Object* speaker, int mode)
     if (isInCombat()) {
         return;
     }
+
+    actionLog("dialog with%s", actionLogObject(speaker));
 
     if (speaker->sid == -1) {
         return;
@@ -920,6 +976,7 @@ void gameDialogEnter(Object* speaker, int mode)
         isoEnable();
         scriptsExecMapUpdateProc();
         _dialog_state_fix = 0;
+        actionLog("dialog ended");
         return;
     }
 
@@ -954,6 +1011,8 @@ void gameDialogEnter(Object* speaker, int mode)
     scriptsExecMapUpdateProc();
 
     _dialog_state_fix = 0;
+
+    actionLog("dialog ended");
 }
 
 // 0x444FE4
@@ -1179,6 +1238,14 @@ void gameDialogSetBackground(const BackgroundFrmId& background)
 // 0x445448
 void gameDialogRenderSupplementaryMessage(const char* msg)
 {
+    // CE: Mobile UI shows the reply (barter, party member control) as a
+    // notification with the speaker's name.
+    muiNotify(msg, MuiNoticeKind::Reply, gGameDialogSpeaker != nullptr ? objectGetName(gGameDialogSpeaker) : nullptr);
+
+    if (gameDialogWindowless()) {
+        return;
+    }
+
     if (_gd_replyWin == -1) {
         debugPrint("\nError: Reply window doesn't exist!");
         return;
@@ -1904,6 +1971,13 @@ int gameDialogSetReviewOptionText(const char* string)
 // 0x446288
 int _gdProcessInit()
 {
+    // The mobile UI's talk screen shows the reply and the options.
+    if (gameDialogWindowless()) {
+        _talkOldFont = fontGetCurrent();
+        fontSetCurrent(101);
+        return 0;
+    }
+
     int upBtn;
     int downBtn;
     int optionsWindowX;
@@ -1998,11 +2072,13 @@ int _gdProcessExit()
 
     // CE: Move red buttons exit to `_gdialogExitFromScript`.
 
-    windowDestroy(gameDialogReplyWindow);
-    gameDialogReplyWindow = -1;
+    if (!gameDialogWindowless()) {
+        windowDestroy(gameDialogReplyWindow);
+        gameDialogReplyWindow = -1;
 
-    windowDestroy(gameDialogOptionsWindow);
-    gameDialogOptionsWindow = -1;
+        windowDestroy(gameDialogOptionsWindow);
+        gameDialogOptionsWindow = -1;
+    }
 
     fontSetCurrent(_talkOldFont);
 
@@ -2012,6 +2088,10 @@ int _gdProcessExit()
 // 0x446504 gdUpdateDudeCaps
 void gameDialogRenderCaps()
 {
+    if (gameDialogWindowless()) {
+        return;
+    }
+
     Rect rect;
     rect.left = 5;
     rect.right = 70;
@@ -2037,19 +2117,40 @@ void gameDialogRenderCaps()
     fontSetCurrent(oldFont);
 }
 
-// 0x4465C0 gdProcess
-int gameDialogProcessUI()
+// CE: Choices of the mobile UI talk screen for the talk loop, taken every
+// frame (`gameDialogChooseOption`, `gameDialogRequestBarter`).
+static int gGameDialogChosenOption = -1;
+static bool gGameDialogBarterRequested = false;
+
+// Barter the dialog switched to (the ticker has made its window, or only its
+// tables without windows): the game's barter, then back to talk.
+static void gameDialogRunBarter()
 {
-    if (_gdReenterLevel == 0) {
-        if (_gdProcessInit() == -1) {
-            return -1;
-        }
+    dialogMode = GAME_DIALOG_MODE_BARTER;
+
+    GameMode::exitGameModeQuietly(GameMode::kSpecial);
+
+    barterProcessUI(gameDialogWindow, gGameDialogSpeaker, gameDialogPlayerTableObj, gameDialogBartererTableObj, gameDialogBarterModifier);
+    gameDialogBarterCleanupTables();
+
+    GameDialogMode dialogueState = dialogMode;
+    gameDialogDestroyBarterWindow();
+    dialogMode = dialogueState;
+
+    if (dialogueState == GAME_DIALOG_MODE_BARTER) {
+        dialogSwitchMode = GAME_DIALOG_MODE_TALK;
+        dialogMode = GAME_DIALOG_MODE_TALK;
     }
 
-    _gdReenterLevel += 1;
+    // Barter's _exit_inventory() disables touchscreen mode.
+    // Re-enable it for the dialog UI.
+    touch_set_touchscreen_mode(true);
+}
 
-    _gdProcessUpdate();
-
+// The game's loop of the talk: the dialog's windows with the reply (paged
+// when it doesn't fit) and the options as buttons, the keyboard.
+static void gameDialogRunWindowLoop()
+{
     bool autoAdvance = false;
     if (dialogReplyTextOffset != 0) {
         autoAdvance = true;
@@ -2076,32 +2177,15 @@ int gameDialogProcessUI()
             break;
         }
 
+        devAutotestTick();
+
         if (keyCode == KEY_CTRL_B && !_mouse_click_in(135, 225, 514, 283)) {
             if (gameMouseGetCursor() != MOUSE_CURSOR_ARROW) {
                 gameMouseSetCursor(MOUSE_CURSOR_ARROW);
             }
         } else {
             if (dialogSwitchMode == GAME_DIALOG_MODE_BARTER_ACTIVE) {
-                dialogMode = GAME_DIALOG_MODE_BARTER;
-
-                GameMode::exitGameModeQuietly(GameMode::kSpecial);
-
-                barterProcessUI(gameDialogWindow, gGameDialogSpeaker, gameDialogPlayerTableObj, gameDialogBartererTableObj, gameDialogBarterModifier);
-                gameDialogBarterCleanupTables();
-
-                GameDialogMode dialogueState = dialogMode;
-                gameDialogDestroyBarterWindow();
-                dialogMode = dialogueState;
-
-                if (dialogueState == GAME_DIALOG_MODE_BARTER) {
-                    dialogSwitchMode = GAME_DIALOG_MODE_TALK;
-                    dialogMode = GAME_DIALOG_MODE_TALK;
-                }
-
-                // Barter's _exit_inventory() disables touchscreen mode.
-                // Re-enable it for the dialog UI.
-                touch_set_touchscreen_mode(true);
-
+                gameDialogRunBarter();
                 continue;
             } else if (dialogSwitchMode == GAME_DIALOG_MODE_PARTY_CONTROL_ACTIVE) {
                 dialogMode = GAME_DIALOG_MODE_PARTY_CONTROL;
@@ -2171,6 +2255,9 @@ int gameDialogProcessUI()
             }
         }
 
+        bool choose = false;
+        int optionIndex = 0;
+
         if (keyCode != -1) {
             if (keyCode >= 1200 && keyCode <= 1250) {
                 gameDialogOptionOnMouseEnter(keyCode - 1200);
@@ -2182,31 +2269,117 @@ int gameDialogProcessUI()
                     continue;
                 }
 
-                int optionIndex = keyCode - 49;
-                if (optionIndex < gameDialogOptionEntriesLength) {
-                    pageCount = 0;
-                    pageIndex = 0;
-                    pageOffsets[0] = 0;
-                    _gdReplyTooBig = 0;
+                choose = true;
+                optionIndex = keyCode - 49;
+            }
+        }
 
-                    if (_gdProcessChoice(optionIndex) == -1) {
-                        break;
-                    }
+        if (choose && optionIndex < gameDialogOptionEntriesLength) {
+            pageCount = 0;
+            pageIndex = 0;
+            pageOffsets[0] = 0;
+            _gdReplyTooBig = 0;
 
-                    tick = getTicks();
+            if (_gdProcessChoice(optionIndex) == -1) {
+                break;
+            }
 
-                    if (dialogReplyTextOffset) {
-                        autoAdvance = true;
-                        _gdReplyTooBig = 1;
-                    } else {
-                        autoAdvance = false;
-                    }
-                }
+            tick = getTicks();
+
+            if (dialogReplyTextOffset) {
+                autoAdvance = true;
+                _gdReplyTooBig = 1;
+            } else {
+                autoAdvance = false;
             }
         }
 
         renderPresent();
         sharedFpsLimiter.throttle();
+    }
+
+}
+
+// CE: The mobile UI's talk: its screen shows the reply and the options (it
+// takes the whole reply, no pages), the loop takes the screen's choices
+// (`gameDialogChooseOption`, `gameDialogRequestBarter`, party control
+// actions) and runs them with the functions the window loop runs.
+static void gameDialogRunTouchLoop()
+{
+    for (;;) {
+        sharedFpsLimiter.mark();
+
+        int keyCode = inputGetInput();
+
+        if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
+            showQuitConfirmationDialog();
+        }
+
+        if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE) {
+            break;
+        }
+
+        // A desktop keyboard: Esc is the screen's Back.
+        if (keyCode == KEY_ESCAPE) {
+            muiGameDialogBack();
+        }
+
+        devAutotestTick();
+
+        if (dialogSwitchMode == GAME_DIALOG_MODE_BARTER_ACTIVE) {
+            gameDialogRunBarter();
+            continue;
+        }
+
+        bool barterRequested = gGameDialogBarterRequested;
+        gGameDialogBarterRequested = false;
+        if (keyCode == KEY_LOWERCASE_B || barterRequested) {
+            gameDialogBarterButtonUpMouseUp(-1, -1);
+        }
+
+        gameDialogPerformPartyControlActions();
+
+        bool choose = gGameDialogChosenOption != -1;
+        int optionIndex = gGameDialogChosenOption;
+        gGameDialogChosenOption = -1;
+
+        // A desktop keyboard: digits choose the first nine, as in the game.
+        if (keyCode >= KEY_1 && keyCode <= KEY_9) {
+            choose = true;
+            optionIndex = keyCode - KEY_1;
+        }
+
+        if (choose && optionIndex < gameDialogOptionEntriesLength) {
+            if (_gdProcessChoice(optionIndex) == -1) {
+                break;
+            }
+        }
+
+        renderPresent();
+        sharedFpsLimiter.throttle();
+    }
+}
+
+// 0x4465C0 gdProcess
+int gameDialogProcessUI()
+{
+    if (_gdReenterLevel == 0) {
+        gGameDialogChosenOption = -1;
+        gGameDialogBarterRequested = false;
+
+        if (_gdProcessInit() == -1) {
+            return -1;
+        }
+    }
+
+    _gdReenterLevel += 1;
+
+    _gdProcessUpdate();
+
+    if (gameDialogWindowless()) {
+        gameDialogRunTouchLoop();
+    } else {
+        gameDialogRunWindowLoop();
     }
 
     _gdReenterLevel -= 1;
@@ -2266,12 +2439,16 @@ int _gdProcessChoice(int optionIndex)
         break;
     }
 
-    _demo_copy_title(gameDialogReplyWindow);
-    _demo_copy_options(gameDialogOptionsWindow);
-    windowRefresh(gameDialogReplyWindow);
-    windowRefresh(gameDialogOptionsWindow);
+    // The chosen option alone (the mobile UI's talk screen shows its own).
+    if (!gameDialogWindowless()) {
+        _demo_copy_title(gameDialogReplyWindow);
+        _demo_copy_options(gameDialogOptionsWindow);
+        windowRefresh(gameDialogReplyWindow);
+        windowRefresh(gameDialogOptionsWindow);
 
-    gameDialogOptionOnMouseEnter(optionIndex);
+        gameDialogOptionOnMouseEnter(optionIndex);
+    }
+
     _talk_to_critter_reacts(reaction);
 
     gameDialogOptionEntriesLength = 0;
@@ -2296,6 +2473,10 @@ int _gdProcessChoice(int optionIndex)
 // 0x446A18
 void gameDialogOptionOnMouseEnter(int index)
 {
+    if (gameDialogWindowless()) {
+        return;
+    }
+
     // FIXME: See explanation in `_gdProcessChoice`.
     GameDialogOptionEntry dummy;
     memset(&dummy, 0, sizeof(dummy));
@@ -2350,6 +2531,10 @@ void gameDialogOptionOnMouseEnter(int index)
 // 0x446B5C
 void gameDialogOptionOnMouseExit(int index)
 {
+    if (gameDialogWindowless()) {
+        return;
+    }
+
     GameDialogOptionEntry* dialogOptionEntry = &(dialogOptionEntries[index]);
 
     _optionRect.left = 0;
@@ -2398,6 +2583,10 @@ void gameDialogOptionOnMouseExit(int index)
 // 0x446C94
 void gameDialogRenderReply()
 {
+    if (gameDialogWindowless()) {
+        return;
+    }
+
     _replyRect.left = 5;
     _replyRect.top = 10;
     _replyRect.right = 374;
@@ -2432,8 +2621,14 @@ void _gdProcessUpdate()
     _optionRect.right = 388;
     _optionRect.bottom = 112;
 
-    _demo_copy_title(gameDialogReplyWindow);
-    _demo_copy_options(gameDialogOptionsWindow);
+    // CE: Without windows only the texts are made (the mobile UI's talk
+    // screen shows them).
+    bool windowless = gameDialogWindowless();
+
+    if (!windowless) {
+        _demo_copy_title(gameDialogReplyWindow);
+        _demo_copy_options(gameDialogOptionsWindow);
+    }
 
     if (dialogReplyMessageListId > 0) {
         // CE: Hold back the reply speech when this update runs while a switch to
@@ -2540,6 +2735,10 @@ void _gdProcessUpdate()
             }
         }
 
+        if (windowless) {
+            continue;
+        }
+
         int estimate = _text_num_lines(dialogOptionEntry->text, _optionRect.right - _optionRect.left) * fontGetLineHeight() + _optionRect.top + 2;
         if (estimate < _optionRect.bottom) {
             int y = _optionRect.top;
@@ -2579,9 +2778,11 @@ void _gdProcessUpdate()
         }
     }
 
-    gameDialogRenderCaps();
-    windowRefresh(gameDialogReplyWindow);
-    windowRefresh(gameDialogOptionsWindow);
+    if (!windowless) {
+        gameDialogRenderCaps();
+        windowRefresh(gameDialogReplyWindow);
+        windowRefresh(gameDialogOptionsWindow);
+    }
 }
 
 // 0x44715C
@@ -2597,7 +2798,7 @@ int _gdCreateHeadWindow()
         return -1;
     }
 
-    ConstBuffer2D backgroundBuf = windowGetBuffer2D(gameDialogBackgroundWindow);
+    ConstBuffer2D backgroundBuf { gameDialogBackgroundPixels(), GAME_DIALOG_WINDOW_WIDTH, GAME_DIALOG_WINDOW_HEIGHT };
 
     for (int index = 0; index < 8; index++) {
         soundContinueAll();
@@ -2620,7 +2821,7 @@ int _gdCreateHeadWindow()
         return -1;
     }
 
-    gameDialogDisplayBuffer = windowGetBuffer(gameDialogBackgroundWindow) + windowWidth * (14 + gameDialogHrArtYOffset()) + 126;
+    gameDialogDisplayBuffer = gameDialogBackgroundPixels() + windowWidth * (14 + gameDialogHrArtYOffset()) + 126;
 
     // TODO: jnz at 0x447275 without cmp or test, not sure what that means.
     if (false) {
@@ -2634,7 +2835,7 @@ int _gdCreateHeadWindow()
 // 0x447294
 void _gdDestroyHeadWindow()
 {
-    if (gameDialogWindow != -1) {
+    if (gameDialogWindow != -1 || gameDialogWindowless()) {
         gameDialogDisplayBuffer = nullptr;
     }
 
@@ -2648,6 +2849,9 @@ void _gdDestroyHeadWindow()
         windowDestroy(gameDialogBackgroundWindow);
         gameDialogBackgroundWindow = -1;
     }
+
+    gGameDialogCanvas.clear();
+    gGameDialogCanvas.shrink_to_fit();
 
     gameDialogUseHrArt = false;
     expandedBarterEnabled = false;
@@ -2776,20 +2980,20 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
 
 static void gameDialogBlitIsoWindowToDisplayBuffer()
 {
-    unsigned char* src = windowGetBuffer(gIsoWindow);
-
     // Usually rendering functions use `screenGetWidth`/`screenGetHeight` to
-    // determine rendering position. However in this case `windowGetHeight`
-    // is a must because isometric window's height can either include
-    // interface bar or not. Offset is updated accordingly (332 -> 232, the
-    // missing 100 is interface bar height, which is already accounted for
-    // when we're using `windowGetHeight`). `windowGetWidth` is used for
-    // consistency.
+    // determine rendering position. However in this case isometric window
+    // height is a must because it can either include interface bar or not.
+    // Offset is updated accordingly (332 -> 232, the missing 100 is interface
+    // bar height).
+    //
+    // CE: Map is taken from the center of the map view (see world_view.h).
+    int srcPitch;
+    unsigned char* src = worldViewGetCenteredArea(388, 232, &srcPitch);
     blitBufferToBuffer(
-        src + ((windowGetHeight(gIsoWindow) - 232) / 2) * windowGetWidth(gIsoWindow) + (windowGetWidth(gIsoWindow) - 388) / 2,
+        src,
         388,
         200,
-        windowGetWidth(gIsoWindow),
+        srcPitch,
         gameDialogDisplayBuffer,
         GAME_DIALOG_WINDOW_WIDTH);
 }
@@ -2837,7 +3041,7 @@ void gameDialogWaitForFidgetToComplete()
         return;
     }
 
-    if (gameDialogWindow == -1) {
+    if (!gameDialogHeadShown()) {
         return;
     }
 
@@ -2866,7 +3070,7 @@ void _gdPlayTransition(HeadAnimation anim)
         return;
     }
 
-    if (gameDialogWindow == -1) {
+    if (!gameDialogHeadShown()) {
         return;
     }
 
@@ -3120,16 +3324,23 @@ void gameDialogTicker()
 
         break;
     case GAME_DIALOG_MODE_SWITCH_TO_PARTY_CONTROL:
-        _loop_cnt = -1;
-        dialogSwitchMode = GAME_DIALOG_MODE_PARTY_CONTROL_ACTIVE;
-        _gdialog_window_destroy();
-        partyMemberControlWindowInit();
-        break;
     case GAME_DIALOG_MODE_SWITCH_TO_PARTY_CUSTOMIZATION:
+        // CE: Only the game's panels' buttons switch to them: the mobile
+        // UI's talk screen has the party tab instead.
+        if (gameDialogWindowless()) {
+            break;
+        }
+
         _loop_cnt = -1;
-        dialogSwitchMode = GAME_DIALOG_MODE_PARTY_CUSTOMIZATION_ACTIVE;
-        _gdialog_window_destroy();
-        partyMemberCustomizationWindowInit();
+        if (dialogSwitchMode == GAME_DIALOG_MODE_SWITCH_TO_PARTY_CONTROL) {
+            dialogSwitchMode = GAME_DIALOG_MODE_PARTY_CONTROL_ACTIVE;
+            _gdialog_window_destroy();
+            partyMemberControlWindowInit();
+        } else {
+            dialogSwitchMode = GAME_DIALOG_MODE_PARTY_CUSTOMIZATION_ACTIVE;
+            _gdialog_window_destroy();
+            partyMemberCustomizationWindowInit();
+        }
         break;
     default:
         break;
@@ -3524,9 +3735,49 @@ void gameDialogEndBarter()
     dialogSwitchMode = GAME_DIALOG_MODE_TALK;
 }
 
+// The tables of the barter (hidden objects items are put on) and a hidden
+// stand-in of the trader (with the trader's art).
+static int gameDialogCreateBarterTables()
+{
+    UniqueObject playerTableObj;
+    if (objectCreateWithFrmIdPid(playerTableObj, FrmId::Empty(), -1) == -1) return -1;
+    playerTableObj->flags |= OBJECT_HIDDEN;
+
+    UniqueObject bartererTableObj;
+    if (objectCreateWithFrmIdPid(bartererTableObj, FrmId::Empty(), -1) == -1) return -1;
+    bartererTableObj->flags |= OBJECT_HIDDEN;
+
+    UniqueObject bartererTempObj;
+    if (objectCreateWithFrmIdPid(bartererTempObj, FrmId(gGameDialogSpeaker), -1) == -1) return -1;
+    bartererTempObj->flags |= OBJECT_HIDDEN | OBJECT_NO_SAVE;
+    bartererTempObj->sid = -1;
+
+    gameDialogPlayerTableObj = playerTableObj.release();
+    gameDialogBartererTableObj = bartererTableObj.release();
+    _barterer_temp_obj = bartererTempObj.release();
+    return 0;
+}
+
+static void gameDialogDestroyBarterTables()
+{
+    objectDestroy(_barterer_temp_obj, nullptr);
+    objectDestroy(gameDialogBartererTableObj, nullptr);
+    objectDestroy(gameDialogPlayerTableObj, nullptr);
+    _barterer_temp_obj = nullptr;
+    gameDialogBartererTableObj = nullptr;
+    gameDialogPlayerTableObj = nullptr;
+}
+
 // 0x448290 gdialog_barter_create_win
 int gameDialogCreateBarterWindow()
 {
+    // The mobile UI's barter screen instead of the window: only the tables.
+    if (gameDialogWindowless()) {
+        barterWindowExpanded = false;
+        dialogMode = GAME_DIALOG_MODE_BARTER;
+        return gameDialogCreateBarterTables();
+    }
+
     FrmImage backgroundFrmImage;
     barterWindowExpanded = expandedBarterEnabled && backgroundFrmImage.lock(OBJ_TYPE_INTERFACE, expandedBarterFrmName());
 
@@ -3578,25 +3829,11 @@ int gameDialogCreateBarterWindow()
     int talkBtn = createDialogRedButton(win.get(), 583, 161, nullptr, KEY_LOWERCASE_T);
     if (talkBtn == -1) return -1;
 
-    UniqueObject playerTableObj;
-    if (objectCreateWithFrmIdPid(playerTableObj, FrmId::Empty(), -1) == -1) return -1;
-    playerTableObj->flags |= OBJECT_HIDDEN;
-
-    UniqueObject bartererTableObj;
-    if (objectCreateWithFrmIdPid(bartererTableObj, FrmId::Empty(), -1) == -1) return -1;
-    bartererTableObj->flags |= OBJECT_HIDDEN;
-
-    UniqueObject bartererTempObj;
-    if (objectCreateWithFrmIdPid(bartererTempObj, FrmId(gGameDialogSpeaker), -1) == -1) return -1;
-    bartererTempObj->flags |= OBJECT_HIDDEN | OBJECT_NO_SAVE;
-    bartererTempObj->sid = -1;
+    if (gameDialogCreateBarterTables() == -1) return -1;
 
     _barterBackgroundFrmImage = std::move(backgroundFrmImage);
     _gdialog_buttons[0] = tradeBtn;
     _gdialog_buttons[1] = talkBtn;
-    gameDialogPlayerTableObj = playerTableObj.release();
-    gameDialogBartererTableObj = bartererTableObj.release();
-    _barterer_temp_obj = bartererTempObj.release();
     gameDialogWindow = win.release();
     return 0;
 }
@@ -3604,13 +3841,21 @@ int gameDialogCreateBarterWindow()
 // 0x44854C gdialog_barter_destroy_win
 void gameDialogDestroyBarterWindow()
 {
+    if (gameDialogWindowless()) {
+        if (gameDialogPlayerTableObj == nullptr) {
+            return;
+        }
+
+        gameDialogDestroyBarterTables();
+        aiAttemptWeaponReload(gGameDialogSpeaker, 0);
+        return;
+    }
+
     if (gameDialogWindow == -1) {
         return;
     }
 
-    objectDestroy(_barterer_temp_obj, nullptr);
-    objectDestroy(gameDialogBartererTableObj, nullptr);
-    objectDestroy(gameDialogPlayerTableObj, nullptr);
+    gameDialogDestroyBarterTables();
 
     for (int index = 0; index < 9; index++) {
         buttonDestroy(_gdialog_buttons[index]);
@@ -4065,6 +4310,9 @@ void partyMemberControlWindowHandleEvents()
         sharedFpsLimiter.mark();
 
         int keyCode = inputGetInput();
+
+        devAutotestTick();
+
         if (keyCode != -1) {
             if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
                 showQuitConfirmationDialog();
@@ -4075,13 +4323,7 @@ void partyMemberControlWindowHandleEvents()
             }
 
             if (keyCode == KEY_LOWERCASE_W) {
-                inventoryUnequip(gGameDialogSpeaker, HAND_RIGHT);
-
-                Object* weapon = _ai_search_inven_weap(gGameDialogSpeaker, 0, nullptr);
-                if (weapon != nullptr) {
-                    inventoryEquip(gGameDialogSpeaker, weapon, HAND_RIGHT);
-                    aiAttemptWeaponReload(gGameDialogSpeaker, 0);
-                }
+                partyMemberUseBestWeapon(gGameDialogSpeaker);
 
                 int num = _gdPickAIUpdateMsg(gGameDialogSpeaker);
                 char* msg = getmsg(&gProtoMessageList, &messageListItem, num);
@@ -4105,12 +4347,7 @@ void partyMemberControlWindowHandleEvents()
                 dialogMode = GAME_DIALOG_MODE_TALK;
                 return;
             } else if (keyCode == KEY_LOWERCASE_A) {
-                if (partyMemberPidCanEquipArmor(gGameDialogSpeaker->pid)) {
-                    Object* armor = _ai_search_inven_armor(gGameDialogSpeaker);
-                    if (armor != nullptr) {
-                        inventoryEquip(gGameDialogSpeaker, armor, HAND_LEFT);
-                    }
-                }
+                partyMemberUseBestArmor(gGameDialogSpeaker);
 
                 int num = _gdPickAIUpdateMsg(gGameDialogSpeaker);
                 char* msg = getmsg(&gProtoMessageList, &messageListItem, num);
@@ -4313,6 +4550,9 @@ void partyMemberCustomizationWindowHandleEvents()
         sharedFpsLimiter.mark();
 
         unsigned int keyCode = inputGetInput();
+
+        devAutotestTick();
+
         if (keyCode != -1) {
             if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
                 showQuitConfirmationDialog();
@@ -4511,6 +4751,9 @@ int _gdCustomSelect(int option)
         sharedFpsLimiter.mark();
 
         int keyCode = inputGetInput();
+
+        devAutotestTick();
+
         if (keyCode != -1) {
             if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
                 showQuitConfirmationDialog();
@@ -4688,6 +4931,12 @@ void gameDialogBarterButtonUpMouseUp(int btn, int keyCode)
 // 0x44A62C
 int _gdialog_window_create()
 {
+    // The mobile UI's talk screen instead.
+    if (gameDialogWindowless()) {
+        _dialogue_just_started = 0;
+        return 0;
+    }
+
     const int screenWidth = GAME_DIALOG_WINDOW_WIDTH;
     if (_gdialog_window_created) return -1;
 
@@ -4785,6 +5034,13 @@ static int talk_to_create_background_window()
 {
     gameDialogUseHrArt = false;
 
+    if (gameDialogWindowless()) {
+        // No barter window to expand.
+        expandedBarterEnabled = false;
+        gGameDialogCanvas.assign(static_cast<size_t>(GAME_DIALOG_WINDOW_WIDTH) * GAME_DIALOG_WINDOW_HEIGHT, 0);
+        return 0;
+    }
+
     expandedBarterEnabled = settings.ui.expand_barter_window
         && screenGetHeight() >= GAME_DIALOG_WINDOW_HEIGHT + kExpandedBarterExtraHeight
         && FrmImage().lock(OBJ_TYPE_INTERFACE, expandedBarterFrmName());
@@ -4830,10 +5086,10 @@ int gameDialogWindowRenderBackground()
     }
 
     ConstBuffer2D backgroundFrmBuf = backgroundFrmImage.getBuffer();
-    Buffer2D windowBuf = windowGetBuffer2D(gameDialogBackgroundWindow);
-    blitBuffer2D(backgroundFrmBuf, 0, 0, GAME_DIALOG_WINDOW_WIDTH, GAME_DIALOG_WINDOW_HEIGHT, windowBuf);
+    Buffer2D backgroundBuf { gameDialogBackgroundPixels(), GAME_DIALOG_WINDOW_WIDTH, GAME_DIALOG_WINDOW_HEIGHT };
+    blitBuffer2D(backgroundFrmBuf, 0, 0, GAME_DIALOG_WINDOW_WIDTH, GAME_DIALOG_WINDOW_HEIGHT, backgroundBuf);
 
-    if (!_dialogue_just_started) {
+    if (!_dialogue_just_started && !gameDialogWindowless()) {
         windowRefresh(gameDialogBackgroundWindow);
     }
 
@@ -4843,6 +5099,10 @@ int gameDialogWindowRenderBackground()
 // 0x44ABA8
 int _talkToRefreshDialogWindowRect(Rect* rect)
 {
+    if (gameDialogWindowless()) {
+        return 0;
+    }
+
     FrmImage backgroundFrmImage;
     const InterfaceFrmId backgroundFrmId = gGameDialogSpeakerIsPartyMember ? InterfaceFrameId::DialogTalkSubwindowParty : InterfaceFrameId::DialogTalkSubwindow;
     if (!backgroundFrmImage.lock(backgroundFrmId)) {
@@ -4892,7 +5152,7 @@ void gameDialogRenderHighlight(unsigned char* src, int srcWidth, int srcHeight, 
 // 0x44ACFC
 void gameDialogRenderTalkingHead(Art* headFrm, int frame)
 {
-    if (gameDialogWindow == -1) {
+    if (!gameDialogHeadShown()) {
         return;
     }
 
@@ -4958,7 +5218,7 @@ void gameDialogRenderTalkingHead(Art* headFrm, int frame)
     headRect.right = 514;
     headRect.bottom = 214 + yOffset;
 
-    unsigned char* dest = windowGetBuffer(gameDialogBackgroundWindow);
+    unsigned char* dest = gameDialogBackgroundPixels();
 
     gameDialogRenderHighlight(_upperHighlightFrmImage.getData(),
         _upperHighlightFrmImage.getWidth(),
@@ -4994,7 +5254,9 @@ void gameDialogRenderTalkingHead(Art* headFrm, int frame)
             GAME_DIALOG_WINDOW_WIDTH);
     }
 
-    windowRefreshRect(gameDialogBackgroundWindow, &headRect);
+    if (!gameDialogWindowless()) {
+        windowRefreshRect(gameDialogBackgroundWindow, &headRect);
+    }
 }
 
 // 0x44B080
@@ -5029,6 +5291,332 @@ static void gameDialogHighlightsExit()
 
     _upperHighlightFrmImage.unlock();
     _lowerHighlightFrmImage.unlock();
+}
+
+bool gameDialogIsTalking()
+{
+    if (!GameMode::isInGameMode(GameMode::kDialog)
+        || GameMode::isInGameMode(GameMode::kSpecial | GameMode::kBarter | GameMode::kDialogReview)) {
+        return false;
+    }
+
+    return dialogMode == GAME_DIALOG_MODE_TALK
+        && (dialogSwitchMode == GAME_DIALOG_MODE_NONE || dialogSwitchMode == GAME_DIALOG_MODE_TALK)
+        && gameDialogDisplayBuffer != nullptr;
+}
+
+bool gameDialogIsInBarter()
+{
+    return GameMode::isInGameMode(GameMode::kDialog)
+        && (dialogMode == GAME_DIALOG_MODE_BARTER || dialogSwitchMode == GAME_DIALOG_MODE_BARTER_ACTIVE);
+}
+
+const char* gameDialogGetReplyText()
+{
+    return dialogReplyText;
+}
+
+int gameDialogGetOptionCount()
+{
+    return gameDialogOptionEntriesLength;
+}
+
+const char* gameDialogGetOptionText(int index)
+{
+    if (index < 0 || index >= gameDialogOptionEntriesLength) {
+        return "";
+    }
+    return dialogOptionEntries[index].text;
+}
+
+int gameDialogGetOptionReaction(int index)
+{
+    if (index < 0 || index >= gameDialogOptionEntriesLength || perkGetRank(gDude, PERK_EMPATHY) == 0) {
+        return -1;
+    }
+
+    switch (dialogOptionEntries[index].reaction) {
+    case GAME_DIALOG_REACTION_GOOD:
+        return 0;
+    case GAME_DIALOG_REACTION_BAD:
+        return 2;
+    default:
+        return 1;
+    }
+}
+
+int gameDialogGetReviewCount()
+{
+    return gameDialogReviewEntriesLength;
+}
+
+// Same texts as in the review window (`gameDialogReviewWindowRender`).
+void gameDialogGetReviewEntry(int index, const char** reply, const char** option)
+{
+    *reply = "";
+    *option = nullptr;
+
+    if (index < 0 || index >= gameDialogReviewEntriesLength) {
+        return;
+    }
+
+    GameDialogReviewEntry* entry = &(dialogReviewEntries[index]);
+    char* replyText = entry->replyMessageListId <= -3
+        ? entry->replyText
+        : _scr_get_msg_str(entry->replyMessageListId, entry->replyMessageId);
+    if (replyText != nullptr) {
+        *reply = replyText;
+    }
+
+    if (entry->optionMessageListId != -3) {
+        *option = entry->optionMessageListId <= -3
+            ? entry->optionText
+            : _scr_get_msg_str(entry->optionMessageListId, entry->optionMessageId);
+    }
+}
+
+bool gameDialogGetHeadImage(const unsigned char** data, int* width, int* height, int* pitch)
+{
+    if (gameDialogDisplayBuffer == nullptr) {
+        return false;
+    }
+
+    *data = gameDialogDisplayBuffer;
+    *width = 388;
+    *height = 200;
+    *pitch = GAME_DIALOG_WINDOW_WIDTH;
+    return true;
+}
+
+// Same check as the barter button (`gameDialogBarterButtonUpMouseUp`).
+bool gameDialogSpeakerCanBarter()
+{
+    if (gGameDialogSpeaker == nullptr || objectTypeFromPid(gGameDialogSpeaker->pid) != OBJ_TYPE_CRITTER) {
+        return false;
+    }
+
+    Proto* proto;
+    if (protoGetProto(gGameDialogSpeaker->pid, &proto) == -1) {
+        return false;
+    }
+
+    return (proto->critter.data.flags & CRITTER_BARTER) != CRITTER_NONE;
+}
+
+// "Use best weapon" of the combat control panel.
+static void partyMemberUseBestWeapon(Object* critter)
+{
+    inventoryUnequip(critter, HAND_RIGHT);
+
+    Object* weapon = _ai_search_inven_weap(critter, 0, nullptr);
+    if (weapon != nullptr) {
+        inventoryEquip(critter, weapon, HAND_RIGHT);
+        aiAttemptWeaponReload(critter, 0);
+    }
+}
+
+// "Use best armor" of the combat control panel.
+static void partyMemberUseBestArmor(Object* critter)
+{
+    if (partyMemberPidCanEquipArmor(critter->pid)) {
+        Object* armor = _ai_search_inven_armor(critter);
+        if (armor != nullptr) {
+            inventoryEquip(critter, armor, HAND_LEFT);
+        }
+    }
+}
+
+// MARK: Party member control (mobile UI)
+
+namespace {
+
+    struct QueuedPartyControlAction {
+        PartyControlAction action;
+        int a;
+        int b;
+    };
+
+    std::vector<QueuedPartyControlAction> gPartyControlActions;
+
+    // Own copy of game\custom.msg (the customization panel loads and frees
+    // its list).
+    MessageList gPartyControlMessages;
+    bool gPartyControlMessagesLoaded = false;
+
+    const char* partyControlMessage(int id)
+    {
+        if (!gPartyControlMessagesLoaded) {
+            if (!messageListInit(&gPartyControlMessages) || !messageListLoad(&gPartyControlMessages, "game\\custom.msg")) {
+                return "";
+            }
+            gPartyControlMessagesLoaded = true;
+        }
+
+        MessageListItem messageListItem;
+        messageListItem.num = id;
+        return messageListGetItem(&gPartyControlMessages, &messageListItem) ? messageListItem.text : "";
+    }
+
+    bool partyControlSettingValid(int setting, int value)
+    {
+        return setting >= 0 && setting < kPartyControlSettingCount
+            && value >= 0 && value < gameDialogPartyControlValueCount(setting);
+    }
+
+} // namespace
+
+bool gameDialogSpeakerIsPartyMember()
+{
+    return gGameDialogSpeaker != nullptr && gGameDialogSpeakerIsPartyMember;
+}
+
+// The same data as `partyMemberControlWindowUpdate` and
+// `partyMemberCustomizationWindowInit` show.
+bool gameDialogGetPartyControlView(PartyControlView* view)
+{
+    if (!gameDialogSpeakerIsPartyMember()) {
+        return false;
+    }
+
+    Object* critter = gGameDialogSpeaker;
+    view->weapon = critterGetItem2(critter);
+    view->armor = critterGetArmor(critter);
+    view->hitPoints = critterGetStat(critter, STAT_CURRENT_HIT_POINTS);
+    view->maximumHitPoints = critterGetStat(critter, STAT_MAXIMUM_HIT_POINTS);
+    view->bestSkill = partyMemberGetBestSkill(critter);
+    view->weight = objectGetInventoryWeight(critter);
+    view->carryWeight = critterGetStat(critter, STAT_CARRY_WEIGHT);
+    view->encumbered = critterIsEncumbered(critter);
+    view->meleeDamage = critterGetStat(critter, STAT_MELEE_DAMAGE);
+    view->maximumActionPoints = critterGetStat(critter, STAT_MAXIMUM_ACTION_POINTS);
+    view->actionPoints = isInCombat() ? critter->data.critter.combat.ap : view->maximumActionPoints;
+    view->extraInfo = settings.ui.party_member_extra_info;
+    view->level = partyMemberGetCurrentLevel(critter);
+    view->armorClass = critterGetStat(critter, STAT_ARMOR_CLASS);
+    view->addicted = queueFindFirstEvent(critter, EVENT_TYPE_WITHDRAWAL) != nullptr;
+    view->canEquipArmor = partyMemberPidCanEquipArmor(critter->pid);
+
+    view->disposition = aiGetDisposition(critter);
+    for (int disposition = 0; disposition < kPartyControlDispositionCount; disposition++) {
+        view->dispositionSupported[disposition] = partyMemberSupportsDisposition(critter, static_cast<Disposition>(disposition));
+    }
+
+    view->settings[PARTY_MEMBER_CUSTOMIZATION_OPTION_AREA_ATTACK_MODE] = aiGetAreaAttackMode(critter);
+    view->settings[PARTY_MEMBER_CUSTOMIZATION_OPTION_RUN_AWAY_MODE] = aiGetRunAwayMode(critter);
+    view->settings[PARTY_MEMBER_CUSTOMIZATION_OPTION_BEST_WEAPON] = aiGetBestWeapon(critter);
+    view->settings[PARTY_MEMBER_CUSTOMIZATION_OPTION_DISTANCE] = aiGetDistance(critter);
+    view->settings[PARTY_MEMBER_CUSTOMIZATION_OPTION_ATTACK_WHO] = aiGetAttackWho(critter);
+    view->settings[PARTY_MEMBER_CUSTOMIZATION_OPTION_CHEM_USE] = aiGetChemUse(critter);
+    for (int setting = 0; setting < kPartyControlSettingCount; setting++) {
+        if (!partyControlSettingValid(setting, view->settings[setting])) {
+            view->settings[setting] = -1;
+        }
+    }
+    return true;
+}
+
+const char* gameDialogPartyControlSettingName(int setting)
+{
+    return partyControlMessage(setting);
+}
+
+int gameDialogPartyControlValueCount(int setting)
+{
+    int count = 0;
+    while (count < 6 && _custom_settings[setting][count].messageId != -1) {
+        count++;
+    }
+    return count;
+}
+
+const char* gameDialogPartyControlValueName(int setting, int value)
+{
+    return partyControlMessage(_custom_settings[setting][value].messageId);
+}
+
+const char* gameDialogPartyControlNotApplicable()
+{
+    return partyControlMessage(99);
+}
+
+// As `_gdCustomSelectRedraw` enables them.
+bool gameDialogPartyControlValueSupported(int setting, int value)
+{
+    if (!gameDialogSpeakerIsPartyMember() || !partyControlSettingValid(setting, value)) {
+        return false;
+    }
+
+    Object* critter = gGameDialogSpeaker;
+    const PartyMemberOptionSetting& option = _custom_settings[setting][value];
+    switch (setting) {
+    case PARTY_MEMBER_CUSTOMIZATION_OPTION_AREA_ATTACK_MODE:
+        return partyMemberSupportsAreaAttackMode(critter, option.areaAttackMode);
+    case PARTY_MEMBER_CUSTOMIZATION_OPTION_RUN_AWAY_MODE:
+        return partyMemberSupportsRunAwayMode(critter, option.runAwayMode);
+    case PARTY_MEMBER_CUSTOMIZATION_OPTION_BEST_WEAPON:
+        return partyMemberSupportsBestWeapon(critter, option.bestWeapon);
+    case PARTY_MEMBER_CUSTOMIZATION_OPTION_DISTANCE:
+        return partyMemberSupportsDistance(critter, option.distanceMode);
+    case PARTY_MEMBER_CUSTOMIZATION_OPTION_ATTACK_WHO:
+        return partyMemberSupportsAttackWho(critter, option.attackWho);
+    case PARTY_MEMBER_CUSTOMIZATION_OPTION_CHEM_USE:
+        return partyMemberSupportsChemUse(critter, option.chemUse);
+    }
+    return false;
+}
+
+void gameDialogQueuePartyControlAction(PartyControlAction action, int a, int b)
+{
+    gPartyControlActions.push_back({ action, a, b });
+}
+
+void gameDialogChooseOption(int index)
+{
+    if (index >= 0 && index < DIALOG_OPTION_ENTRIES_CAPACITY) {
+        gGameDialogChosenOption = index;
+    }
+}
+
+void gameDialogRequestBarter()
+{
+    gGameDialogBarterRequested = true;
+}
+
+static void gameDialogPerformPartyControlActions()
+{
+    std::vector<QueuedPartyControlAction> actions;
+    actions.swap(gPartyControlActions);
+
+    if (!gameDialogSpeakerIsPartyMember()) {
+        return;
+    }
+
+    Object* critter = gGameDialogSpeaker;
+    for (const QueuedPartyControlAction& queued : actions) {
+        switch (queued.action) {
+        case PartyControlAction::UseBestWeapon:
+            partyMemberUseBestWeapon(critter);
+            break;
+        case PartyControlAction::UseBestArmor:
+            partyMemberUseBestArmor(critter);
+            break;
+        case PartyControlAction::SetDisposition:
+            if (queued.a >= 0 && queued.a < kPartyControlDispositionCount
+                && partyMemberSupportsDisposition(critter, static_cast<Disposition>(queued.a))) {
+                aiSetDisposition(critter, static_cast<Disposition>(queued.a));
+            }
+            break;
+        case PartyControlAction::SetSetting:
+            if (gameDialogPartyControlValueSupported(queued.a, queued.b)) {
+                if (aiGetDisposition(critter) != DISPOSITION_NONE) {
+                    aiSetDisposition(critter, DISPOSITION_NONE);
+                }
+                // Enum values of every setting share the union.
+                _gdCustomUpdateSetting(queued.a, static_cast<int>(_custom_settings[queued.a][queued.b].areaAttackMode));
+            }
+            break;
+        }
+    }
 }
 
 } // namespace fallout

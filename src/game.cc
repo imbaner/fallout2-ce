@@ -1,6 +1,7 @@
 #include "game.h"
 #include "platform/git_version.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,6 +24,7 @@
 #include "draw.h"
 #include "endgame.h"
 #include "font_manager.h"
+#include "game_commands.h"
 #include "game_dialog.h"
 #include "game_memory.h"
 #include "game_mouse.h"
@@ -39,6 +41,7 @@
 #include "mouse.h"
 #include "movie.h"
 #include "movie_effect.h"
+#include "mui.h"
 #include "object.h"
 #include "options.h"
 #include "palette.h"
@@ -68,11 +71,17 @@
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
+#include "touch.h"
 #include "trait.h"
 #include "version.h"
 #include "win32.h"
 #include "window_manager.h"
 #include "worldmap.h"
+#include "world_view.h"
+#include "touch_controls.h"
+#include "touch_hud.h"
+#include "action_log.h"
+#include "touch_log.h"
 
 #if __APPLE__
 #include <TargetConditionals.h>
@@ -481,6 +490,10 @@ void gameExit()
 {
     debugPrint("\nGame Exit\n");
 
+    touchLogExit();
+    actionLog("the game closed");
+    actionLogFlush();
+
     sfallOnGameModeChange(1, GameMode::getCurrentGameMode());
 
     // SFALL
@@ -543,11 +556,28 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         _gdialogSystemEnter();
     }
 
+#if FALLOUT_TOUCH_ONLY
+    // CE: No mouse in the touch-only build (touch.h): no wheel, no clicks.
+    if (eventCode == -1 || eventCode == -2) {
+        return 0;
+    }
+#else
     if (eventCode == -1) {
         if ((mouseGetEvent() & MOUSE_EVENT_WHEEL) != 0) {
             int wheelX;
             int wheelY;
             mouseGetWheel(&wheelX, &wheelY);
+
+            // CE: Ctrl + wheel zooms map view around mouse cursor.
+            if ((SDL_GetModState() & KMOD_CTRL) != 0 && wheelY != 0) {
+                int mouseX;
+                int mouseY;
+                mouseGetPosition(&mouseX, &mouseY);
+                if (worldViewIsWorldAt(mouseX, mouseY)) {
+                    worldViewZoomBy(powf(1.1f, static_cast<float>(wheelY)), static_cast<float>(mouseX), static_cast<float>(mouseY));
+                    return 0;
+                }
+            }
 
             int dx = 0;
             if (wheelX > 0) {
@@ -589,9 +619,15 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
             }
         }
 
-        _gmouse_handle_event(mouseX, mouseY, mouseState);
+        // CE: With touch controls map actions come from touch_controls.cc,
+        // emulated mouse clicks (e.g. finger lifted after pressing a button
+        // which closed a window) must not act on the map.
+        if (!touchControlsIsEnabled()) {
+            _gmouse_handle_event(mouseX, mouseY, mouseState);
+        }
         return 0;
     }
+#endif
 
     if (_gmouse_is_scrolling()) {
         return 0;
@@ -599,10 +635,9 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
 
     switch (eventCode) {
     case -20:
-        if (interfaceBarEnabled()) {
-            _intface_use_item();
-        }
+        gameCommandExecute({ GameCommandType::UseItem }, isInCombatMode);
         break;
+#if !FALLOUT_TOUCH_ONLY
     case -2:
         if (1) {
             int mouseEvent = mouseGetEvent();
@@ -628,6 +663,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
             _gmouse_handle_event(mouseX, mouseY, mouseEvent);
         }
         break;
+#endif
     case KEY_CTRL_Q:
     case KEY_CTRL_X:
     case KEY_F10:
@@ -635,17 +671,19 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         showQuitConfirmationDialog();
         break;
     case KEY_TAB:
-        if (interfaceBarEnabled()
-            && gPressedPhysicalKeys[SDL_SCANCODE_LALT] == 0
+        if (gPressedPhysicalKeys[SDL_SCANCODE_LALT] == 0
             && gPressedPhysicalKeys[SDL_SCANCODE_RALT] == 0) {
-            soundPlayFile("ib1p1xx1");
-            automapShow(true, false);
+            gameCommandExecute({ GameCommandType::Automap }, isInCombatMode);
         }
         break;
+#if !FALLOUT_TOUCH_ONLY
+    // CE: The game's pause window waits for a key or the mouse, the
+    // touch-only build has neither (touch.h).
     case KEY_CTRL_P:
         soundPlayFile("ib1p1xx1");
         showPause(false);
         break;
+#endif
     case KEY_UPPERCASE_A:
     case KEY_LOWERCASE_A:
         if (interfaceBarEnabled()) {
@@ -668,69 +706,32 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
     case KEY_UPPERCASE_B:
     case KEY_LOWERCASE_B:
         // change active hand
-        if (interfaceBarEnabled()) {
-            soundPlayFile("ib1p1xx1");
-            interfaceBarSwapHands(true);
-        }
+        gameCommandExecute({ GameCommandType::SwapHands }, isInCombatMode);
         break;
     case KEY_UPPERCASE_C:
     case KEY_LOWERCASE_C:
-        if (interfaceBarEnabled()) {
-            soundPlayFile("ib1p1xx1");
-            bool isoWasEnabled = isoDisable();
-            characterEditorShow(false);
-            if (isoWasEnabled) {
-                isoEnable();
-            }
-        }
+        gameCommandExecute({ GameCommandType::Character }, isInCombatMode);
         break;
     case KEY_UPPERCASE_I:
     case KEY_LOWERCASE_I:
         // open inventory
-        if (interfaceBarEnabled()) {
-            soundPlayFile("ib1p1xx1");
-            inventoryOpen();
-        }
+        gameCommandExecute({ GameCommandType::Inventory }, isInCombatMode);
         break;
     case KEY_ESCAPE:
     case KEY_UPPERCASE_O:
     case KEY_LOWERCASE_O:
         // options
-        if (interfaceBarEnabled()) {
-            soundPlayFile("ib1p1xx1");
-            showOptions();
-        }
+        gameCommandExecute({ GameCommandType::Menu }, isInCombatMode);
         break;
     case KEY_UPPERCASE_P:
     case KEY_LOWERCASE_P:
         // pipboy
-        if (interfaceBarEnabled()) {
-            if (isInCombatMode) {
-                soundPlayFile("iisxxxx1");
-
-                // Pipboy not available in combat!
-                MessageListItem messageListItem;
-                char title[128];
-                stringCopy(title, getmsg(&gMiscMessageList, &messageListItem, 7));
-                showDialogBox(title, nullptr, 0, 192, 116, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
-            } else {
-                soundPlayFile("ib1p1xx1");
-                pipboyOpen(PIPBOY_OPEN_INTENT_UNSPECIFIED);
-            }
-        }
+        gameCommandExecute({ GameCommandType::Pipboy }, isInCombatMode);
         break;
     case KEY_UPPERCASE_S:
     case KEY_LOWERCASE_S:
         // skilldex
-        if (interfaceBarEnabled()) {
-            soundPlayFile("ib1p1xx1");
-
-            // NOTE: There is an `inc` for this value to build jump table which
-            // is not needed.
-            SkilldexRC rc = skilldexOpen();
-
-            gameHandleSkilldexResult(rc);
-        }
+        gameCommandExecute({ GameCommandType::Skilldex }, isInCombatMode);
         break;
     case KEY_UPPERCASE_Z:
     case KEY_LOWERCASE_Z:
@@ -763,11 +764,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         break;
     case KEY_1:
     case KEY_EXCLAMATION:
-        if (interfaceBarEnabled()) {
-            soundPlayFile("ib1p1xx1");
-            gameMouseSetCursor(MOUSE_CURSOR_USE_CROSSHAIR);
-            _action_skill_use(SKILL_SNEAK);
-        }
+        gameCommandExecute({ GameCommandType::Sneak }, isInCombatMode);
         break;
     case KEY_2:
     case KEY_AT:
@@ -904,34 +901,10 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         }
         break;
     case KEY_F6:
-        if (1) {
-            soundPlayFile("ib1p1xx1");
-
-            int rc = lsgSaveGame(LOAD_SAVE_MODE_QUICK);
-            if (rc == -1) {
-                debugPrint("\n ** Error calling SaveGame()! **\n");
-            } else if (rc == 1) {
-                MessageListItem messageListItem;
-                // Quick save game successfully saved.
-                char* msg = getmsg(&gMiscMessageList, &messageListItem, 5);
-                displayMonitorAddMessage(msg);
-            }
-        }
+        gameCommandExecute({ GameCommandType::QuickSave }, isInCombatMode);
         break;
     case KEY_F7:
-        if (1) {
-            soundPlayFile("ib1p1xx1");
-
-            int rc = lsgLoadGame(LOAD_SAVE_MODE_QUICK);
-            if (rc == -1) {
-                debugPrint("\n ** Error calling LoadGame()! **\n");
-            } else if (rc == 1) {
-                MessageListItem messageListItem;
-                // Quick load game successfully loaded.
-                char* msg = getmsg(&gMiscMessageList, &messageListItem, 4);
-                displayMonitorAddMessage(msg);
-            }
-        }
+        gameCommandExecute({ GameCommandType::QuickLoad }, isInCombatMode);
         break;
     case KEY_CTRL_V:
         if (1) {
@@ -1021,11 +994,13 @@ int gameSetGlobalVar(GameGlobalVar var, int value)
         if (shouldDisplayKarmaChanges) {
             int diff = value - gGameGlobalVars[var];
             if (diff != 0) {
-                char formattedMessage[80];
+                // CE: The texts in `game\ce.msg` (sfall's KarmaGain,
+                // KarmaLoss of its translations).
+                char formattedMessage[160];
                 if (diff > 0) {
-                    snprintf(formattedMessage, sizeof(formattedMessage), "You gained %d karma.", diff);
+                    snprintf(formattedMessage, sizeof(formattedMessage), muiText(324, "You gained %d karma."), diff);
                 } else {
-                    snprintf(formattedMessage, sizeof(formattedMessage), "You lost %d karma.", -diff);
+                    snprintf(formattedMessage, sizeof(formattedMessage), muiText(325, "You lost %d karma."), -diff);
                 }
                 displayMonitorAddMessage(formattedMessage);
             }
@@ -1211,6 +1186,12 @@ static void gameFreeGlobalVars()
 // 0x443F74
 void showHelp()
 {
+    // Mobile UI: the picture explains the keyboard and the mouse of the
+    // game's interface, which the touch UI replaces.
+    if (muiIsEnabled()) {
+        return;
+    }
+
     ScopedGameMode gm(GameMode::kHelp);
 
     bool isoWasEnabled = isoDisable();
@@ -1478,25 +1459,87 @@ static int gameDbInit()
     return 0;
 }
 
+// [anyLanguage] - the English one when the language has none (the game shows
+// only the language's).
+static File* splashOpen(int index, bool anyLanguage)
+{
+    char path[COMPAT_MAX_PATH];
+    const char* language = settings.system.language.c_str();
+    if (compat_stricmp(language, ENGLISH) != 0) {
+        snprintf(path, sizeof(path), "art\\%s\\splash\\splash%d.rix", language, index);
+        File* stream = fileOpen(path, "rb");
+        if (stream != nullptr || !anyLanguage) {
+            return stream;
+        }
+    }
+
+    snprintf(path, sizeof(path), "art\\splash\\splash%d.rix", index);
+    return fileOpen(path, "rb");
+}
+
+static bool splashRead(int index, bool anyLanguage, std::vector<unsigned char>* pixels, unsigned char* palette, int* width, int* height)
+{
+    File* stream = splashOpen(index, anyLanguage);
+    if (stream == nullptr) {
+        return false;
+    }
+
+    int version;
+    short fileWidth;
+    short fileHeight;
+    if (fileReadInt32(stream, &version) == -1 || version != 'RIX3'
+        || fileRead(&fileWidth, sizeof(fileWidth), 1, stream) != 1
+        || fileRead(&fileHeight, sizeof(fileHeight), 1, stream) != 1
+        || fileWidth <= 0 || fileHeight <= 0) {
+        fileClose(stream);
+        return false;
+    }
+
+    pixels->resize(static_cast<size_t>(fileWidth) * fileHeight);
+    fileSeek(stream, 10, SEEK_SET);
+    bool read = fileRead(palette, 1, 768, stream) == 768
+        && fileRead(pixels->data(), 1, pixels->size(), stream) == pixels->size();
+    fileClose(stream);
+    if (!read) {
+        return false;
+    }
+
+    // Fix of wrong Palette, without it this makes background bright
+    // Basically just swapping first and last colors, this problem presented ONLY in F2, F1 has right palette in every splash
+    memcpy(palette + (255 * 3), palette, 3);
+    memset(palette, 0, 3);
+
+    for (unsigned char& pixel : *pixels) {
+        if (pixel == 0) {
+            pixel = 255;
+        } else if (pixel == 255) {
+            pixel = 0;
+        }
+    }
+
+    *width = fileWidth;
+    *height = fileHeight;
+    return true;
+}
+
+bool gameReadSplash(int index, std::vector<unsigned char>* pixels, unsigned char* palette, int* width, int* height)
+{
+    return splashRead(index, true, pixels, palette, width, height);
+}
+
 // 0x444384
 static void showSplash()
 {
     int splash = settings.system.splash;
 
-    char path[64];
-    const char* language = settings.system.language.c_str();
-    if (compat_stricmp(language, ENGLISH) != 0) {
-        snprintf(path, sizeof(path), "art\\%s\\splash\\", language);
-    } else {
-        snprintf(path, sizeof(path), "art\\splash\\");
-    }
-
-    File* stream;
+    std::vector<unsigned char> pixels;
+    unsigned char palette[768];
+    int width = 0;
+    int height = 0;
+    bool found = false;
     for (int index = 0; index < SPLASH_COUNT; index++) {
-        char filePath[64];
-        snprintf(filePath, sizeof(filePath), "%ssplash%d.rix", path, splash);
-        stream = fileOpen(filePath, "rb");
-        if (stream != nullptr) {
+        if (splashRead(splash, false, &pixels, palette, &width, &height)) {
+            found = true;
             break;
         }
 
@@ -1507,54 +1550,12 @@ static void showSplash()
         }
     }
 
-    if (stream == nullptr) {
-        return;
-    }
-
-    unsigned char* palette = reinterpret_cast<unsigned char*>(internal_malloc(768));
-    if (palette == nullptr) {
-        fileClose(stream);
-        return;
-    }
-
-    int version;
-    fileReadInt32(stream, &version);
-    if (version != 'RIX3') {
-        fileClose(stream);
-        return;
-    }
-
-    short width;
-    fileRead(&width, sizeof(width), 1, stream);
-
-    short height;
-    fileRead(&height, sizeof(height), 1, stream);
-
-    unsigned char* data = reinterpret_cast<unsigned char*>(internal_malloc(width * height));
-    if (data == nullptr) {
-        internal_free(palette);
-        fileClose(stream);
+    if (!found) {
         return;
     }
 
     paletteSetEntries(gPaletteBlack);
-    fileSeek(stream, 10, SEEK_SET);
-    fileRead(palette, 1, 768, stream);
-    fileRead(data, 1, width * height, stream);
-    fileClose(stream);
-
-    // Fix of wrong Palette, without it this makes background bright
-    // Basically just swapping first and last colors, this problem presented ONLY in F2, F1 has right palette in every splash
-    memcpy(palette + (255 * 3), palette, 3);
-    memset(palette, 0, 3);
-
-    for (int i = 0; i < width * height; i++) {
-        if (data[i] == 0) {
-            data[i] = 255;
-        } else if (data[i] == 255) {
-            data[i] = 0;
-        }
-    }
+    unsigned char* data = pixels.data();
 
     int size = settings.ui.splash_screen_size;
 
@@ -1595,9 +1596,6 @@ static void showSplash()
         _scr_blit(data, width, height, 0, 0, width, height, x, y);
         paletteFadeTo(palette);
     }
-
-    internal_free(data);
-    internal_free(palette);
 
     settings.system.splash = splash + 1;
 }

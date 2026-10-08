@@ -846,6 +846,22 @@ void MVE_rmResetSync()
     }
 }
 
+void MVE_rmHoldMovie(bool hold)
+{
+    if (!rm_active) {
+        return;
+    }
+
+    if (hold) {
+        _MVE_sndPause();
+    } else {
+        if (gMveSoundBuffer != -1) {
+            audioEngineSoundBufferPlay(gMveSoundBuffer, AUDIO_ENGINE_SOUND_BUFFER_PLAY_LOOPING);
+        }
+        MVE_rmResetSync();
+    }
+}
+
 // 0x4F5570 MVE_sndConfigure
 static int _MVE_sndConfigure(int a1, int a2, int a3, int a4, int a5, int a6)
 {
