@@ -71,6 +71,12 @@ void touch_process_gesture();
 // CE: A finger followed by the recognizer is on the screen.
 bool touch_any_finger_down();
 bool touch_get_gesture(Gesture* gesture);
+// How long a finger is held for a long press, ms: Android's touch & hold
+// delay (Accessibility), 500 elsewhere.
+unsigned int touchLongPressMs();
+// Reads it again (the game came back: it may have been changed meanwhile).
+void touchRefreshLongPressMs();
+
 void touch_set_touchscreen_mode(const bool value);
 bool touch_get_touchscreen_mode();
 void touch_set_pan_mode(const bool value);

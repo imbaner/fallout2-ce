@@ -474,6 +474,8 @@ void worldViewSetZoom(float zoom, float anchorX, float anchorY)
     float dy = anchorOffsetY / gZoom - anchorOffsetY / zoom;
 
     gZoom = zoom;
+    // CE: Kept (fallout2.cfg), the next start begins at it.
+    settings.world_view.zoom = zoom;
 
     // Scroll limits depend on visible size. While fingers zoom, the view is
     // moved back inside the map's edges when they're lifted.

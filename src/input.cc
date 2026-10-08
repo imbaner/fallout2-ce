@@ -24,6 +24,7 @@
 #include "touch_log.h"
 #include "movie.h"
 #include "sfall_kb_helpers.h"
+#include "settings.h"
 #include "sfall_script_hooks.h"
 #include "svga.h"
 #include "text_font.h"
@@ -1239,13 +1240,20 @@ void _GNW95_process_message()
                 }
                 windowRefreshAll(&_scr_size);
                 audioEngineResume();
-                // Android: the app's import or export of saves was over it.
+                // Android: the app's import or export of saves was over it,
+                // the system's touch & hold delay may have changed.
                 lsgMobileSavesMayHaveChanged();
+                touchRefreshLongPressMs();
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST:
                 touchLogFocus(false);
                 actionLog("the game went to the background");
                 actionLogFlush();
+#if FALLOUT_TOUCH_ONLY
+                // Android may close the app from the background without the
+                // game's exit, which writes the settings (the map's zoom).
+                settingsSave();
+#endif
                 gProgramIsActive = false;
                 mouseDeviceInitMode();
                 audioEnginePause();

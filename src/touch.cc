@@ -12,6 +12,10 @@
 #include "hud_layout.h"
 #include "touch_controls.h"
 
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+
 namespace fallout {
 
 #define TOUCH_PHASE_BEGAN 0
@@ -33,7 +37,8 @@ static int touch_get_slop()
 {
     return std::max(PAN_MINIMUM_MOVEMENT, static_cast<int>(kTouchSlopDp * hudGetPixelsPerDp()));
 }
-#define LONG_PRESS_MINIMUM_DURATION 500
+// Long press without the system's delay (Android's default).
+#define LONG_PRESS_DEFAULT_DURATION 500
 
 struct TouchLocation {
     int x;
@@ -401,7 +406,7 @@ void touch_process_gesture()
                 currentGesture.startSpan = startSpan;
                 currentGesture.time = touch_get_latest_timestamp(active, activeCount);
                 gestureEventsQueue.push(currentGesture);
-            } else if (SDL_GetTicks() - touches[active[0]].startTimestamp >= LONG_PRESS_MINIMUM_DURATION) {
+            } else if (SDL_GetTicks() - touches[active[0]].startTimestamp >= touchLongPressMs()) {
                 currentGesture.type = kLongPress;
                 currentGesture.state = kBegan;
                 currentGesture.numberOfTouches = activeCount;
@@ -476,4 +481,44 @@ bool touch_get_pan_mode()
 {
     return gUsePanMode;
 }
+// 0 - not read yet.
+static unsigned int gLongPressMs = 0;
+
+unsigned int touchLongPressMs()
+{
+    if (gLongPressMs == 0) {
+        touchRefreshLongPressMs();
+    }
+    return gLongPressMs;
+}
+
+void touchRefreshLongPressMs()
+{
+    unsigned int delay = LONG_PRESS_DEFAULT_DURATION;
+
+#ifdef __ANDROID__
+    // `MainActivity.getLongPressTimeout`.
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (env != nullptr && activity != nullptr) {
+        jclass activityClass = env->GetObjectClass(activity);
+        jmethodID method = env->GetStaticMethodID(activityClass, "getLongPressTimeout", "()I");
+        if (method != nullptr) {
+            jint timeout = env->CallStaticIntMethod(activityClass, method);
+            if (!env->ExceptionCheck() && timeout > 0) {
+                delay = static_cast<unsigned int>(timeout);
+            }
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(activityClass);
+        env->DeleteLocalRef(activity);
+    }
+#endif
+
+    // Android offers 400 / 1000 / 1500 ms; anything odd stays usable.
+    gLongPressMs = std::clamp(delay, 200u, 3000u);
+}
+
 } // namespace fallout

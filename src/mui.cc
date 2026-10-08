@@ -50,7 +50,6 @@ namespace {
     std::u32string gTextInput;
 
     constexpr unsigned int kAppearDurationMs = 160;
-    constexpr unsigned int kLongPressMs = 500;
     constexpr const char* kDragActiveId = "#drag";
 
     enum class PointerEventType {
@@ -362,7 +361,7 @@ bool MuiContext::touchable(const std::string& id, const MuiRect& rect, bool* pre
     }
 
     if (longPressed != nullptr && gPointer.down && !gPointer.moved && !gActiveLongPressed
-        && SDL_GetTicks() - gPointer.downTime >= kLongPressMs) {
+        && SDL_GetTicks() - gPointer.downTime >= touchLongPressMs()) {
         gActiveLongPressed = true;
         *longPressed = true;
     }

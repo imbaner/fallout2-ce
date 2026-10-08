@@ -7,6 +7,7 @@ import android.content.res.AssetManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.DisplayCutout;
+import android.view.ViewConfiguration;
 import android.view.WindowInsets;
 
 import org.libsdl.app.SDLActivity;
@@ -140,6 +141,12 @@ public class MainActivity extends SDLActivity {
             // in-game resources.
             System.exit(0);
         }
+    }
+
+    // Called from native code (touch.cc): the system's touch & hold delay
+    // (Accessibility), so a long press takes as long as in other apps.
+    public static int getLongPressTimeout() {
+        return ViewConfiguration.getLongPressTimeout();
     }
 
     // Called from native code (hud_layout.cc): display cutout safe insets in
