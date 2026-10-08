@@ -149,9 +149,9 @@
 {238}{}{Could not delete this save.}
 {239}{}{No saved games yet.}
 {240}{}{Loading save...}
-{241}{}{Create permanent copy}
+{241}{}{Make permanent}
 {242}{}{No room for a new save}
-{243}{}{Could not create a permanent copy.}
+{243}{}{Could not make the save permanent.}
 {244}{}{Delete save?}
 {245}{}{Game}
 {246}{}{Combat}
@@ -268,3 +268,10 @@
 {357}{}{In the log: "You gained 5 karma."}
 {358}{}{Bonus damage in the stats}
 {359}{}{Weapon damage with the bonus damage perks}
+{360}{}{Quick saves}
+{361}{}{The oldest are replaced by new ones. Of 1000 places the rest are for manual saves}
+{362}{}{Off}
+{363}{}{The oldest quick saves (%d) become permanent: they stay where they are in the list but are no longer replaced by new ones.}
+{364}{}{All quick saves (%d) become permanent and stay where they are in the list.}
+{365}{}{The quick save button will open the save screen, like a manual save.}
+{366}{}{Could not rearrange the quick saves, their number stays.}

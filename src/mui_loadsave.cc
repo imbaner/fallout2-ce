@@ -48,9 +48,9 @@ namespace {
     constexpr int kTextDeleteFailed = 238;
     constexpr int kTextNoSaves = 239;
     constexpr int kTextLoading = 240;
-    constexpr int kTextCopy = 241;
+    constexpr int kTextPermanent = 241;
     constexpr int kTextNoRoom = 242;
-    constexpr int kTextCopyFailed = 243;
+    constexpr int kTextPermanentFailed = 243;
     constexpr int kTextDeleteTitle = 244;
     constexpr int kTextOtherGame = 329;
     constexpr int kTextModUpdated = 330;
@@ -175,7 +175,7 @@ namespace {
 
         int pendingAction = -1;
         int pendingDelete = -1;
-        int pendingCopy = -1;
+        int pendingPermanent = -1;
 
         // Selected save's picture: the wide one of saves made with the
         // mobile UI, otherwise the thumbnail; the current game's for a new
@@ -206,7 +206,7 @@ namespace {
         void saveGame(int slot);
         void loadGame(int slot);
         void deleteSave(int slot);
-        void copySave(int slot);
+        void makePermanent(int slot);
     };
 
     LoadSaveScreen::LoadSaveScreen(bool save, bool mainMenu)
@@ -629,8 +629,8 @@ namespace {
             line(titleOf(*info), 12.0f, kDanger);
         }
 
-        // Above the buttons: the description of a new save, copying a quick
-        // save, or why there's nothing to save to.
+        // Above the buttons: the description of a new save, making a quick
+        // save permanent, or why there's nothing to save to.
         float actionHeight = ui.dp(39.0f);
         MuiRect action = { inner.x, inner.bottom() - actionHeight, inner.w, actionHeight };
         MuiRect above = { inner.x, action.y - ui.dp(41.0f), inner.w, ui.dp(35.0f) };
@@ -651,8 +651,8 @@ namespace {
             }
         } else if (info != nullptr && info->state == MobileSaveSlotState::Occupied && lsgMobileIsQuickSlot(selected)) {
             if (newSlot != -1) {
-                if (ui.button("loadsave.copy", above, text(kTextCopy, "Create permanent copy"))) {
-                    pendingCopy = selected;
+                if (ui.button("loadsave.permanent", above, text(kTextPermanent, "Make permanent"))) {
+                    pendingPermanent = selected;
                 }
             } else {
                 muiDrawTextAligned(text(kTextNoRoom, "No room for a new save"), above, ui.dp(12.0f), theme.textDim, MuiAlign::Center, MuiAlign::Center);
@@ -754,10 +754,10 @@ namespace {
 
     void LoadSaveScreen::runPending()
     {
-        int copySlot = pendingCopy;
+        int permanentSlot = pendingPermanent;
         int deleteSlot = pendingDelete;
         int actionSlot = pendingAction;
-        pendingCopy = -1;
+        pendingPermanent = -1;
         pendingDelete = -1;
         pendingAction = -1;
 
@@ -765,8 +765,8 @@ namespace {
             return;
         }
 
-        if (copySlot != -1) {
-            copySave(copySlot);
+        if (permanentSlot != -1) {
+            makePermanent(permanentSlot);
         } else if (deleteSlot != -1) {
             deleteSave(deleteSlot);
         } else if (actionSlot != -1) {
@@ -855,15 +855,17 @@ namespace {
         refresh();
     }
 
-    void LoadSaveScreen::copySave(int slot)
+    // The quick save stays where it is in the list, no longer quick (never
+    // replaced by a new one).
+    void LoadSaveScreen::makePermanent(int slot)
     {
-        int copy = lsgCopyQuickSave(slot);
-        if (copy != -1) {
-            selected = copy;
+        int permanent = lsgMakeQuickSavePermanent(slot);
+        if (permanent != -1) {
+            selected = permanent;
         } else {
             soundPlayFile("iisxxxx1");
             std::string title = lsgGetMessage(kMessageSaveError);
-            const char* body[] = { muiText(kTextCopyFailed, "Could not create a permanent copy.") };
+            const char* body[] = { muiText(kTextPermanentFailed, "Could not make the save permanent.") };
             showDialogBox(title.c_str(), body, 1, 0, 0, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
         }
 

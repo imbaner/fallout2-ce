@@ -286,35 +286,27 @@ Agreed while designing the settings screen:
   a collapsible left list, or keeping its current layout as the documented
   exception. Decide with the settings screen as the reference.
 
-## Settings screen follow-ups (2026-09-29)
+## Settings screen follow-ups (2026-09-29, settled 2026-10-08)
 
-- Every Fallout 2 CE improvement (`[qol]`, `[ui]` of fallout2.cfg) has to
-  work in the new screens and be a setting on the settings screen. The
-  first settings screen shows only those checked to work live in the new
-  screens; the rest are done one by one, then added:
-  - loot weight / container fill indicators (`loot_weight_indicator`,
-    `loot_container_size_indicator_threshold`): drawn only by the legacy
-    loot window, the mobile loot screen doesn't show them;
-  - numbers in dialogue (`numbers_in_dialogue`): read when a dialog
-    starts; check the mobile talk screen, apply live;
-  - bonus damage in the inventory (`display_bonus_damage`): read once at
-    combat init, has to apply without a restart;
-  - karma change messages (`display_karma_changes`), use walk distance:
-    check each in the mobile screens, then show. The karma texts are in
-    `game\ce.msg` now (324, 325; were English only, the Russian from
-    sfall's translations).
-  Already on the screen: auto open doors, walk when sneaking, fast ammo
-  load, party trade from the menu, party loot and barter, party member
-  extra info.
-  None of them changes balance (information or convenience); game and
-  combat difficulty change it, and the original lets them change any time.
-- Number of quick saves (`[ui] auto_quick_save`, `auto_quick_save_page`) as
-  a setting only with a safe move: when the quick range grows over manual
-  saves, those move whole (every file) to free manual slots through the save
-  catalog's transactional writes, nothing lost; when it shrinks, quick saves
-  outside it become manual. Until then it's not on the screen.
-- Possible later: a "port improvements only" filter over the list (labels
-  "port" / "CE" / "experiment" already show where a setting comes from).
+CE's `[qol]` / `[ui]` features in the mobile screens:
+- karma change messages (`display_karma_changes`, Russian text in
+  `game\ce.msg` 324-325) and bonus damage in the stats
+  (`display_bonus_damage`, read when shown) are rows (Game, Combat), off by
+  default as in CE and sfall/RPU;
+- quick saves (`auto_quick_save`): a slider 0-100 by tens in Game ->
+  Convenience (0 - off: the quick save button opens the save screen). The
+  saves are rearranged first (`SaveCatalog::setQuickRange`): more quick
+  saves - manual saves in the new range move out; fewer - the oldest quick
+  saves become manual where they are in the list, after a question that
+  says so (and that the button opens the save screen when off). Every move
+  is one folder rename right for the old and the new range, the setting is
+  written last, records follow their saves (`updateRecords`). The save
+  screen's button "Make permanent" moves a quick save the same way (no
+  copy). Autotest `quicksaves`, unit test in save_catalog_test;
+- numbers in dialogue: not needed on a touch screen;
+- use walk distance: engine logic, works;
+- loot screen: the target's carry limit and a container's fill are not
+  shown (the player's weight and limit are) - open, "useful, not urgent".
 
 ## Map rendering towards 60 fps (postponed, 2026-09-29)
 

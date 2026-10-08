@@ -377,6 +377,23 @@ void SaveCatalog::updateRecords()
             // Another save there now.
             records->remove(slot);
         }
+
+        // A save moved from another slot (`move` stopped before its record
+        // went along, or by hand): its record follows it.
+        int previous = -1;
+        for (const auto& [recordSlot, value] : records->all()) {
+            if (value.first == current.recordId && recordSlot < static_cast<int>(entries.size()) && !entries[recordSlot].present) {
+                previous = recordSlot;
+                break;
+            }
+        }
+        if (previous != -1) {
+            SaveRecord moved = records->all().at(previous).second;
+            records->put(slot, current.recordId, moved);
+            records->remove(previous);
+            current = read(slot);
+            continue;
+        }
         if (current.legacyMetadata || first) {
             record.created = current.created;
             record.order = current.order;
@@ -512,39 +529,175 @@ bool SaveCatalog::write(int slot, const std::function<bool()>& writer, bool sess
     return true;
 }
 
-int SaveCatalog::copyQuick(int source)
+bool SaveCatalog::move(int from, int to)
 {
-    if (!isQuick(source) || entry(source).identity == 0) {
+    int total = static_cast<int>(entries.size());
+    if (from < 0 || from >= total || to < 0 || to >= total || from == to
+        || !entries[from].present || entries[to].present || !recover(to)) {
+        return false;
+    }
+
+    char name[32];
+    snprintf(name, sizeof(name), "SLOT%02d", to + 1);
+    std::string target = saveRoot + "/" + name;
+    saveStorage::Info info;
+    if (!saveStorage::inspect(target, info) || info.exists) {
+        return false;
+    }
+
+    if (!saveStorage::move(slotPath(from), target)) {
+        return false;
+    }
+    saveStorage::syncDirectory(saveRoot);
+
+    slotNames[to] = name;
+    slotNames[from].clear();
+    std::string recordId = entries[from].recordId;
+    entries[from] = Entry();
+
+    // The record goes along (a stop before this: the next refresh moves it,
+    // `updateRecords`).
+    SaveRecord record;
+    if (records != nullptr && records->find(from, recordId, &record)) {
+        records->put(to, recordId, record);
+        records->remove(from);
+    }
+
+    entries[to] = read(to);
+    for (std::pair<int, std::uint64_t>& made : session) {
+        if (made.first == from) {
+            made.first = to;
+        }
+    }
+    return true;
+}
+
+int SaveCatalog::makePermanent(int slot)
+{
+    if (slot < 0 || slot >= static_cast<int>(entries.size()) || !isQuick(slot) || entries[slot].identity == 0) {
         return -1;
     }
 
     int target = freeManual();
-    if (target == -1) {
+    if (target == -1 || !move(slot, target)) {
         return -1;
-    }
-
-    std::uint64_t sourceIdentity = entry(source).identity;
-    std::string sourcePath = slotPath(source);
-    std::string targetPath = slotPath(target);
-    bool copied = write(target, [&]() {
-        return saveStorage::copyTree(sourcePath, targetPath)
-            && identity(saveDataPath(sourcePath)) == sourceIdentity;
-    },
-        false);
-    if (!copied) {
-        return -1;
-    }
-
-    // The same game made it: its composition too.
-    SaveRecord sourceRecord;
-    SaveRecord targetRecord;
-    if (records != nullptr
-        && records->find(source, entry(source).recordId, &sourceRecord)
-        && records->find(target, entry(target).recordId, &targetRecord)) {
-        targetRecord.composition = sourceRecord.composition;
-        records->put(target, entry(target).recordId, targetRecord);
     }
     return target;
+}
+
+std::vector<int> SaveCatalog::quickSavesNewestFirst() const
+{
+    std::vector<int> slots;
+    for (int slot = firstQuickSlot; slot < firstQuickSlot + quickSlotCount; slot++) {
+        if (entries[slot].identity != 0) {
+            slots.push_back(slot);
+        }
+    }
+    std::sort(slots.begin(), slots.end(), [this](int a, int b) {
+        return entries[a].order > entries[b].order;
+    });
+    return slots;
+}
+
+// Slots of the range a quick save can take: all but broken folders (never
+// replaced) - manual saves there leave it first.
+int SaveCatalog::quickCapacity(int firstQuick, int quickCount) const
+{
+    int capacity = 0;
+    int total = static_cast<int>(entries.size());
+    for (int slot = std::max(firstQuick, 0); slot < std::min(firstQuick + quickCount, total); slot++) {
+        if (!entries[slot].present || entries[slot].identity != 0) {
+            capacity++;
+        }
+    }
+    return capacity;
+}
+
+int SaveCatalog::freeOutside(int firstA, int countA, int firstB, int countB) const
+{
+    for (int slot = 0; slot < static_cast<int>(entries.size()); slot++) {
+        bool inA = slot >= firstA && slot < firstA + countA;
+        bool inB = slot >= firstB && slot < firstB + countB;
+        if (!inA && !inB && !entries[slot].present) {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+int SaveCatalog::quickOverflow(int firstQuick, int quickCount) const
+{
+    int total = static_cast<int>(entries.size());
+    int count = firstQuick >= 0 && firstQuick < total ? std::clamp(quickCount, 0, total - firstQuick) : 0;
+    int quick = static_cast<int>(quickSavesNewestFirst().size());
+    return std::max(quick - quickCapacity(firstQuick, count), 0);
+}
+
+bool SaveCatalog::setQuickRange(int firstQuick, int quickCount, int* madePermanent)
+{
+    int total = static_cast<int>(entries.size());
+    int newFirst = firstQuick;
+    int newCount = firstQuick >= 0 && firstQuick < total ? std::clamp(quickCount, 0, total - firstQuick) : 0;
+    int oldFirst = firstQuickSlot;
+    int oldCount = quickSlotCount;
+    auto inNew = [&](int slot) { return slot >= newFirst && slot < newFirst + newCount; };
+    auto inOld = [&](int slot) { return slot >= oldFirst && slot < oldFirst + oldCount; };
+
+    if (madePermanent != nullptr) {
+        *madePermanent = 0;
+    }
+
+    std::vector<int> quick = quickSavesNewestFirst();
+    int keep = std::min(static_cast<int>(quick.size()), quickCapacity(newFirst, newCount));
+
+    // Manual saves in the new range leave it (to slots manual for both).
+    for (int slot = newFirst; slot < newFirst + newCount; slot++) {
+        if (entries[slot].identity != 0 && !inOld(slot)) {
+            int target = freeOutside(oldFirst, oldCount, newFirst, newCount);
+            if (target == -1 || !move(slot, target)) {
+                return false;
+            }
+        }
+    }
+
+    // The oldest quick saves over the new number become manual: those in the
+    // new range leave it, the others are manual where they are once the
+    // range changes.
+    for (size_t index = keep; index < quick.size(); index++) {
+        int slot = quick[index];
+        if (inNew(slot)) {
+            int target = freeOutside(oldFirst, oldCount, newFirst, newCount);
+            if (target == -1 || !move(slot, target)) {
+                return false;
+            }
+        }
+        if (madePermanent != nullptr) {
+            *madePermanent += 1;
+        }
+    }
+
+    // The kept ones outside the new range move into it.
+    for (int index = 0; index < keep; index++) {
+        int slot = quick[index];
+        if (inNew(slot)) {
+            continue;
+        }
+
+        int target = -1;
+        for (int candidate = newFirst; candidate < newFirst + newCount; candidate++) {
+            if (!entries[candidate].present) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target == -1 || !move(slot, target)) {
+            return false;
+        }
+    }
+
+    firstQuickSlot = newFirst;
+    quickSlotCount = newCount;
+    return true;
 }
 
 bool SaveCatalog::remove(int slot)

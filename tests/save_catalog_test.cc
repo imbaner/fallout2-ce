@@ -1,7 +1,8 @@
 // Save catalog test (src/save_catalog.cc) on a real folder: retention of quick
-// saves, the session's quick load, manual slots, copies, removal, failed and
-// interrupted writes, saves changed outside the game, slot ranges, the
-// records of when saves were made (src/save_records.cc).
+// saves, the session's quick load, manual slots, quick saves made permanent,
+// removal, failed and interrupted writes, saves changed outside the game,
+// slot ranges and changing the quick one, the records of when saves were made
+// (src/save_records.cc).
 //
 // save_catalog_test [empty folder to create] - a temporary one by default.
 
@@ -131,13 +132,15 @@ int main(int argc, char** argv)
     CHECK(!store.write(2, []() { return false; }));
     CHECK(!exists(root + "/SLOT03"));
 
-    // A copy of a quick save: all its files in a manual slot, a new save.
-    int copy = store.copyQuick(10);
-    CHECK(copy == 1 && store.sessionTarget() == 10);
+    // A quick save made permanent: its folder moves to a manual slot with
+    // all its files, it keeps its place (order), quick load follows it.
+    int copy = store.makePermanent(10);
+    CHECK(copy == 1 && store.sessionTarget() == 1 && !exists(root + "/SLOT11"));
     CHECK(read(root + "/SLOT02/SAVE.DAT") == original);
     CHECK(read(root + "/SLOT02/proto/mod.sav") == "mod data");
-    CHECK(store.copyQuick(copy) == -1);
-    CHECK(store.entry(copy).order > lastOrder);
+    CHECK(store.makePermanent(copy) == -1);
+    CHECK(store.entry(copy).order == lastOrder);
+    CHECK(write(10, 'N') && read(root + "/SLOT11/SAVE.DAT") == original);
 
     // When saves were made is in the records, not in their folders; a copy
     // of the folder with them keeps the order (the app's import of saves).
@@ -269,7 +272,7 @@ int main(int argc, char** argv)
     SaveCatalog full;
     full.configure(root, 2, 0, 1);
     CHECK(full.refresh());
-    CHECK(full.freeManual() == -1 && full.copyQuick(0) == -1);
+    CHECK(full.freeManual() == -1 && full.makePermanent(0) == -1);
 
     // Saves copied from Windows may have lower case names.
     std::string lower = root + "/lower";
@@ -279,8 +282,6 @@ int main(int argc, char** argv)
     imported.configure(lower, 20, 0, 10);
     CHECK(imported.refresh() && imported.entry(0).identity != 0);
     CHECK(imported.nextQuick() == 1);
-    CHECK(imported.copyQuick(0) == 10);
-    CHECK(read(lower + "/SLOT11/save.dat") == snapshot('L'));
 
     // A committed write stays even when its cleanup didn't run.
     makeDirectories(lower + "/.ce-write-0/previous");
@@ -295,6 +296,77 @@ int main(int argc, char** argv)
     CHECK(single.refresh());
     CHECK(single.nextQuick([](int) { return false; }) == -1);
     CHECK(single.nextQuick() == 0);
+
+    // A quick save of a lower case folder made permanent: the new slot's name
+    // is the game's, the files inside stay as they were.
+    CHECK(imported.refresh() && imported.makePermanent(0) == 10);
+    CHECK(read(lower + "/SLOT11/save.dat") == snapshot('L') && !exists(lower + "/slot01"));
+
+    // Changing the quick range: nothing lost or replaced, places kept.
+    {
+        std::string saves = root + "-range";
+        makeDirectories(saves);
+        SaveRecords rangeRecords;
+        rangeRecords.configure(saves + "-records.txt");
+        SaveCatalog range;
+        range.configure(saves, 1000, 10, 10, &rangeRecords);
+        CHECK(range.refresh());
+        auto save = [&](int slot, char value) {
+            std::string path = saves + "/" + slotName(slot);
+            return range.write(slot, [&]() { return storage::writeFile(path + "/SAVE.DAT", snapshot(value)); });
+        };
+        auto at = [&](int slot) { return read(saves + "/" + slotName(slot) + "/SAVE.DAT"); };
+        auto present = [&]() {
+            int count = 0;
+            for (int slot = 0; slot < 1000; slot++) {
+                count += range.entry(slot).present ? 1 : 0;
+            }
+            return count;
+        };
+
+        // Manual 0-4 ('a'..), quick 10-19 ('A'.., oldest first), manual 20-24.
+        for (int index = 0; index < 5; index++) {
+            CHECK(save(index, static_cast<char>('a' + index)));
+        }
+        for (int index = 0; index < 10; index++) {
+            CHECK(save(10 + index, static_cast<char>('A' + index)));
+        }
+        for (int index = 0; index < 5; index++) {
+            CHECK(save(20 + index, static_cast<char>('p' + index)));
+        }
+        std::int64_t manualOrder = range.entry(20).order;
+
+        // 20 quick: the manual saves in 20-24 leave the range (to 5-9).
+        int permanent = -1;
+        CHECK(range.quickOverflow(10, 20) == 0);
+        CHECK(range.setQuickRange(10, 20, &permanent) && permanent == 0);
+        CHECK(!range.entry(20).present && at(5) == snapshot('p') && at(9) == snapshot('t'));
+        CHECK(range.entry(5).order == manualOrder && !range.isQuick(5));
+        CHECK(range.nextQuick() == 20 && present() == 20);
+
+        // 5 quick: the 5 oldest become manual (out of the range, 30-34), the
+        // 5 newest move into it.
+        CHECK(range.quickOverflow(10, 5) == 5);
+        CHECK(range.setQuickRange(10, 5, &permanent) && permanent == 5);
+        CHECK(at(10) == snapshot('F') && at(14) == snapshot('J'));
+        CHECK(at(30) == snapshot('A') && at(34) == snapshot('E') && !range.isQuick(30));
+        CHECK(!range.entry(15).present && present() == 20);
+        CHECK(range.nextQuick() == 10);
+
+        // Off: every quick save becomes manual where it is.
+        CHECK(range.setQuickRange(10, 0, &permanent) && permanent == 5);
+        CHECK(range.nextQuick() == -1 && !range.isQuick(10) && present() == 20);
+
+        // A save moved without its record (a stop between the rename and the
+        // records): the next refresh gives it back.
+        std::int64_t order = range.entry(10).order;
+        CHECK(storage::move(saves + "/SLOT11", saves + "/SLOT51"));
+        CHECK(range.refresh() && range.entry(50).order == order);
+        SaveRecord moved;
+        CHECK(rangeRecords.find(50, range.entry(50).recordId, &moved) && !rangeRecords.find(10, range.entry(50).recordId, &moved));
+
+        CHECK(storage::removeTree(saves) && storage::removeTree(saves + "-records.txt"));
+    }
 
     if (temporary) {
         storage::removeTree(root.substr(0, root.rfind('/')));

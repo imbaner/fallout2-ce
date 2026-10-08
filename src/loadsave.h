@@ -79,9 +79,20 @@ int lsgMobileSaveGame(int slot, const char* description);
 int lsgMobileLoadGame(int slot);
 // Removes the slot with all its files (maps, mod files, previews).
 bool lsgMobileDeleteSlot(int slot);
-// Copies quick save [source] with all its files to a new manual save.
-// Returns its slot or -1.
-int lsgCopyQuickSave(int source);
+// Makes quick save [slot] a manual one (moved to a free manual slot with
+// all its files, its place in the list stays). Returns its slot or -1.
+int lsgMakeQuickSavePermanent(int slot);
+
+// Quick saves (`[ui] auto_quick_save` pages of 10), 0 - none: the quick save
+// button opens the save screen.
+int lsgQuickSaveCount();
+// How many quick saves would become manual with [count] of them.
+int lsgQuickSavesOverCount(int count);
+// Sets the number of quick saves ([count] rounded down to tens, up to 100)
+// with the saves moved so none is lost (`SaveCatalog::setQuickRange`), and
+// the setting (written by the caller with the settings file). False - a
+// move failed, the number stays.
+bool lsgSetQuickSaveCount(int count);
 // Slot quick load loads (the last save loaded or made in this session), -1.
 int lsgSessionLoadSlot();
 

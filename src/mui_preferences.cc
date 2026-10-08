@@ -117,6 +117,17 @@ namespace {
     constexpr int kTextKarmaChangesNote = 357;
     constexpr int kTextBonusDamage = 358;
     constexpr int kTextBonusDamageNote = 359;
+    constexpr int kTextQuickSaves = 360;
+    constexpr int kTextQuickSavesNote = 361;
+    constexpr int kTextQuickSavesOff = 362;
+    constexpr int kTextQuickSavesOldest = 363;
+    constexpr int kTextQuickSavesAll = 364;
+    constexpr int kTextQuickSavesButton = 365;
+    constexpr int kTextQuickSavesFailed = 366;
+
+    // The port's number of quick saves (one page, the phone's config); CE's
+    // own default is none.
+    constexpr int kDefaultQuickSaves = 10;
 
     const MuiColor kDanger = muiRgb(0xFF8E72);
     const MuiColor kDangerFill = muiRgb(0x1B100E);
@@ -160,6 +171,8 @@ namespace {
         bool partyMemberExtraInfo;
         bool karmaChanges;
         bool bonusDamage;
+        // Tens, 0 - none (`lsgSetQuickSaveCount`).
+        int quickSaves;
     };
 
     Values currentValues()
@@ -180,6 +193,7 @@ namespace {
         values.partyMemberExtraInfo = settings.ui.party_member_extra_info;
         values.karmaChanges = settings.ui.display_karma_changes;
         values.bonusDamage = settings.ui.display_bonus_damage;
+        values.quickSaves = lsgQuickSaveCount();
         return values;
     }
 
@@ -204,13 +218,65 @@ namespace {
         values.partyMemberExtraInfo = ui.party_member_extra_info;
         values.karmaChanges = ui.display_karma_changes;
         values.bonusDamage = ui.display_bonus_damage;
+        values.quickSaves = kDefaultQuickSaves;
         return values;
     }
 
+    // Lines for the confirmation of [values]' number of quick saves: quick
+    // saves becoming permanent, the quick save button opening the save
+    // screen; none - nothing to confirm.
+    std::vector<std::string> quickSavesWarning(const Values& values)
+    {
+        std::vector<std::string> lines;
+        int current = lsgQuickSaveCount();
+        if (values.quickSaves == current) {
+            return lines;
+        }
+
+        int over = lsgQuickSavesOverCount(values.quickSaves);
+        char text[512];
+        if (over > 0) {
+            snprintf(text, sizeof(text), values.quickSaves == 0
+                    ? muiText(kTextQuickSavesAll, "All quick saves (%d) become permanent and stay where they are in the list.")
+                    : muiText(kTextQuickSavesOldest, "The oldest quick saves (%d) become permanent: they stay where they are in the list but are no longer replaced by new ones."),
+                over);
+            lines.push_back(text);
+        }
+        if (values.quickSaves == 0 && current > 0) {
+            lines.push_back(muiText(kTextQuickSavesButton, "The quick save button will open the save screen, like a manual save."));
+        }
+        return lines;
+    }
+
+    // Asks to apply [values] ([always] - even when nothing needs a warning,
+    // leaving the screen); the quick saves' warning is in the question.
+    bool confirmApply(const Values& values, bool always)
+    {
+        std::vector<std::string> lines = quickSavesWarning(values);
+        if (lines.empty() && !always) {
+            return true;
+        }
+
+        std::vector<const char*> body;
+        for (const std::string& line : lines) {
+            body.push_back(line.c_str());
+        }
+        return showDialogBox(muiText(kTextApplyTitle, "Apply the changes?"), body.empty() ? nullptr : body.data(), static_cast<int>(body.size()), 0, 0, COLOR_AMBER, nullptr, COLOR_AMBER, DIALOG_BOX_YES_NO) != 0;
+    }
+
     // Sets [values] as the game's window's Done does, then this port's and
-    // CE's settings; all written to fallout2.cfg.
+    // CE's settings; all written to fallout2.cfg. Asked first
+    // (`confirmApply`).
     void applyValues(const Values& values)
     {
+        // The saves rearranged first: the setting is written only when they
+        // are (`lsgSetQuickSaveCount`).
+        if (values.quickSaves != lsgQuickSaveCount() && !lsgSetQuickSaveCount(values.quickSaves)) {
+            soundPlayFile("iisxxxx1");
+            const char* body[] = { muiText(kTextQuickSavesFailed, "Could not rearrange the quick saves, their number stays.") };
+            showDialogBox(muiText(kTextQuickSaves, "Quick saves"), body, 1, 0, 0, COLOR_AMBER, nullptr, COLOR_AMBER, 0);
+        }
+
         settings.enhancements.combat_speed_all_animations = values.allAnimations;
         settings.enhancements.main_menu_continue = values.mainMenuContinue;
         settings.enhancements.worldmap_follow_party = values.worldmapFollow;
@@ -418,6 +484,19 @@ namespace {
             row.set = [](Values& values, float value) { values.saveCompatibility = value != 0.0f; };
             rows.push_back(row);
         }
+        {
+            // sfall's AutoQuickSave pages: 0-10 of 10 slots.
+            Row row { Section::Game, RowKind::Slider, kTextQuickSaves, "Quick saves", Origin::Ce, kTextQuickSavesNote, "The oldest are replaced by new ones. Of 1000 places the rest are for manual saves" };
+            row.minValue = 0.0f;
+            row.maxValue = 100.0f;
+            row.format = [](float value) {
+                int count = static_cast<int>(std::lround(value));
+                return count == 0 ? std::string(muiText(kTextQuickSavesOff, "Off")) : std::to_string(count);
+            };
+            row.get = [](const Values& values) { return static_cast<float>(values.quickSaves); };
+            row.set = [](Values& values, float value) { values.quickSaves = static_cast<int>(std::lround(value / 10.0f)) * 10; };
+            rows.push_back(row);
+        }
         toggle(Section::Game, kTextAutoOpenDoors, "Open unlocked doors on the way", Origin::Ce, &Values::autoOpenDoors);
         toggle(Section::Game, kTextWalkWhenSneaking, "Walk instead of leaving sneak", Origin::Ce, &Values::walkWhenSneaking);
         toggle(Section::Game, kTextFastAmmoLoad, "Fast ammo loading", Origin::Ce, &Values::fastAmmoLoad);
@@ -547,6 +626,7 @@ namespace {
         unsigned int previewVersion = 0;
 
         bool pendingReset = false;
+        bool pendingApply = false;
         bool pendingBack = false;
         FilesAction pendingFiles = FilesAction::None;
 
@@ -721,9 +801,7 @@ namespace {
         bool dirty = anyChanged();
         if (ui.button("prefs.apply", apply, muiDecodeGameText(muiText(kTextApply, "Apply")), dirty ? MuiButtonStyle::Primary : MuiButtonStyle::Normal) && dirty) {
             _gsound_red_butt_press(-1, 0);
-            applyValues(edited);
-            applied = currentValues();
-            edited = applied;
+            pendingApply = true;
         }
     }
 
@@ -860,7 +938,7 @@ namespace {
             return;
         }
         // Settings changed here are kept.
-        if (anyChanged()) {
+        if (anyChanged() && confirmApply(edited, false)) {
             applyValues(edited);
         }
         openGameFiles(nullptr);
@@ -1010,7 +1088,8 @@ namespace {
                 row.set(edited, newValue);
             }
 
-            std::u32string text = muiDecodeUtf8(row.format(row.get(edited)).c_str());
+            // Numbers and the game's texts (its code page).
+            std::u32string text = muiDecodeGameText(row.format(row.get(edited)).c_str());
             muiDrawTextAligned(text, { control.right() - valueWidth, control.y, valueWidth, control.h }, ui.dp(12.0f), theme.textDim, MuiAlign::End, MuiAlign::Center);
 
             // The window's samples once the finger lets go.
@@ -1051,9 +1130,18 @@ namespace {
             }
         }
 
+        if (pendingApply) {
+            pendingApply = false;
+            if (confirmApply(edited, false)) {
+                applyValues(edited);
+                applied = currentValues();
+                edited = applied;
+            }
+        }
+
         if (pendingBack) {
             pendingBack = false;
-            if (showDialogBox(muiText(kTextApplyTitle, "Apply the changes?"), nullptr, 0, 0, 0, COLOR_AMBER, nullptr, COLOR_AMBER, DIALOG_BOX_YES_NO) != 0) {
+            if (confirmApply(edited, true)) {
                 applyValues(edited);
             } else {
                 // Volumes and brightness as they were.

@@ -2793,11 +2793,48 @@ bool lsgMobileDeleteSlot(int slot)
     return removed;
 }
 
-int lsgCopyQuickSave(int source)
+int lsgMakeQuickSavePermanent(int slot)
 {
-    int target = gSaveCatalog.copyQuick(source);
+    int target = gSaveCatalog.makePermanent(slot);
     lsgInvalidateSlotCache();
     return target;
+}
+
+int lsgQuickSaveCount()
+{
+    return quickSaveSlots;
+}
+
+int lsgQuickSavesOverCount(int count)
+{
+    if (!gLoadSaveReady) {
+        return 0;
+    }
+
+    lsgMobileRefreshSlots();
+    return gSaveCatalog.quickOverflow(quickSaveFirstSlot, count);
+}
+
+bool lsgSetQuickSaveCount(int count)
+{
+    int pages = std::clamp(count / slotsPerPage, 0, 10);
+    if (!gLoadSaveReady || pages * slotsPerPage == quickSaveSlots) {
+        return gLoadSaveReady;
+    }
+
+    lsgMobileRefreshSlots();
+    int slots = std::min(pages * slotsPerPage, saveLoadTotalSlots - quickSaveFirstSlot);
+    bool moved = gSaveCatalog.setQuickRange(quickSaveFirstSlot, slots);
+    lsgInvalidateSlotCache();
+    if (!moved) {
+        debugPrint("\nLOADSAVE: ** Quick saves not rearranged, their number stays! **\n");
+        return false;
+    }
+
+    quickSaveSlots = slots;
+    autoQuickSaveSlots = quickSaveSlots > 0;
+    settings.ui.auto_quick_save = pages;
+    return true;
 }
 
 int lsgSessionLoadSlot()

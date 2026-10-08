@@ -73,9 +73,26 @@ public:
     // folder. [sessionSave] - quick load loads it next.
     bool write(int slot, const std::function<bool()>& writer, bool sessionSave = true);
 
-    // Copies quick save [source] with all its files into a free manual slot
-    // (a new save made now). Returns the slot or -1.
-    int copyQuick(int source);
+    // Moves [from]'s save to the empty slot [to] with one rename: its files,
+    // times and record go along, quick load follows it. False - not moved.
+    bool move(int from, int to);
+
+    // Makes quick save [slot] a manual one: moved to a free manual slot, its
+    // place in the list stays. Returns the slot or -1.
+    int makePermanent(int slot);
+
+    // The quick range becomes [quickCount] slots from [firstQuick] with no
+    // save lost or replaced: manual saves in the new range leave it, quick
+    // saves over the new number (the oldest) become manual, the rest move
+    // into it. Each move is one rename to a slot that is right for the old
+    // and the new range alike, so a stop midway leaves the saves right for
+    // the old range (the setting is written after). [madePermanent] - how
+    // many quick saves became manual. False - a move failed, the old range
+    // stays.
+    bool setQuickRange(int firstQuick, int quickCount, int* madePermanent = nullptr);
+
+    // How many quick saves `setQuickRange` would make manual.
+    int quickOverflow(int firstQuick, int quickCount) const;
 
     // Removes the whole folder of [slot] (saves, maps, mod files, previews;
     // links inside are removed, not followed). False when nothing was
@@ -103,6 +120,12 @@ private:
     std::string transactionPath(int slot) const;
     std::string cleanupPath(int slot) const;
     bool recover(int slot);
+    // Valid quick saves, the newest first, and how many of them fit the
+    // range [firstQuick, quickCount] (`setQuickRange`).
+    std::vector<int> quickSavesNewestFirst() const;
+    int quickCapacity(int firstQuick, int quickCount) const;
+    // A free slot outside both ranges, -1 - none.
+    int freeOutside(int firstA, int countA, int firstB, int countB) const;
     void updateRecords();
     Entry read(int slot) const;
     void forget(int slot);

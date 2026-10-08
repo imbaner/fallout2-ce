@@ -835,6 +835,11 @@ every screen on the new scalable UI, visual style/textures later via theme).
   - quick saves: `[ui] auto_quick_save` pages from `auto_quick_save_page`
     (phone: slots 11-20), a free one or the oldest quick save, no
     description; manual saves: the first free slot outside that range;
+  - the number of quick saves is a settings row (0-100); changing it moves
+    saves between slots so none is lost (`setQuickRange`), a quick save
+    made permanent moves to a manual slot keeping its place (`move`, its
+    record goes along; a record left behind by a stop is picked up by the
+    next refresh);
   - order: `CE-META.TXT` next to SAVE.DAT (creation time and order, bound to
     SAVE.DAT's time, size and header), saves without it use SAVE.DAT's time;
   - quick load: the last save loaded or made in this session;

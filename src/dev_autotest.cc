@@ -311,6 +311,8 @@ enum DevAutotestAction {
     DEV_AUTOTEST_ACTION_MUI_DRAG_BY,
     // Logs the preferences and the settings the settings screen edits.
     DEV_AUTOTEST_ACTION_LOG_PREFERENCES,
+    // Logs the saves (count, quick ones); FAIL when there aren't [a] of them.
+    DEV_AUTOTEST_ACTION_LOG_SAVES,
 };
 
 struct DevAutotestStep {
@@ -1057,7 +1059,8 @@ static const DevAutotestStep kDevAutotestLoadSaveSteps[] = {
 };
 
 // Own empty SAVEGAME, test game's quick saves: one page from page 1. Check actual engine
-// round trips as well as native copy/new-save actions and session quickload.
+// round trips as well as making a quick save permanent, new saves and session
+// quickload.
 static const DevAutotestStep kDevAutotestSaveHistorySteps[] = {
     { DEV_AUTOTEST_ACTION_SET_NAME, 0, 0, 0, 1, "h00_name", "ANCHOR" },
     { DEV_AUTOTEST_ACTION_SAVE_GAME, 0, 0, 0, 10, "h01_manual", "Manual anchor" },
@@ -1080,10 +1083,10 @@ static const DevAutotestStep kDevAutotestSaveHistorySteps[] = {
     { DEV_AUTOTEST_ACTION_BACK, 0, 0, 0, 20, "h18_menu" },
     { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "h19_load", "menu.load" },
     { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "h20_select_quick", "loadsave.slots.11" },
-    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "h21_copy", "loadsave.copy" },
-    { DEV_AUTOTEST_ACTION_CHECK_SAVE_SESSION, 1, 0, 0, 1, "h22_copy_keeps_anchor", "MANUAL" },
-    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "h23_load_copy", "loadsave.action" },
-    { DEV_AUTOTEST_ACTION_CHECK_SAVE_SESSION, 2, 0, 0, 1, "h24_copy_is_original_snapshot", "QUICK" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "h21_permanent", "loadsave.permanent" },
+    { DEV_AUTOTEST_ACTION_CHECK_SAVE_SESSION, 1, 0, 0, 1, "h22_permanent_keeps_anchor", "MANUAL" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "h23_load_permanent", "loadsave.action" },
+    { DEV_AUTOTEST_ACTION_CHECK_SAVE_SESSION, 2, 0, 0, 1, "h24_permanent_is_original_snapshot", "QUICK" },
     { DEV_AUTOTEST_ACTION_CHECK_LOADED_WORLD, 0, 0, 0, 20, "h25_world" },
     { DEV_AUTOTEST_ACTION_BACK, 0, 0, 0, 20, "h26_menu" },
     { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "h27_save", "menu.save" },
@@ -1161,6 +1164,27 @@ static const DevAutotestStep kDevAutotestPreferencesSteps[] = {
     { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "p25_yes", "dialog.primary" },
     { DEV_AUTOTEST_ACTION_CHECK_WIDGET, 0, 0, 0, 1, "p26_closed", "prefs.apply" },
     { DEV_AUTOTEST_ACTION_LOG_PREFERENCES, 0, 0, 0, 1, "p27_defaults" },
+};
+
+// Own SAVEGAME, 16 saves (manual 1, quick 11-20, manual 21-25): the number of
+// quick saves grows (no question), goes off (asked: they become permanent)
+// and back on - no save lost on the way.
+static const DevAutotestStep kDevAutotestQuickSavesSteps[] = {
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "q00_start" },
+    { DEV_AUTOTEST_ACTION_LOG_SAVES, 16, 0, 0, 1, "q01_saves" },
+    { DEV_AUTOTEST_ACTION_BACK, 0, 0, 0, 40, "q02_menu" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "q03_settings", "menu.settings" },
+    { DEV_AUTOTEST_ACTION_MUI_DRAG_BY, 0, -0.45f, 0, 40, "q04_scrolled", "prefs.rows.253" },
+    { DEV_AUTOTEST_ACTION_MUI_DRAG_BY, 0.15f, 0, 0, 40, "q05_more", "prefs.rows.360" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "q06_applied", "prefs.apply" },
+    { DEV_AUTOTEST_ACTION_LOG_SAVES, 16, 0, 0, 1, "q07_saves" },
+    { DEV_AUTOTEST_ACTION_MUI_DRAG_BY, -0.6f, 0, 0, 40, "q08_off", "prefs.rows.360" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "q09_asks", "prefs.apply" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "q10_yes", "dialog.primary" },
+    { DEV_AUTOTEST_ACTION_LOG_SAVES, 16, 0, 0, 1, "q11_saves" },
+    { DEV_AUTOTEST_ACTION_MUI_DRAG_BY, 0.03f, 0, 0, 40, "q12_on", "prefs.rows.360" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 40, "q13_applied", "prefs.apply" },
+    { DEV_AUTOTEST_ACTION_LOG_SAVES, 16, 0, 0, 1, "q14_saves" },
 };
 
 // Own SAVEGAME with a copy of the test save in slot 1: cancel once, then delete it.
@@ -1843,6 +1867,8 @@ enum class DevAutotestSaves {
     // The same, its SAVE.DAT cut after the header and the thumbnail (a
     // save that can't be loaded).
     BrokenTestSaveInSlot1,
+    // Copies of the test save in slots 1, 11-20 and 21-25.
+    QuickRing,
 };
 
 static DevAutotestSaves gDevAutotestSaves = DevAutotestSaves::Keep;
@@ -1885,6 +1911,12 @@ static void devAutotestPrepareSaves()
             prepared = saveStorage::copyTree(kept + "/SLOT10", root + "/SLOT01");
         }
 
+        for (int slot = 11; prepared && gDevAutotestSaves == DevAutotestSaves::QuickRing && slot <= 25; slot++) {
+            char name[32];
+            snprintf(name, sizeof(name), "/SLOT%02d", slot);
+            prepared = saveStorage::copyTree(kept + "/SLOT10", root + name);
+        }
+
         if (prepared && gDevAutotestSaves == DevAutotestSaves::BrokenTestSaveInSlot1) {
             std::string path = root + "/SLOT01/SAVE.DAT";
             std::string data;
@@ -1904,7 +1936,9 @@ static void devAutotestPrepareSaves()
             exit(EXIT_FAILURE);
         }
 
-        devAutotestLog("  own SAVEGAME%s\n", gDevAutotestSaves == DevAutotestSaves::Empty ? ", empty" : " with the test save in slot 1");
+        devAutotestLog("  own SAVEGAME%s\n", gDevAutotestSaves == DevAutotestSaves::Empty ? ", empty"
+                : gDevAutotestSaves == DevAutotestSaves::QuickRing ? " with the test save in slots 1, 11-25"
+                                                                   : " with the test save in slot 1");
     }
 
     lsgMobileRefreshSlots();
@@ -1932,6 +1966,10 @@ void devAutotestSetScenario(const char* name)
         gDevAutotestSteps = kDevAutotestMuiLoadSaveSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestMuiLoadSaveSteps) / sizeof(kDevAutotestMuiLoadSaveSteps[0]);
         gDevAutotestSaves = DevAutotestSaves::Empty;
+    } else if (strcmp(name, "quicksaves") == 0) {
+        gDevAutotestSteps = kDevAutotestQuickSavesSteps;
+        gDevAutotestStepCount = sizeof(kDevAutotestQuickSavesSteps) / sizeof(kDevAutotestQuickSavesSteps[0]);
+        gDevAutotestSaves = DevAutotestSaves::QuickRing;
     } else if (strcmp(name, "muiloadsavedelete") == 0) {
         gDevAutotestSteps = kDevAutotestMuiDeleteSaveSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestMuiDeleteSaveSteps) / sizeof(kDevAutotestMuiDeleteSaveSteps[0]);
@@ -2753,6 +2791,26 @@ void devAutotestTick()
             devAutotestLog("  settings: all animations %d, walk when sneaking %d, hud scale %d, map filter %d\n",
                 settings.enhancements.combat_speed_all_animations ? 1 : 0, settings.qol.walk_when_sneaking ? 1 : 0,
                 settings.touch.hud_scale, settings.world_view.filter);
+            break;
+        }
+        case DEV_AUTOTEST_ACTION_LOG_SAVES: {
+            lsgMobileRefreshSlots();
+            int count = 0;
+            std::string quick;
+            for (int slot = 0; slot < 1000; slot++) {
+                MobileSaveSlotInfo info;
+                if (lsgMobileGetSlotInfo(slot, &info) && info.state == MobileSaveSlotState::Occupied) {
+                    count++;
+                    if (lsgMobileIsQuickSlot(slot)) {
+                        quick += " " + std::to_string(slot + 1);
+                    }
+                }
+            }
+            devAutotestLog("  saves: %d, quick saves setting %d (auto_quick_save %d), quick:%s\n",
+                count, lsgQuickSaveCount(), settings.ui.auto_quick_save, quick.empty() ? " none" : quick.c_str());
+            if (count != static_cast<int>(step->a)) {
+                devAutotestLog("FAIL: %d saves, expected %d\n", count, static_cast<int>(step->a));
+            }
             break;
         }
         case DEV_AUTOTEST_ACTION_MAP_TRANSITION: {
