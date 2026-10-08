@@ -1,7 +1,6 @@
 #include "map_hints.h"
 
 #include <algorithm>
-#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -149,29 +148,10 @@ namespace {
     constexpr int kBlockedColor = 61;
     constexpr int kTargetColor = 254; // bobber
 
-    // The grid covers the screen: rings around its middle up to this many
-    // tiles (the screen at the smallest zoom is less).
-    constexpr int kGridMaxRadius = 90;
-
     MuiColor paletteColor(int index, Uint8 alpha = 255)
     {
         const unsigned char* palette = directDrawGetPalette();
         return { static_cast<Uint8>(palette[index * 3] << 2), static_cast<Uint8>(palette[index * 3 + 1] << 2), static_cast<Uint8>(palette[index * 3 + 2] << 2), alpha };
-    }
-
-    // Tiles at [distance] from [center], walked around clockwise (empty
-    // when it leaves the map).
-    std::vector<int> tileRing(int center, int distance)
-    {
-        std::vector<int> ring;
-        int tile = tileGetTileInDirection(center, ROTATION_W, distance);
-        for (int side = 0; side < ROTATION_COUNT && tile != -1; side++) {
-            for (int step = 0; step < distance && tile != -1; step++) {
-                ring.push_back(tile);
-                tile = tileGetTileInDirection(tile, static_cast<Rotation>(side), 1);
-            }
-        }
-        return ring;
     }
 
     void drawTacticalView(MuiContext& ui, float scale)
@@ -182,65 +162,15 @@ namespace {
                 && outline[0].y > screen.y - screen.h * 0.1f && outline[0].y < screen.bottom() + screen.h * 0.1f;
         };
 
-        // The grid over the whole screen, fainter zoomed out (tiles get
-        // small). Each tile draws its edges towards three neighbours, the
-        // other three are its neighbours' - every edge once.
-        int middleX;
-        int middleY;
-        worldViewScreenToWorld(static_cast<int>(screen.centerX() / scale), static_cast<int>(screen.centerY() / scale), &middleX, &middleY);
-        int middle = tileFromScreenXY(middleX, middleY);
-        float zoom = std::clamp(worldViewGetZoom(), 0.5f, 1.0f);
-        MuiColor gridColor = muiRgb(0xD9C79A, static_cast<Uint8>(22.0f + 26.0f * (zoom - 0.5f) * 2.0f));
-        for (int distance = 0; distance <= kGridMaxRadius && middle != -1; distance++) {
-            bool any = false;
-            std::vector<int> ring = distance == 0 ? std::vector<int> { middle } : tileRing(middle, distance);
-            for (int tile : ring) {
-                std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
-                if (!onScreen(outline)) {
-                    continue;
-                }
-                any = true;
-                for (int rotation = 0; rotation < 3; rotation++) {
-                    const SDL_FPoint& from = outline[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
-                    const SDL_FPoint& to = outline[rotation];
-                    muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.0f), gridColor);
-                }
-            }
-            if (!any && distance > 0) {
-                break;
-            }
-        }
-
-        // Tiles nobody can stand on within the walk, then the walk's
-        // border: edges of its tiles with a neighbour outside it.
+        // Where the dude can walk: each tile lightly filled, its grid.
         const TacticalViewReach& reach = tacticalViewGetReach();
-        for (int tile : reach.blocked) {
+        MuiColor fill = muiTheme().accent.withAlpha(34);
+        MuiColor grid = muiTheme().accent.withAlpha(70);
+        for (int tile : reach.reachable) {
             std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
             if (onScreen(outline)) {
-                muiFillConvex(outline, muiRgb(0x4A4A4A, 140));
-                muiDrawPolyline(outline, ui.dp(1.0f), muiRgb(0x8C8C8C, 170), true);
-            }
-        }
-
-        if (!reach.reachable.empty()) {
-            std::unordered_set<int> area(reach.reachable.begin(), reach.reachable.end());
-            area.insert(gDude->tile);
-            MuiColor border = muiTheme().accent.withAlpha(190);
-            for (int tile : area) {
-                std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
-                if (outline.empty()) {
-                    continue;
-                }
-                // Corner `k` is between the neighbours `k` and `k + 1`, the
-                // edge towards neighbour `d` from corner `d - 1` to `d`.
-                for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
-                    int neighbour = tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1);
-                    if (area.count(neighbour) == 0) {
-                        const SDL_FPoint& from = outline[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
-                        const SDL_FPoint& to = outline[rotation];
-                        muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.6f), border);
-                    }
-                }
+                muiFillConvex(outline, fill);
+                muiDrawPolyline(outline, ui.dp(1.0f), grid, true);
             }
         }
 
@@ -428,14 +358,13 @@ namespace {
             }
         }
 
-        // Hit chance: above the enemy, in the tactical view inside its tile.
+        // Hit chance above the enemy (the tactical view too: there the enemy
+        // is picked by its tile).
         if (gAttackTarget != nullptr) {
             SDL_FPoint pill;
             MuiRect rect;
             bool placed = false;
-            if (tactical) {
-                placed = tileCenter(gAttackTarget->tile, scale, &pill);
-            } else if (muiObjectRect(gAttackTarget, &rect)) {
+            if (muiObjectRect(gAttackTarget, &rect)) {
                 pill = { rect.centerX(), rect.y - ui.dp(14.0f) };
                 placed = true;
             }

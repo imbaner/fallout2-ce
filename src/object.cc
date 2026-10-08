@@ -64,6 +64,7 @@ static int _obj_connect_to_tile(ObjectListNode* node, int tile_index, int elev, 
 static int _obj_adjust_light(Object* obj, int a2, Rect* rect);
 static void objectDrawOutline(Object* object, Rect* rect);
 static void _obj_render_object(Object* object, Rect* rect, int light);
+static bool objectHasDrawnOutline(Object* object);
 static int _obj_preload_sort(const void* fid1, const void* fid2);
 static Object* objectPrepareWhoHitMeForSave(CritterCombatData* combatData);
 
@@ -852,7 +853,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
                     if ((objectListNode->obj->flags & OBJECT_HIDDEN) == OBJECT_NONE) {
                         _obj_render_object(objectListNode->obj, &updatedRect, lightIntensity);
 
-                        if (objectHasVisibleOutline(objectListNode->obj)) {
+                        if (objectHasDrawnOutline(objectListNode->obj)) {
                             outlinedObjects.push_back(objectListNode->obj);
                         }
                     }
@@ -888,7 +889,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
                 if ((objectListNode->obj->flags & OBJECT_HIDDEN) == OBJECT_NONE) {
                     _obj_render_object(object, &updatedRect, lightIntensity);
 
-                    if (objectHasVisibleOutline(objectListNode->obj)) {
+                    if (objectHasDrawnOutline(objectListNode->obj)) {
                         outlinedObjects.push_back(objectListNode->obj);
                     }
                 }
@@ -2943,6 +2944,16 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
 
+// The game's visible outlines; in the tactical view every critter the game
+// gave an outline (it sees them) shows it, whatever target highlight says.
+static bool objectHasDrawnOutline(Object* object)
+{
+    if (objectHasVisibleOutline(object)) {
+        return true;
+    }
+    return gObjectsSeeThrough && objectHasOutline(object) && FrmId(object).objectType() == OBJ_TYPE_CRITTER;
+}
+
 static bool objectIsSeeThrough(Object* object, ObjectType type)
 {
     return gObjectsSeeThrough && object != gEgg && (type == OBJ_TYPE_CRITTER || type == OBJ_TYPE_ITEM);
@@ -4798,10 +4809,6 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect)
 // 0x48EABC obj_render_outline
 static void objectDrawOutline(Object* object, Rect* rect)
 {
-    // CE: The tactical view outlines critters' tiles instead.
-    if (gObjectsSeeThrough && FrmId(object).objectType() == OBJ_TYPE_CRITTER) {
-        return;
-    }
 
     CacheEntry* cacheEntry;
     Art* art = artLock(FrmId(object), &cacheEntry);

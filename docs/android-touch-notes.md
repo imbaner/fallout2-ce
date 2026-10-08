@@ -115,19 +115,24 @@ goes through mouse emulation in touchscreen (absolute) mode.
   hints): a HUD button over End turn / End combat. On the player's turns
   critters and items are drawn half see-through (`objectSetSeeThrough`: a
   256x256 table of palette colors halfway between two, built from the
-  game's palette once; drawing only, objects' flags - saved - untouched;
-  critters' outlines aren't drawn), over the map: a faint grid over the
-  screen (each shared edge once, fainter zoomed out), the walk with the
-  action points left (a breadth-first walk around what blocks, as
-  `_make_path`; its border; tiles something stands on inside it grey),
-  everyone's tile in the game's combat outline colors read from the
-  cycling palette (friendly 229, hostile 243, blocked line of fire 61, the
-  selected enemy 254 - they pulse as the critters' outlines do), the dude's
-  thicker; the move tile and the hit chance as in normal combat, the hit
-  chance inside the enemy's tile. Taps and long presses pick tiles: a
-  critter by the tile it stands on (`tacticalViewCritterAt`), items and
-  corpses not at all. Hidden on others' turns, off when the combat ends.
-  Autotest `tactical`.
+  game's palette once; drawing only, objects' flags - saved - untouched),
+  every critter the game sees keeps its outline on the see-through figure
+  (target highlight aside; their sight is updated when the dude moves).
+  Over the map: the tiles the dude can walk to with the action points left
+  (a breadth-first walk around what blocks, as `_make_path`) lightly
+  filled with their grid - no grid elsewhere; everyone's tile in the
+  game's combat outline colors read from the cycling palette (friendly
+  229, hostile 243, blocked line of fire 61, the selected enemy 254 - they
+  pulse as the outlines do), the dude's thicker; the move tile and the hit
+  chance above the enemy as in normal combat. Taps and long presses pick
+  tiles: a critter by the tile it stands on (`tacticalViewCritterAt`),
+  items and corpses not at all. Hidden on others' turns, off when the
+  combat ends. Autotest `tactical`.
+- Combat outlines with touch controls (2026-10-09,
+  `combatOutlinesFollowTurn`): the game outlines critters only while the
+  cursor is a crosshair; touch controls have no cursor (a move selection
+  is the move mode), so target highlight "On" now outlines them the whole
+  player's turn, "Targeting only" while an enemy is selected.
   In combat a ground tap picks an enemy standing on that tile or on its body
   column (`touchControlsFindEnemyNear`: +-12 world px around its tile center,
   from the sprite top to the feet); sprite boxes of wide critters cover

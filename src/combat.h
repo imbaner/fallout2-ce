@@ -66,6 +66,13 @@ constexpr int kCalledShotTargetCount = 8;
 void calledShotGetTargets(Object* critter, HitMode hitMode, CalledShotTarget* targets);
 void _combat_outline_on();
 void _combat_outline_off();
+// CE: Touch controls have no cursor to keep in targeting: target highlight
+// "On" outlines critters the whole player's turn (the game: while the
+// cursor is a crosshair), "Targeting only" while an enemy is selected (the
+// crosshair mode touch controls set then).
+bool combatOutlinesFollowTurn();
+// Living critters in the combat (the tactical view outlines them all).
+void combatForEachCritter(void (*callback)(Object* critter));
 void _combat_highlight_change();
 bool _combat_is_shot_blocked(Object* sourceObj, int from, int to, Object* targetObj, int* numCrittersOnLof);
 int _combat_player_knocked_out_by();

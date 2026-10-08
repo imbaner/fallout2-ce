@@ -3434,8 +3434,8 @@ void devAutotestTick()
         case DEV_AUTOTEST_ACTION_CHECK_TACTICAL: {
             bool shown = tacticalViewIsShown();
             const TacticalViewReach& reach = tacticalViewGetReach();
-            devAutotestLog("  tactical view: on %d, shown %d, walk %d tiles, blocked %d: %s\n", tacticalViewIsOn() ? 1 : 0, shown ? 1 : 0,
-                static_cast<int>(reach.reachable.size()), static_cast<int>(reach.blocked.size()), shown == (step->a != 0) ? "PASS" : "FAIL");
+            devAutotestLog("  tactical view: on %d, shown %d, walk %d tiles: %s\n", tacticalViewIsOn() ? 1 : 0, shown ? 1 : 0,
+                static_cast<int>(reach.reachable.size()), shown == (step->a != 0) ? "PASS" : "FAIL");
             break;
         }
         case DEV_AUTOTEST_ACTION_CHECK_SELECTION: {

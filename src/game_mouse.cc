@@ -1517,7 +1517,11 @@ void gameMouseSetMode(GameMouseMode mode)
         _combat_outline_on();
         break;
     case -1:
-        _combat_outline_off();
+        // CE: Touch controls with target highlight "On" keep the outlines
+        // the whole turn (`combatOutlinesFollowTurn`).
+        if (!combatOutlinesFollowTurn()) {
+            _combat_outline_off();
+        }
         break;
     }
 

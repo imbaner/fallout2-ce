@@ -6046,13 +6046,28 @@ void _combat_attack_this(Object* target)
 // Highlights critters.
 //
 // 0x426AA8
+bool combatOutlinesFollowTurn()
+{
+    return touchControlsIsEnabled() && settings.preferences.target_highlight == TARGET_HIGHLIGHT_ON;
+}
+
+void combatForEachCritter(void (*callback)(Object* critter))
+{
+    for (int index = 0; index < _list_total; index++) {
+        Object* critter = _combat_list[index];
+        if (critter != gDude && (critter->data.critter.combat.results & DAM_DEAD) == DAM_NONE) {
+            callback(critter);
+        }
+    }
+}
+
 void _combat_outline_on()
 {
     if (settings.preferences.target_highlight == TARGET_HIGHLIGHT_OFF) {
         return;
     }
 
-    if (gameMouseGetMode() != GAME_MOUSE_MODE_CROSSHAIR) {
+    if (gameMouseGetMode() != GAME_MOUSE_MODE_CROSSHAIR && !combatOutlinesFollowTurn()) {
         return;
     }
 

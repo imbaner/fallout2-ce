@@ -9,11 +9,11 @@ namespace fallout {
 
 // CE: Combat's tactical view (touch controls). A HUD button in combat turns
 // it on: on the player's turns critters and items are drawn see-through
-// (`objectSetSeeThrough`), the map hints draw the tiles - a grid, everyone's
-// tile in the game's combat outline colors, where the dude can walk with
-// the action points left, tiles nobody can stand on - and taps and long
-// presses pick tiles: a critter by the tile it stands on, items and corpses
-// not at all. Hidden on other turns, off when the combat ends.
+// with every critter's outline (`objectSetSeeThrough`), the map hints draw
+// the tiles - where the dude can walk with the action points left (filled,
+// a grid), everyone's tile in the game's combat outline colors - and taps
+// and long presses pick tiles: a critter by the tile it stands on, items
+// and corpses not at all. Hidden on other turns, off when the combat ends.
 
 // The button.
 void tacticalViewToggle();

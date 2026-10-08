@@ -10,8 +10,11 @@
 #include "combat.h"
 #include "critter.h"
 #include "game.h"
+#include "game_config.h"
+#include "game_mouse.h"
 #include "map.h"
 #include "object.h"
+#include "settings.h"
 #include "tile.h"
 #include "touch_controls.h"
 
@@ -24,6 +27,16 @@ namespace {
     constexpr unsigned int kReachRefreshMs = 250;
 
     bool gOn = false;
+
+    // The outlines' colors are the game's sight of each critter, kept up to
+    // date while shown: from the dude's tile when it changes.
+    int gOutlinesTile = -1;
+    bool gOutlinesEnabled = false;
+
+    void updateOutline(Object* critter)
+    {
+        _combat_update_critter_outline_for_los(critter, gOutlinesEnabled);
+    }
 
     struct ReachKey {
         int tile = -1;
@@ -62,7 +75,6 @@ namespace {
     void computeReach()
     {
         gReach.reachable.clear();
-        gReach.blocked.clear();
 
         int steps = maxSteps();
         if (steps == 0) {
@@ -88,11 +100,7 @@ namespace {
                 }
                 distances[neighbour] = distance + 1;
 
-                Object* blocker = _obj_blocking_at(gDude, neighbour, gDude->elevation);
-                if (blocker != nullptr) {
-                    if (FrmId(blocker).objectType() != OBJ_TYPE_CRITTER) {
-                        gReach.blocked.push_back(neighbour);
-                    }
+                if (_obj_blocking_at(gDude, neighbour, gDude->elevation) != nullptr) {
                     continue;
                 }
 
@@ -129,7 +137,19 @@ void tacticalViewUpdate()
         gOn = false;
     }
 
-    objectSetSeeThrough(tacticalViewIsShown());
+    bool shown = tacticalViewIsShown();
+    if (!shown) {
+        gOutlinesTile = -1;
+    } else if (gDude->tile != gOutlinesTile) {
+        // Who the dude sees (as `_combat_outline_on`), enabled only where
+        // the game shows them now - the view draws them anyway.
+        gOutlinesTile = gDude->tile;
+        gOutlinesEnabled = settings.preferences.target_highlight != TARGET_HIGHLIGHT_OFF
+            && (combatOutlinesFollowTurn() || gameMouseGetMode() == GAME_MOUSE_MODE_CROSSHAIR);
+        combatForEachCritter(updateOutline);
+    }
+
+    objectSetSeeThrough(shown);
 }
 
 Object* tacticalViewCritterAt(int tile)
