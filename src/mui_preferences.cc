@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "db.h"
 #include "dbox.h"
 #include "debug.h"
 #include "dev_autotest.h"
@@ -25,9 +26,11 @@
 #include "svga.h"
 #include "world_view.h"
 #include "xfile.h"
+#include "platform/git_version.h"
+
+#include <SDL.h>
 
 #ifdef __ANDROID__
-#include <SDL.h>
 #include <jni.h>
 #endif
 
@@ -124,6 +127,37 @@ namespace {
     constexpr int kTextQuickSavesAll = 364;
     constexpr int kTextQuickSavesButton = 365;
     constexpr int kTextQuickSavesFailed = 366;
+    constexpr int kTextSectionAbout = 367;
+    constexpr int kTextAboutVersion = 368;
+    constexpr int kTextAboutNotice = 369;
+    constexpr int kTextAboutSource = 370;
+    constexpr int kTextAboutOpen = 371;
+    constexpr int kTextAboutLicenses = 372;
+
+    // Where the port's source is (the about section, README).
+    constexpr const char* kSourceUrl = "https://github.com/imbaner/fallout2-ce";
+
+    // The engine's and its components' licenses (ce.dat), shown in full: the
+    // engine's license asks every copy to come with it.
+    struct LicenseFile {
+        const char* title;
+        const char* path;
+    };
+    const LicenseFile kLicenseFiles[] = {
+        { "Fallout 2 Community Edition - Sustainable Use License 1.0", "licenses\\fallout2-ce.txt" },
+        { "SDL 2 - zlib License", "licenses\\sdl2.txt" },
+        { "zlib - zlib License", "licenses\\zlib.txt" },
+        { "libarchive - BSD License", "licenses\\libarchive.txt" },
+        { "XZ Utils (liblzma) - BSD Zero Clause License", "licenses\\xz.txt" },
+        { "LodePNG - zlib License", "licenses\\lodepng.txt" },
+        { "stb_truetype, stb_vorbis - MIT / Public Domain", "licenses\\stb.txt" },
+        { "fpattern", "licenses\\fpattern.txt" },
+        { "PT Mono - SIL Open Font License 1.1", "fonts\\OFL.txt" },
+    };
+
+#ifndef FALLOUT_APP_VERSION
+#define FALLOUT_APP_VERSION "1.3.0"
+#endif
 
     // The port's number of quick saves (one page, the phone's config); CE's
     // own default is none.
@@ -307,6 +341,8 @@ namespace {
         // The game's files and saves (Android: the app's import screen):
         // actions, not settings - no apply or reset there.
         Files,
+        // Version, notices, the source and the licenses.
+        About,
         Count,
     };
 
@@ -611,6 +647,14 @@ namespace {
         bool inGame;
         Section section = Section::Game;
         bool resetScroll = true;
+        // The about section's lines, wrapped for [aboutWidth].
+        struct AboutLine {
+            std::u32string text;
+            float size;
+            bool heading;
+        };
+        std::vector<AboutLine> aboutLines;
+        float aboutWidth = -1.0f;
 
         MessageList optionsMessages;
         bool optionsLoaded = false;
@@ -638,6 +682,7 @@ namespace {
 
         void buildRows(MuiContext& ui, const MuiRect& rect);
         void buildFiles(MuiContext& ui, const MuiRect& rect);
+        void buildAbout(MuiContext& ui, const MuiRect& rect);
         void runFilesAction(FilesAction action);
         void buildRow(MuiContext& ui, size_t index, const MuiRect& rect);
     };
@@ -754,13 +799,19 @@ namespace {
             { kTextSectionDisplay, "Display" },
         };
         std::vector<std::u32string> labels;
-        std::vector<bool> marked(static_cast<size_t>(Section::Count), false);
+        std::vector<Section> shown;
         for (const auto& entry : kSections) {
             labels.push_back(muiDecodeGameText(muiText(entry.textId, entry.fallback)));
+            shown.push_back(static_cast<Section>(shown.size()));
         }
         if (gameFilesAvailable()) {
             labels.push_back(muiDecodeGameText(muiText(kTextSectionFiles, "Game files")));
+            shown.push_back(Section::Files);
         }
+        labels.push_back(muiDecodeGameText(muiText(kTextSectionAbout, "About")));
+        shown.push_back(Section::About);
+
+        std::vector<bool> marked(shown.size(), false);
         for (const Row& row : rows) {
             if (changed(row)) {
                 marked[static_cast<size_t>(row.section)] = true;
@@ -768,10 +819,10 @@ namespace {
         }
 
         muiFillRoundRect(list, ui.dp(7.0f), kPanel);
-        int current = static_cast<int>(section);
+        int current = static_cast<int>(std::find(shown.begin(), shown.end(), section) - shown.begin());
         int chosen = muiSectionList(ui, "prefs.sections", list, labels, current, marked);
-        if (chosen != current) {
-            section = static_cast<Section>(chosen);
+        if (chosen != current && chosen >= 0 && chosen < static_cast<int>(shown.size())) {
+            section = shown[chosen];
             resetScroll = true;
             if (section == Section::Display) {
                 capturePreview();
@@ -784,6 +835,10 @@ namespace {
         MuiRect inner = panel.inset(ui.dp(8.0f));
         if (section == Section::Files) {
             buildFiles(ui, inner);
+            return;
+        }
+        if (section == Section::About) {
+            buildAbout(ui, inner);
             return;
         }
         float buttonHeight = ui.dp(40.0f);
@@ -808,6 +863,96 @@ namespace {
     // The game's files and saves, laid out as the settings' rows: what is
     // installed as a header, then each action - its name and what it does at
     // the left, its button at the right.
+    // What this build is, that it isn't official, where its source is, and
+    // the licenses in full (scrolling).
+    void PreferencesScreen::buildAbout(MuiContext& ui, const MuiRect& rect)
+    {
+        const MuiTheme& theme = muiTheme();
+
+        float buttonHeight = ui.dp(40.0f);
+        MuiRect button = { rect.x, rect.bottom() - buttonHeight, rect.w, buttonHeight };
+        MuiRect text = { rect.x, rect.y, rect.w, button.y - ui.dp(8.0f) - rect.y };
+        float textWidth = text.w - ui.dp(8.0f);
+
+        if (aboutWidth != textWidth) {
+            aboutWidth = textWidth;
+            aboutLines.clear();
+            auto add = [&](const std::u32string& value, float size, bool heading) {
+                for (const std::u32string& line : muiWrapText(value, textWidth, size)) {
+                    aboutLines.push_back({ line, size, heading });
+                }
+            };
+            auto gap = [&]() { aboutLines.push_back({ U"", ui.dp(6.0f), false }); };
+
+            char version[160];
+            snprintf(version, sizeof(version), muiText(kTextAboutVersion, "Version %s, build %s"), FALLOUT_APP_VERSION, _BUILD_HASH);
+            add(U"Fallout 2 CE", ui.dp(16.0f), true);
+            add(muiDecodeGameText(version), ui.dp(11.0f), false);
+            gap();
+            add(muiDecodeGameText(muiText(kTextAboutNotice, "An unofficial mobile version of Fallout 2 Community Edition: CE's engine changed for touch screens. Not affiliated with Bethesda Softworks, ZeniMax or Interplay. Needs your own copy of Fallout 2.")), ui.dp(12.0f), false);
+            gap();
+            add(muiDecodeGameText(muiText(kTextAboutSource, "Source and changes:")) + U" " + muiDecodeUtf8(kSourceUrl), ui.dp(12.0f), false);
+            gap();
+            add(muiDecodeGameText(muiText(kTextAboutLicenses, "Licenses")), ui.dp(14.0f), true);
+
+            // As written (their lines are short), long ones wrapped.
+            for (const LicenseFile& license : kLicenseFiles) {
+                gap();
+                add(muiDecodeUtf8(license.title), ui.dp(12.0f), true);
+                File* stream = fileOpen(license.path, "rb");
+                if (stream == nullptr) {
+                    continue;
+                }
+                std::string contents(std::max(fileGetSize(stream), 0), '\0');
+                contents.resize(fileRead(&contents[0], 1, contents.size(), stream));
+                fileClose(stream);
+
+                size_t start = 0;
+                while (start <= contents.size()) {
+                    size_t end = contents.find('\n', start);
+                    if (end == std::string::npos) {
+                        end = contents.size();
+                    }
+                    std::string line = contents.substr(start, end - start);
+                    if (!line.empty() && line.back() == '\r') {
+                        line.pop_back();
+                    }
+                    if (line.empty()) {
+                        aboutLines.push_back({ U"", ui.dp(10.0f), false });
+                    } else {
+                        add(muiDecodeUtf8(line.c_str()), ui.dp(10.0f), false);
+                    }
+                    start = end + 1;
+                }
+            }
+        }
+
+        float height = 0.0f;
+        for (const AboutLine& line : aboutLines) {
+            height += line.size * 1.35f;
+        }
+
+        if (resetScroll) {
+            ui.setScroll("prefs.about", 0.0f);
+            resetScroll = false;
+        }
+        float offset = ui.scroll("prefs.about", text, height);
+        muiPushClip(text);
+        float y = text.y - offset;
+        for (const AboutLine& line : aboutLines) {
+            float lineHeight = line.size * 1.35f;
+            if (y + lineHeight >= text.y && y <= text.bottom() && !line.text.empty()) {
+                muiDrawTextAligned(line.text, { text.x + ui.dp(4.0f), y, textWidth, lineHeight }, line.size, line.heading ? theme.text : theme.textDim, MuiAlign::Start, MuiAlign::Center);
+            }
+            y += lineHeight;
+        }
+        muiPopClip();
+
+        if (ui.button("prefs.about.source", button, muiDecodeGameText(muiText(kTextAboutOpen, "Open the source page")))) {
+            SDL_OpenURL(kSourceUrl);
+        }
+    }
+
     void PreferencesScreen::buildFiles(MuiContext& ui, const MuiRect& rect)
     {
         const MuiTheme& theme = muiTheme();

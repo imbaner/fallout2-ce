@@ -1,3 +1,57 @@
+# Fallout 2 CE Mobile (unofficial)
+
+[Русская версия](README.ru.md)
+
+A fork of [Fallout 2: Community Engine](https://github.com/fallout2-ce/fallout2-ce) made for Android phones: every screen of the game rebuilt for a touch screen, in landscape. **Early beta.**
+
+This is an **unofficial, fan-made, modified version** of Fallout 2 CE. It is not affiliated with or endorsed by Bethesda Softworks, ZeniMax Media or Interplay. Fallout is a trademark of its owners. The app contains **no game data**: you need your own copy of Fallout 2 ([GOG](https://www.gog.com/game/fallout_2), [Steam](https://store.steampowered.com/app/38410), [Epic Games](https://store.epicgames.com/p/fallout-2)).
+
+## What is changed (modified software notice)
+
+On top of CE (its engine, fixes and sfall compatibility are kept and updated from upstream):
+
+- **Touch UI.** The game's screens are replaced with screens made for fingers and the phone's resolution: dialogue, barter, inventory, loot, character and level-up, character creation, Pip-Boy (quests, holodisks with their voice, maps, videos, rest), automap, world map and town maps, skills, game menu, settings, save/load, main menu, dialog boxes, called shots. No cursor: tap to act, long press for the action menu, drag to move items, two fingers to zoom the map.
+- **HUD.** Buttons anchored to the screen's edges (sized in dp), the attack modes with reload, the message log, end turn/combat.
+- **Mod features built in** where the mods can't run on CE: Inventory Filter's filters and party tabs in loot and barter.
+- **Saves.** A save list sorted by when saves were made, quick saves that never overwrite manual ones (their number is a setting), "Continue" in the main menu, saves interrupted midway are restored, optional marks for saves made with other game files or mods.
+- **Android app.** The game's files are imported from a folder or any archive (.zip, .7z, .rar, .tar...) copied from a computer, with RPU and other mods and the saves; "Replace game" for new builds and mod updates; export and import of saves.
+- **The port's own improvements** are settings (`[enhancements]` in `fallout2.cfg`).
+
+The full list of changes is the git history over upstream.
+
+## Install on Android
+
+1. Download the APK from [Releases](https://github.com/imbaner/fallout2-ce/releases) and install it.
+2. Copy your Fallout 2 folder from a computer to the phone: as is, or as one archive (cable, cloud drive, messenger). Mods installed there (for example [RPU](https://github.com/BGforgeNet/Fallout2_Restoration_Project)) and saves come along.
+3. Start the app and choose that folder or archive.
+
+Tested on a Redmi 15C (Android 16). Android 7.0 or newer, arm64.
+
+## Known limitations
+
+- Landscape only; portrait is planned.
+- Made for phones and tested on Android; the desktop builds keep CE's original windows (`[touch] mobile_ui=0`) and are not the focus of this fork.
+- Mods with their own script windows are not covered by the touch UI (none of the popular ones use them).
+
+## Building
+
+Android: JDK 17, Android SDK with NDK 27.3.13750724.
+
+```
+cd os/android
+./gradlew assembleRelease -PabiFilters=arm64-v8a
+```
+
+A release build is signed with your own key: point the Gradle property `fallout2ce.releaseKeystoreProperties` to a properties file with `storeFile`, `storePassword`, `keyAlias`, `keyPassword` (never commit it). Desktop builds are as upstream's (CMake).
+
+## License
+
+The engine is under the [Sustainable Use License](LICENSE.md), as upstream: free, non-commercial distribution only, with the license and notices kept. Third-party components: SDL 2, zlib, LodePNG (zlib license), libarchive (BSD), liblzma from XZ Utils (0BSD), stb (MIT / public domain), fpattern, PT Mono font (SIL OFL 1.1). The app shows all of them in Settings → About.
+
+Credits: Alexander Batalov and the Fallout 2 CE contributors for the engine; the sfall, RPU and Inventory Filter authors, whose features are reimplemented here by their behavior (no code taken).
+
+---
+
 # Fallout 2: Community Engine
 
 Fallout 2:CE is a fully working re-implementation of the classic Fallout engine, optimized for a hassle-free experience on multiple platforms, including Windows, Mac, iOS, Android, and Linux.  It provides high resolution support, quality-of-life improvements, and dozens upon dozens of bug fixes.

@@ -106,11 +106,13 @@ android {
         def ceVersion = [1, 3, 0]
         def mobileBuild = 1
         versionCode ceVersion[0] * 1000000 + ceVersion[1] * 10000 + ceVersion[2] * 100 + mobileBuild
-        versionName "${ceVersion.join('.')}-mobile.${mobileBuild}"
+        def appVersion = "${ceVersion.join('.')}-mobile.${mobileBuild}"
+        versionName appVersion
 
         externalNativeBuild {
             cmake {
-                arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
+                arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON',
+                    "-DFALLOUT_APP_VERSION=${appVersion}"
                 // Override with -PabiFilters=arm64-v8a for faster local builds.
                 if (project.hasProperty('abiFilters')) {
                     abiFilters(*project.property('abiFilters').split(','))

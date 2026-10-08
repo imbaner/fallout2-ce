@@ -1187,6 +1187,17 @@ static const DevAutotestStep kDevAutotestQuickSavesSteps[] = {
     { DEV_AUTOTEST_ACTION_LOG_SAVES, 16, 0, 0, 1, "q14_saves" },
 };
 
+// The settings' About section: notices, the licenses scrolled through.
+static const DevAutotestStep kDevAutotestAboutSteps[] = {
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "a00_start" },
+    { DEV_AUTOTEST_ACTION_BACK, 0, 0, 0, 40, "a01_menu" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "a02_settings", "menu.settings" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "a03_about", "prefs.sections.5" },
+    { DEV_AUTOTEST_ACTION_CHECK_WIDGET, 1, 0, 0, 1, "a04_source_button", "prefs.about.source" },
+    { DEV_AUTOTEST_ACTION_MUI_DRAG_BY, 0, -0.5f, 0, 40, "a05_scrolled", "prefs.about" },
+    { DEV_AUTOTEST_ACTION_MUI_DRAG_BY, 0, -0.5f, 0, 40, "a06_scrolled", "prefs.about" },
+};
+
 // Own SAVEGAME with a copy of the test save in slot 1: cancel once, then delete it.
 static const DevAutotestStep kDevAutotestMuiDeleteSaveSteps[] = {
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "d00_start" },
@@ -1966,6 +1977,9 @@ void devAutotestSetScenario(const char* name)
         gDevAutotestSteps = kDevAutotestMuiLoadSaveSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestMuiLoadSaveSteps) / sizeof(kDevAutotestMuiLoadSaveSteps[0]);
         gDevAutotestSaves = DevAutotestSaves::Empty;
+    } else if (strcmp(name, "about") == 0) {
+        gDevAutotestSteps = kDevAutotestAboutSteps;
+        gDevAutotestStepCount = sizeof(kDevAutotestAboutSteps) / sizeof(kDevAutotestAboutSteps[0]);
     } else if (strcmp(name, "quicksaves") == 0) {
         gDevAutotestSteps = kDevAutotestQuickSavesSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestQuickSavesSteps) / sizeof(kDevAutotestQuickSavesSteps[0]);
