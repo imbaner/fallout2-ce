@@ -984,7 +984,7 @@ static int mapLoad(File* stream)
     _partyMemberPrepLoad();
     _gmouse_disable_scrolling();
 
-    int savedMouseCursorId = gameMouseGetCursor();
+    MouseCursorType savedMouseCursorId = gameMouseGetCursor();
     if (savedMouseCursorId >= MOUSE_CURSOR_SCROLL_NW && savedMouseCursorId <= MOUSE_CURSOR_SCROLL_W_INVALID) {
         savedMouseCursorId = MOUSE_CURSOR_ARROW; // reset if it was in view scrolling mode
     }
@@ -1126,7 +1126,7 @@ static int mapLoad(File* stream)
         }
 
         Object* object;
-        objectCreateWithFrmIdPid(&object, MiscFrameId::ScrollBlocker, -1);
+        objectCreateWithFrmIdProtoId(&object, MiscFrameId::ScrollBlocker, ProtoId::Empty());
         object->flags |= (OBJECT_LIGHT_THRU | OBJECT_NO_SAVE | OBJECT_HIDDEN);
         objectSetLocation(object, 1, 0, nullptr);
         object->sid = gMapSid;
@@ -1280,12 +1280,13 @@ static int _map_age_dead_critters()
 
     Object* obj = objectFindFirst();
     while (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER
+        const ProtoId protoId = obj;
+        if (protoId.objectType() == OBJ_TYPE_CRITTER
             && obj != gDude
             && !objectIsPartyMember(obj)
             && !critterIsDead(obj)) {
             obj->data.critter.combat.maneuver &= ~CRITTER_MANUEVER_FLEEING;
-            if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(obj->pid, CRITTER_NO_HEAL)) {
+            if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(protoId, CRITTER_NO_HEAL)) {
                 critterHealByHours(obj, hoursSinceLastVisit);
             }
         }
@@ -1307,10 +1308,10 @@ static int _map_age_dead_critters()
 
     obj = objectFindFirst();
     while (obj != nullptr) {
-        ObjectType type = objectTypeFromPid(obj->pid);
-        if (type == OBJ_TYPE_CRITTER) {
+        const ProtoId protoId = obj;
+        if (protoId.objectType() == OBJ_TYPE_CRITTER) {
             if (obj != gDude && critterIsDead(obj)) {
-                if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(obj->pid, CRITTER_NO_AGE)) {
+                if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !critterFlagCheck(protoId, CRITTER_NO_AGE)) {
                     objects[count++] = obj;
 
                     if (count >= capacity) {
@@ -1323,7 +1324,7 @@ static int _map_age_dead_critters()
                     }
                 }
             }
-        } else if (agingType == 2 && type == OBJ_TYPE_MISC && obj->fid == 0x500000B) {
+        } else if (agingType == 2 && protoId.objectType() == OBJ_TYPE_MISC && FrmId(obj) == MiscFrameId::BloodPool) {
             objects[count++] = obj;
             if (count >= capacity) {
                 capacity *= 2;
@@ -1340,7 +1341,8 @@ static int _map_age_dead_critters()
     int rc = 0;
     for (int index = 0; index < count; index++) {
         Object* obj = objects[index];
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) {
+        const ProtoId protoId = obj;
+        if (protoId.objectType() == OBJ_TYPE_CRITTER) {
             // replace the dead critter bodies by the blood pool stain
             if (replaceDeadCritter(obj) == -1) {
                 debugPrint("\n%s: Could not replace dead body by the blood stain for the critter %d with pid %d.", __func__, obj->id, obj->pid);
@@ -1349,7 +1351,7 @@ static int _map_age_dead_critters()
             }
 
             // drop the critter owned items on top of the blood stain only when successfully replaced
-            if (!critterFlagCheck(obj->pid, CRITTER_NO_DROP)) {
+            if (!critterFlagCheck(protoId, CRITTER_NO_DROP)) {
                 itemDropAll(obj, obj->tile);
             }
         }
@@ -1370,7 +1372,7 @@ static int replaceDeadCritter(Object* critter)
     }
 
     Object* blood;
-    if (objectCreateWithPid(&blood, PROTO_ID_BLOOD) == -1) {
+    if (objectCreateWithProtoId(&blood, MiscProtoTypeId::Blood) == -1) {
         return -1;
     }
 
@@ -1555,12 +1557,12 @@ static int _map_save_file(File* stream)
         for (tile = 0; tile < SQUARE_GRID_SIZE; tile++) {
             TileFrameId frameId;
 
-            frameId = FrmId(floorTileFidFromCombinedTileFid(_square[elevation]->tileFid[tile])).frameId().tile;
+            frameId = FloorTileFrmId(_square[elevation]->tileFid[tile]).frameId<TileFrameId>();
             if (frameId != TileFrameId::Grid) {
                 break;
             }
 
-            frameId = FrmId(roofTileFidFromCombinedTileFid(_square[elevation]->tileFid[tile])).frameId().tile;
+            frameId = RoofTileFrmId(_square[elevation]->tileFid[tile]).frameId<TileFrameId>();
             if (frameId != TileFrameId::Grid) {
                 break;
             }
@@ -1928,20 +1930,22 @@ static void square_init()
 // 0x484210
 static void _square_reset()
 {
-    constexpr TileFrameId kGridFrameId = TileFrameId::Grid;
-
     for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
         int* p = _square[elevation]->tileFid;
         for (int y = 0; y < SQUARE_GRID_HEIGHT; y++) {
             for (int x = 0; x < SQUARE_GRID_WIDTH; x++) {
                 int fid = *p;
-                *p = floorTileFidFromCombinedTileFid(fid) | (kGridFrameId | tileFlagsFromTileFid(roofTileFidFromCombinedTileFid(fid)));
+                const FloorTileFrmId originalFloorTileFrmId = FloorTileFrmId(fid);
+                const RoofTileFrmId originalRoofTileFrmId = RoofTileFrmId(fid);
+                const TileFrmId updatedTileFrmId = TileFrmId(
+                    FloorTileFrmId(
+                        TileFrameId::Grid,
+                        originalFloorTileFrmId.flags()),
+                    RoofTileFrmId(
+                        TileFrameId::Grid,
+                        originalRoofTileFrmId.flags()));
 
-                fid = *p;
-                TileFlags tileFlags = tileFlagsFromTileFid(floorTileFidFromCombinedTileFid(fid));
-                TileFID updatedLowerTile = kGridFrameId | tileFlags;
-
-                *p = updatedLowerTile | roofTileFidFromCombinedTileFid(fid);
+                *p = updatedTileFrmId.fid();
 
                 p++;
             }
@@ -1952,31 +1956,28 @@ static void _square_reset()
 // 0x48431C
 static int _square_load(File* stream, MapHeaderFlags flags)
 {
-    TileFID roofTileFid;
-    TileFlags roofTileFlags;
-    TileFrameId roofTileArtId;
-    TileFID floorTileFid;
-
     _square_reset();
 
     for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
         if ((flags & _map_data_elev_flags[elevation]) == MAP_HEADER_NONE) {
-            int* arr = _square[elevation]->tileFid;
-            if (_db_freadIntCount(stream, arr, SQUARE_GRID_SIZE) != 0) {
+            int* tileFids = _square[elevation]->tileFid;
+            if (_db_freadIntCount(stream, tileFids, SQUARE_GRID_SIZE) != 0) {
                 return -1;
             }
 
             for (int tile = 0; tile < SQUARE_GRID_SIZE; tile++) {
-                roofTileFid = roofTileFidFromCombinedTileFid(arr[tile]);
+                const RoofTileFrmId roofTileFrmId = RoofTileFrmId(tileFids[tile]);
 
-                roofTileFlags = tileFlagsFromTileFid(roofTileFid) & ~TileFlags::TemporarilyHidden;
+                TileFlags roofTileFlags = roofTileFrmId.flags() & ~TileFlags::TemporarilyHidden;
 
-                roofTileArtId = FrmId(roofTileFid).frameId().tile;
+                TileFrameId roofTileArtId = roofTileFrmId.frameId<TileFrameId>();
                 if (roofTileArtId == TileFrameId::Invalid) {
                     roofTileArtId = TileFrameId::Last;
                 }
-                floorTileFid = floorTileFidFromCombinedTileFid(arr[tile]);
-                arr[tile] = floorTileFid | (roofTileArtId | roofTileFlags);
+
+                const FloorTileFrmId floorTileFrmId = FloorTileFrmId(tileFids[tile]);
+                const TileFrmId updatedTileFrmId = TileFrmId(floorTileFrmId, RoofTileFrmId(roofTileArtId, roofTileFlags));
+                tileFids[tile] = updatedTileFrmId.fid();
             }
         }
     }

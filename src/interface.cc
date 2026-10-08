@@ -1329,7 +1329,7 @@ int interfaceUpdateItems(bool animated, InterfaceItemAction leftItemAction, Inte
     if (animated) {
         Object* newCurrentItem = gInterfaceItemStates[gInterfaceCurrentHand].item;
         if (newCurrentItem != oldCurrentItem) {
-            WeaponAnimation animationCode = WEAPON_ANIMATION_NONE;
+            WeaponAnimation animationCode = WeaponAnimation::None;
             if (newCurrentItem != nullptr) {
                 if (itemGetType(newCurrentItem) == ITEM_TYPE_WEAPON) {
                     animationCode = weaponGetAnimationCode(newCurrentItem);
@@ -1358,7 +1358,7 @@ int interfaceBarSwapHands(bool animated)
 
     if (animated) {
         Object* item = gInterfaceItemStates[gInterfaceCurrentHand].item;
-        WeaponAnimation animationCode = WEAPON_ANIMATION_NONE;
+        WeaponAnimation animationCode = WeaponAnimation::None;
         if (item != nullptr) {
             if (itemGetType(item) == ITEM_TYPE_WEAPON) {
                 animationCode = weaponGetAnimationCode(item);
@@ -1486,7 +1486,7 @@ static void interfaceDescribeItemButton(InterfaceItemState* itemState, Interface
     }
 
     if (itemState->isWeapon == 0) {
-        if (_proto_action_can_use_on(itemState->item->pid)) {
+        if (_proto_action_can_use_on(itemState->item)) {
             info->textFrmId = InterfaceFrameId::UseOnText;
         } else if (_obj_action_can_use(itemState->item)) {
             info->textFrmId = InterfaceFrameId::UseText;
@@ -1631,7 +1631,7 @@ void _intface_use_item()
                 _combat(nullptr);
             }
         }
-    } else if (_proto_action_can_use_on(ptr->item->pid)) {
+    } else if (_proto_action_can_use_on(ptr->item)) {
         gameMouseSetCursor(MOUSE_CURSOR_USE_CROSSHAIR);
         gameMouseSetMode(GAME_MOUSE_MODE_USE_CROSSHAIR);
     } else if (_obj_action_can_use(ptr->item)) {
@@ -2125,8 +2125,8 @@ static void interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(WeaponAnimation p
     reg_anim_begin(ANIMATION_REQUEST_RESERVED);
     animationRegisterSetLightDistance(gDude, 4, 0);
 
-    if (previousWeaponAnimationCode != WEAPON_ANIMATION_NONE) {
-        const char* sfx = sfxBuildCharName(gDude, ANIM_PUT_AWAY, CHARACTER_SOUND_EFFECT_UNUSED);
+    if (previousWeaponAnimationCode != WeaponAnimation::None) {
+        const char* sfx = sfxBuildCharName(gDude, ANIM_PUT_AWAY, CharacterSoundEffect::Unused);
         animationRegisterPlaySoundEffect(gDude, sfx, 0);
         animationRegisterAnimate(gDude, ANIM_PUT_AWAY, 0);
     }
@@ -2139,10 +2139,10 @@ static void interfaceBarSwapHandsAnimatePutAwayTakeOutSequence(WeaponAnimation p
         animationRegisterSetLightDistance(gDude, item->lightDistance, 0);
     }
 
-    if (weaponAnimationCode != WEAPON_ANIMATION_NONE) {
+    if (weaponAnimationCode != WeaponAnimation::None) {
         animationRegisterTakeOutWeapon(gDude, weaponAnimationCode, -1);
     } else {
-        const FrmId frmId = FrmId(gDude, ANIM_STAND, WEAPON_ANIMATION_NONE, gDude->rotation + 1);
+        const FrmId frmId = FrmId(gDude, ANIM_STAND, WeaponAnimation::None, gDude->rotation + 1);
         animationRegisterSetFrmId(gDude, frmId, -1);
     }
 

@@ -1,6 +1,7 @@
 #ifndef FALLOUT_TOUCH_CONTROLS_H_
 #define FALLOUT_TOUCH_CONTROLS_H_
 
+#include "game_mouse.h"
 #include "touch.h"
 
 namespace fallout {
@@ -67,7 +68,7 @@ void touchControlsReset();
 // Shows action menu items (`GAME_MOUSE_ACTION_MENU_ITEM_*`) in radial menu
 // around the point and waits for selection. Returns index of the selected
 // item or -1 if the menu was cancelled.
-int touchControlsChooseActionMenuItem(const int* items, int itemsLength, int x, int y);
+int touchControlsChooseActionMenuItem(const GameMouseActionMenuItem* items, int itemsLength, int x, int y);
 
 // Returns true if hex cursor and cursor arrow should be visible: always
 // without touch controls, with them only while selecting target in combat or

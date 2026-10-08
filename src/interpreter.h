@@ -4,6 +4,7 @@
 #include "animation_defs.h"
 #include "combat_defs.h"
 #include "game.h"
+#include "game_sound.h"
 #include "object.h"
 #include "proto_types.h"
 #include "stat_defs.h"
@@ -262,6 +263,16 @@ void* programStackPopPointer(Program* program);
 template <typename T>
 T programStackPopEnum(Program* program);
 
+inline ProtoId programStackPopProtoId(Program* program)
+{
+    const ProtoId protoId = ProtoId(programStackPopInteger(program));
+    if (protoId.hasPid() && !protoId.valid()) {
+        programPrintError("invalid proto id %d", protoId.pid());
+    }
+
+    return protoId;
+}
+
 template <>
 inline HitMode programStackPopEnum(Program* program)
 {
@@ -381,6 +392,17 @@ inline WeaponAnimation programStackPopEnum(Program* program)
     }
 
     return static_cast<WeaponAnimation>(anim);
+}
+
+template <>
+inline CharacterSoundEffect programStackPopEnum(Program* program)
+{
+    int soundEffect = programStackPopInteger(program);
+    if (!characterSoundEffectIsValid(soundEffect)) {
+        programPrintError("invalid character sound effect %d", soundEffect);
+    }
+
+    return static_cast<CharacterSoundEffect>(soundEffect);
 }
 
 template <>

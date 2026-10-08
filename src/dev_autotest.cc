@@ -2216,7 +2216,7 @@ static std::string devAutotestItemsText(Object* owner)
             text += "W";
         }
         if (itemGetType(item) == ITEM_TYPE_WEAPON) {
-            snprintf(entry, sizeof(entry), "(ammo %d pid %d)", ammoGetQuantity(item), weaponGetAmmoTypePid(item));
+            snprintf(entry, sizeof(entry), "(ammo %d pid %d)", ammoGetQuantity(item), weaponGetAmmoTypeProtoId(item).pid());
             text += entry;
         }
         if (item->data.inventory.length != 0) {
@@ -2276,8 +2276,8 @@ static void devAutotestLogItems()
     const FrmId dudeFrmId = FrmId(gDude);
     const FrmId expectedFrmId = inventoryComputeCritterFrmId(gDude, gDude->pid, right, left, armor,
         interfaceGetCurrentHand(), dudeFrmId.animationType(), dudeFrmId.rotation());
-    int lookArt = static_cast<int>(dudeFrmId.frameId().critter);
-    int expectedArt = static_cast<int>(expectedFrmId.frameId().critter);
+    int lookArt = static_cast<int>(dudeFrmId.frameId<CritterFrameId>());
+    int expectedArt = static_cast<int>(expectedFrmId.frameId<CritterFrameId>());
     // An open inventory shows the new look only once closed.
     InventoryView inventoryView;
     bool inventoryOpen = inventoryGetView(&inventoryView);
@@ -2668,7 +2668,7 @@ void devAutotestTick()
                     int roofX = tile % HEX_GRID_WIDTH / 2;
                     int roofY = tile / HEX_GRID_WIDTH / 2;
                     int square = _square[gDude->elevation]->tileFid[roofX + SQUARE_GRID_WIDTH * roofY];
-                    if (FrmId(roofTileFidFromCombinedTileFid(square)).frameId().tile == TileFrameId::Grid) {
+                    if (RoofTileFrmId(square).frameId<TileFrameId>() == TileFrameId::Grid) {
                         continue;
                     }
 
@@ -3029,7 +3029,7 @@ void devAutotestTick()
         case DEV_AUTOTEST_ACTION_GIVE_ITEM: {
             // `b` - quantity.
             Object* item;
-            if (objectCreateWithPid(&item, static_cast<int>(step->a)) == 0) {
+            if (objectCreateWithProtoId(&item, ProtoId(static_cast<int>(step->a))) == 0) {
                 int quantity = step->b > 0 ? static_cast<int>(step->b) : 1;
                 // As `add_obj_to_inven`: off the map once carried (or it is
                 // freed with the map and the inventory both).
@@ -3083,7 +3083,7 @@ void devAutotestTick()
         case DEV_AUTOTEST_ACTION_ADD_PARTY_MEMBER: {
             Object* critter;
             int pid = 0x1000000 | static_cast<int>(step->a);
-            if (objectCreateWithPid(&critter, pid) == 0) {
+            if (objectCreateWithProtoId(&critter, ProtoId(pid)) == 0) {
                 int distance = step->b > 0 ? static_cast<int>(step->b) : 2;
                 Rotation direction = step->b > 0 ? static_cast<Rotation>(static_cast<int>(step->c)) : ROTATION_SE;
                 int tile = tileGetTileInDirection(gDude->tile, direction, distance);
@@ -3101,7 +3101,7 @@ void devAutotestTick()
             Object* member = gDevAutotestPartyMember;
             int pid = static_cast<int>(step->a);
             Object* item;
-            if (member != nullptr && objectCreateWithPid(&item, pid) == 0) {
+            if (member != nullptr && objectCreateWithProtoId(&item, ProtoId(pid)) == 0) {
                 int unit = std::max(itemGetWeight(item), 1);
                 int free = critterGetStat(member, STAT_CARRY_WEIGHT) - objectGetInventoryWeight(member);
                 int quantity = (free - static_cast<int>(step->b)) / unit;
@@ -3126,7 +3126,7 @@ void devAutotestTick()
             break;
         case DEV_AUTOTEST_ACTION_GIVE_PARTY_ITEM: {
             Object* item;
-            if (gDevAutotestPartyMember != nullptr && objectCreateWithPid(&item, static_cast<int>(step->a)) == 0) {
+            if (gDevAutotestPartyMember != nullptr && objectCreateWithProtoId(&item, ProtoId(static_cast<int>(step->a))) == 0) {
                 int quantity = step->b > 0 ? static_cast<int>(step->b) : 1;
                 if (itemAdd(gDevAutotestPartyMember, item, quantity) == 0) {
                     _obj_disconnect(item, nullptr);
@@ -3137,7 +3137,7 @@ void devAutotestTick()
         }
         case DEV_AUTOTEST_ACTION_WIELD_PARTY_ITEM:
             if (gDevAutotestPartyMember != nullptr) {
-                Object* item = objectGetCarriedObjectByPid(gDevAutotestPartyMember, static_cast<int>(step->a));
+                Object* item = objectGetCarriedObjectByProtoId(gDevAutotestPartyMember, ProtoId(static_cast<int>(step->a)));
                 int rc = item != nullptr ? inventoryEquip(gDevAutotestPartyMember, item, HAND_RIGHT) : -1;
                 devAutotestLog("  party member wields pid %d: %s\n", static_cast<int>(step->a), rc != -1 ? "ok" : "FAIL");
             }
@@ -3207,7 +3207,7 @@ void devAutotestTick()
             break;
         case DEV_AUTOTEST_ACTION_GIVE_CORPSE_ITEM: {
             Object* item;
-            if (gDevAutotestCorpse != nullptr && objectCreateWithPid(&item, static_cast<int>(step->a)) == 0) {
+            if (gDevAutotestCorpse != nullptr && objectCreateWithProtoId(&item, ProtoId(static_cast<int>(step->a))) == 0) {
                 itemAdd(gDevAutotestCorpse, item, 1);
                 devAutotestLog("  gave corpse item pid %d\n", static_cast<int>(step->a));
             }
@@ -3287,7 +3287,7 @@ void devAutotestTick()
         }
         case DEV_AUTOTEST_ACTION_EQUIP_ITEM: {
             Object* item;
-            if (objectCreateWithPid(&item, static_cast<int>(step->a)) == 0) {
+            if (objectCreateWithProtoId(&item, ProtoId(static_cast<int>(step->a))) == 0) {
                 itemAdd(gDude, item, 1);
                 int rc = inventoryEquipFunc(gDude, item, static_cast<Hand>(static_cast<int>(step->b)), false);
                 interfaceUpdateItems(false, INTERFACE_ITEM_ACTION_DEFAULT, INTERFACE_ITEM_ACTION_DEFAULT);
@@ -3318,7 +3318,7 @@ void devAutotestTick()
             break;
         case DEV_AUTOTEST_ACTION_PLACE_ITEM: {
             Object* item;
-            if (objectCreateWithPid(&item, static_cast<int>(step->a)) == 0) {
+            if (objectCreateWithProtoId(&item, ProtoId(static_cast<int>(step->a))) == 0) {
                 int tile = tileGetTileInDirection(gDude->tile, static_cast<Rotation>(static_cast<int>(step->c)), static_cast<int>(step->b));
                 Rect rect;
                 objectSetLocation(item, tile, gDude->elevation, &rect);

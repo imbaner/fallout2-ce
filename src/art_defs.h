@@ -3,42 +3,39 @@
 
 namespace fallout {
 
-constexpr inline int frameIdFromPid(int pid)
-{
-    return pid & 0xFFFFFF;
-}
-
 enum class HeadFrameId : int {
     Invalid = -1, // invalid frame id
     None = 0, // reser.frm
 };
 
-enum HeadAnimation : int {
-    HEAD_ANIMATION_VERY_GOOD_REACTION = 0,
-    HEAD_ANIMATION_GOOD = 1,
-    HEAD_ANIMATION_GOOD_TO_NEUTRAL = 2,
-    HEAD_ANIMATION_NEUTRAL_TO_GOOD = 3,
-    HEAD_ANIMATION_NEUTRAL = 4,
-    HEAD_ANIMATION_NEUTRAL_TO_BAD = 5,
-    HEAD_ANIMATION_BAD_TO_NEUTRAL = 6,
-    HEAD_ANIMATION_BAD = 7,
-    HEAD_ANIMATION_VERY_BAD_REACTION = 8,
-    HEAD_ANIMATION_GOOD_PHONEMES = 9,
-    HEAD_ANIMATION_NEUTRAL_PHONEMES = 10,
-    HEAD_ANIMATION_BAD_PHONEMES = 11,
+enum class HeadAnimation : unsigned char {
+    VeryGoodReaction = 0,
+    Good = 1,
+    GoodToNeutral = 2,
+    NeutralToGood = 3,
+    Neutral = 4,
+    NeutralToBad = 5,
+    BadToNeutral = 6,
+    Bad = 7,
+    VeryBadReaction = 8,
+    GoodPhonemes = 9,
+    NeutralPhonemes = 10,
+    BadPhonemes = 11,
 };
 
-enum HeadFidget : int {
-    FIDGET_INVALID = -1,
-    FIDGET_GOOD = 1,
-    FIDGET_NEUTRAL = 4,
-    FIDGET_BAD = 7,
+enum class HeadFidget : int {
+    Invalid = -1,
+    Good = 1,
+    Neutral = 4,
+    Bad = 7,
 };
 
-inline HeadAnimation headAnimationFromHeadFidget(HeadFidget fidget)
-{
-    return fidget != FIDGET_INVALID ? static_cast<HeadAnimation>(fidget) : HEAD_ANIMATION_VERY_GOOD_REACTION;
-}
+enum class HeadFidgetAnimation : unsigned char {
+    None = 0,
+    First = 1,
+    Second = 2,
+    Third = 3
+};
 
 enum class BackgroundFrameId : int {
     Invalid = -1, // invalid frame id
@@ -74,38 +71,31 @@ enum DudeNativeLook : int {
     DUDE_NATIVE_LOOK_COUNT,
 };
 
-enum WeaponAnimation : int {
-    WEAPON_ANIMATION_INVALID = -1,
-    WEAPON_ANIMATION_NONE,
-    WEAPON_ANIMATION_KNIFE, // d
-    WEAPON_ANIMATION_CLUB, // e
-    WEAPON_ANIMATION_HAMMER, // f
-    WEAPON_ANIMATION_SPEAR, // g
-    WEAPON_ANIMATION_PISTOL, // h
-    WEAPON_ANIMATION_SMG, // i
-    WEAPON_ANIMATION_SHOTGUN, // j
-    WEAPON_ANIMATION_LASER_RIFLE, // k
-    WEAPON_ANIMATION_MINIGUN, // l
-    WEAPON_ANIMATION_LAUNCHER, // m
-    WEAPON_ANIMATION_SFALL_S, // s
-    WEAPON_ANIMATION_SFALL_O, // o
-    WEAPON_ANIMATION_SFALL_P, // p
-    WEAPON_ANIMATION_SFALL_Q, // q
-    WEAPON_ANIMATION_SFALL_T, // t
-    WEAPON_ANIMATION_COUNT,
-
-    // There's mixed usage of WeaponAnimation and CharacterSoundEffect in the code, lets merge those as we any cannot distinguish between them.
-    CHARACTER_SOUND_EFFECT_UNUSED = WEAPON_ANIMATION_NONE,
-    CHARACTER_SOUND_EFFECT_KNOCKDOWN = WEAPON_ANIMATION_KNIFE,
-    CHARACTER_SOUND_EFFECT_PASS_OUT = WEAPON_ANIMATION_CLUB,
-    CHARACTER_SOUND_EFFECT_DIE = WEAPON_ANIMATION_HAMMER,
-    CHARACTER_SOUND_EFFECT_CONTACT = WEAPON_ANIMATION_SPEAR,
+enum class WeaponAnimation : int {
+    None,
+    Knife, // d
+    Club, // e
+    Hammer, // f
+    Spear, // g
+    Pistol, // h
+    Smg, // i
+    Shotgun, // j
+    LaserRifle, // k
+    Minigun, // l
+    Launcher, // m
+    SfallS, // s
+    SfallO, // o
+    SfallP, // p
+    SfallQ, // q
+    SfallT, // t
 };
 
 constexpr inline bool weaponAnimationIsValid(int weaponAnimation)
 {
-    return weaponAnimation >= WEAPON_ANIMATION_NONE && weaponAnimation < WEAPON_ANIMATION_COUNT;
+    return weaponAnimation >= static_cast<int>(WeaponAnimation::None) && weaponAnimation <= static_cast<int>(WeaponAnimation::SfallT);
 }
+
+constexpr inline bool weaponAnimationIsValid(WeaponAnimation weaponAnimation) { return weaponAnimationIsValid(static_cast<int>(weaponAnimation)); }
 
 enum class SkillDexFrameId : int {
     Invalid = -1, // invalid frame id
@@ -325,38 +315,12 @@ constexpr inline TileFlags operator|(TileFlags lhs, TileFlags rhs)
     return static_cast<TileFlags>((static_cast<int>(lhs) | static_cast<int>(rhs)) & 0xF);
 }
 
-enum class TileFID : int {};
-
-constexpr inline TileFID floorTileFidFromCombinedTileFid(int fid)
-{
-    return static_cast<TileFID>(static_cast<int>(fid) & 0xFFFF);
-}
-
-constexpr inline TileFID roofTileFidFromCombinedTileFid(int fid)
-{
-    return static_cast<TileFID>((static_cast<int>(fid) >> 16) & 0xFFFF);
-}
-
-constexpr inline TileFlags tileFlagsFromTileFid(TileFID fid)
-{
-    return static_cast<TileFlags>((static_cast<int>(fid) & 0xF000) >> 12);
-}
-
-constexpr inline TileFID operator|(TileFrameId tile, TileFlags flags)
-{
-    return static_cast<TileFID>(((static_cast<int>(tile) | static_cast<int>(flags) << 12)) & 0xFFFF);
-}
-
-constexpr inline int operator|(TileFID floorFid, TileFID roofFid)
-{
-    return (static_cast<int>(floorFid) | (static_cast<int>(roofFid) << 16)) & 0xFFFFFFFF;
-}
-
 enum class MiscFrameId : int {
     Invalid = -1, // invalid frame id
     Reserved = 0, // reserved.frm
     EmpExplosion = 2, // empxpld.frm
     RocketExplosion = 10, // roktxpd.frm
+    BloodPool = 11, // rscorpbl.frm
     ScrollBlocker = 12, // scrblk.frm
     FireExplosion = 29, // expa.frm
     PlasmaExplosion = 31, // expp.frm

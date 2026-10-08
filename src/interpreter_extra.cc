@@ -434,21 +434,21 @@ int correctFidForRemovedItem(Object* critter, Object* item, ObjectFlags flags)
         if (critter == gDude) {
             if (interfaceGetCurrentHand() == HAND_RIGHT) {
                 if ((flags & OBJECT_IN_RIGHT_HAND) != OBJECT_NONE) {
-                    weaponCode = WEAPON_ANIMATION_NONE;
+                    weaponCode = WeaponAnimation::None;
                 }
             } else {
                 if ((flags & OBJECT_IN_LEFT_HAND) != OBJECT_NONE) {
-                    weaponCode = WEAPON_ANIMATION_NONE;
+                    weaponCode = WeaponAnimation::None;
                 }
             }
         } else {
             if ((flags & OBJECT_IN_RIGHT_HAND) != OBJECT_NONE) {
-                weaponCode = WEAPON_ANIMATION_NONE;
+                weaponCode = WeaponAnimation::None;
             }
         }
 
-        if (weaponCode == WEAPON_ANIMATION_NONE) {
-            newFrmId = FrmId(critter, WEAPON_ANIMATION_NONE, frmId.rotation());
+        if (weaponCode == WeaponAnimation::None) {
+            newFrmId = FrmId(critter, WeaponAnimation::None, frmId.rotation());
         }
     } else {
         if (critter == gDude) {
@@ -859,16 +859,10 @@ static void opMoveTo(Program* program)
 // 0x454FA8 op_create_object_sid
 static void opCreateObject(Program* program)
 {
-    int data[4];
-
-    for (int arg = 0; arg < 4; arg++) {
-        data[arg] = programStackPopInteger(program);
-    }
-
-    int pid = data[3];
-    int tile = data[2];
-    int elevation = data[1];
-    int sid = data[0];
+    int sid = programStackPopInteger(program);
+    int elevation = programStackPopInteger(program);
+    int tile = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
 
     Object* object = nullptr;
 
@@ -877,14 +871,14 @@ static void opCreateObject(Program* program)
         goto out;
     }
 
-    if (pid == 0) {
+    if (protoId.pid() == 0) {
         debugPrint("\nError: attempt to Create critter With PID of 0: %s!", program->name);
         goto out;
     }
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) != -1) {
-        if (objectCreateWithFrmIdPid(&object, FrmId(proto), pid) != -1) {
+    if (protoGetProto(protoId, &proto) != -1) {
+        if (objectCreateWithFrmIdProtoId(&object, proto, protoId) != -1) {
             if (tile == -1) {
                 tile = 0;
             }
@@ -1037,12 +1031,12 @@ static void opScriptOverrides(Program* program)
 // 0x455470 op_obj_is_carrying_obj_pid
 static void opObjectIsCarryingObjectWithPid(Program* program)
 {
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
     int result = 0;
     if (obj != nullptr) {
-        result = objectGetCarriedQuantityByPid(obj, pid);
+        result = objectGetCarriedQuantityByProtoId(obj, protoId);
     } else {
         scriptPredefinedError(program, "obj_is_carrying_obj_pid", SCRIPT_ERROR_OBJECT_IS_NULL);
     }
@@ -1054,7 +1048,7 @@ static void opObjectIsCarryingObjectWithPid(Program* program)
 // 0x455534 op_tile_contains_obj_pid
 static void opTileContainsObjectWithPid(Program* program)
 {
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
     int elevation = programStackPopInteger(program);
     int tile = programStackPopInteger(program);
 
@@ -1062,7 +1056,7 @@ static void opTileContainsObjectWithPid(Program* program)
 
     Object* object = objectFindFirstAtLocation(elevation, tile);
     while (object) {
-        if (object->pid == pid) {
+        if (ProtoId(object) == protoId) {
             result = 1;
             break;
         }
@@ -1276,12 +1270,11 @@ static void opGetItemType(Program* program)
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
     ItemType itemType = ITEM_TYPE_INVALID;
-    if (obj != nullptr) {
-        if (objectTypeFromPid(obj->pid) == OBJ_TYPE_ITEM) {
-            Proto* proto;
-            if (protoGetProto(obj->pid, &proto) != -1) {
-                itemType = itemGetType(obj);
-            }
+    const ProtoId protoId = obj;
+    if (protoId.objectType() == OBJ_TYPE_ITEM) {
+        Proto* proto;
+        if (protoGetProto(protoId, &proto) != -1) {
+            itemType = itemGetType(obj);
         }
     }
 
@@ -1928,9 +1921,10 @@ static void opStartGameDialog(Program* program)
     }
 
     gGameDialogHeadFrmId = HeadFrameId::Invalid;
-    if (objectTypeFromPid(obj->pid) == OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = obj;
+    if (protoId.objectType() == OBJ_TYPE_CRITTER) {
         Proto* proto;
-        if (protoGetProto(obj->pid, &proto) == -1) {
+        if (protoGetProto(protoId, &proto) == -1) {
             return;
         }
     }
@@ -1952,13 +1946,13 @@ static void opStartGameDialog(Program* program)
         NpcReaction npcReactionType = reactionTranslateValue(npcReactionValue);
         switch (npcReactionType) {
         case NPC_REACTION_BAD:
-            gGameDialogReactionOrFidget = FIDGET_BAD;
+            gGameDialogReactionOrFidget = static_cast<int>(HeadFidget::Bad);
             break;
         case NPC_REACTION_NEUTRAL:
-            gGameDialogReactionOrFidget = FIDGET_NEUTRAL;
+            gGameDialogReactionOrFidget = static_cast<int>(HeadFidget::Neutral);
             break;
         case NPC_REACTION_GOOD:
-            gGameDialogReactionOrFidget = FIDGET_GOOD;
+            gGameDialogReactionOrFidget = static_cast<int>(HeadFidget::Good);
             break;
         }
     }
@@ -2063,7 +2057,7 @@ static void opMetarule3(Program* program)
 
             int frameId = param2.integerValue;
             if (frameId > FrmId::kMaxFrameId) {
-                frameId = FrmId(frameId).frameId().id;
+                frameId = FrmId(frameId).frameId();
             }
 
             const FrmId frmId = FrmId(obj);
@@ -2223,7 +2217,7 @@ static void opSetExitGrids(Program* program)
 
     Object* object = objectFindFirstAtElevation(elevation);
     while (object != nullptr) {
-        if (object->pid >= FIRST_EXIT_GRID_PID && object->pid <= LAST_EXIT_GRID_PID) {
+        if (isExitGridProtoId(object)) {
             object->data.misc.map = destinationMap;
             object->data.misc.tile = destinationTile;
             object->data.misc.elevation = destinationElevation;
@@ -2416,7 +2410,7 @@ static void opKillCritterType(Program* program)
     };
 
     AnimationType deathFrame = programStackPopEnum<AnimationType>(program);
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
 
     if (_isLoadingGame()) {
         debugPrint("\nError: attempt to destroy critter in load/save-game: %s!", program->name);
@@ -2432,7 +2426,7 @@ static void opKillCritterType(Program* program)
     Object* obj = objectFindFirst();
     while (obj != nullptr) {
         if (FrmId(obj).animationType() < ANIM_FALL_BACK_SF) {
-            if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE && obj->pid == pid && !critterIsDead(obj)) {
+            if ((obj->flags & OBJECT_HIDDEN) == OBJECT_NONE && ProtoId(obj) == protoId && !critterIsDead(obj)) {
                 if (obj == previousObj || count > 200) {
                     scriptPredefinedError(program, "kill_critter_type", SCRIPT_ERROR_FOLLOWS);
                     debugPrint(" Infinite loop destroying critters!");
@@ -2741,7 +2735,7 @@ static void opGameDialogSystemEnter(Program* program)
         return;
     }
 
-    if (gameRequestState(GAME_STATE_4) == -1) {
+    if (gameRequestState(GameState::DialogActive) == -1) {
         return;
     }
 
@@ -2875,14 +2869,11 @@ static void opGetObjectPid(Program* program)
 {
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
-    int pid = -1;
-    if (obj) {
-        pid = obj->pid;
-    } else {
+    if (obj == nullptr) {
         scriptPredefinedError(program, "obj_pid", SCRIPT_ERROR_OBJECT_IS_NULL);
     }
 
-    programStackPushInteger(program, pid);
+    programStackPushInteger(program, ProtoId(obj).pid());
 }
 
 // cur_map_index
@@ -3003,11 +2994,11 @@ static void opCritterRemoveTrait(Program* program)
 static void opGetProtoData(Program* program)
 {
     int member = programStackPopInteger(program);
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
 
     ProtoDataMemberValue value;
     value.integerValue = 0;
-    int valueType = protoGetDataMember(pid, member, &value);
+    int valueType = protoGetDataMember(protoId, member, &value);
     switch (valueType) {
     case PROTO_DATA_MEMBER_TYPE_INT:
         programStackPushInteger(program, value.integerValue);
@@ -3031,9 +3022,17 @@ static void opGetMessageString(Program* program)
     int messageIndex = programStackPopInteger(program);
     int messageListIndex = programStackPopInteger(program);
 
+    // The script's owner is taken as the speaker, so a voiced bark from the
+    // same object replaces its previous one instead of stacking on it.
+    Object* speaker = nullptr;
+    Script* script;
+    if (scriptGetScript(scriptGetSid(program), &script) != -1) {
+        speaker = script->owner;
+    }
+
     char* string;
     if (messageIndex >= 0) {
-        string = _scr_get_msg_str_speech(messageListIndex, messageIndex, 1);
+        string = _scr_get_msg_str_speech(messageListIndex, messageIndex, 1, speaker);
         if (string == nullptr) {
             debugPrint("\nError: No message file EXISTS!: index %d, line %d", messageListIndex, messageIndex);
             string = errStr;
@@ -3370,9 +3369,10 @@ static void opMetarule(Program* program)
     case METARULE_CRITTER_BARTERS:
         if (1) {
             Object* object = static_cast<Object*>(param.pointerValue);
-            if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+            const ProtoId protoId = object;
+            if (protoId.objectType() == OBJ_TYPE_CRITTER) {
                 Proto* proto;
-                protoGetProto(object->pid, &proto);
+                protoGetProto(protoId, &proto);
                 if ((proto->critter.data.flags & CRITTER_BARTER) != CRITTER_NONE) {
                     result = 1;
                 }
@@ -3385,7 +3385,7 @@ static void opMetarule(Program* program)
     case METARULE_SET_CAR_CARRY_AMOUNT:
         if (1) {
             Proto* proto;
-            if (protoGetProto(PROTO_ID_CAR_TRUNK, &proto) != -1) {
+            if (protoGetProto(ItemProtoTypeId::CarTrunk, &proto) != -1) {
                 proto->item.data.container.maxSize = param.integerValue;
                 result = 1;
             }
@@ -3394,7 +3394,7 @@ static void opMetarule(Program* program)
     case METARULE_GET_CAR_CARRY_AMOUNT:
         if (1) {
             Proto* proto;
-            if (protoGetProto(PROTO_ID_CAR_TRUNK, &proto) != -1) {
+            if (protoGetProto(ItemProtoTypeId::CarTrunk, &proto) != -1) {
                 result = proto->item.data.container.maxSize;
             }
         }
@@ -3493,12 +3493,12 @@ static void opAnim(Program* program)
 // 0x459B5C op_obj_carrying_pid_obj
 static void opObjectCarryingObjectByPid(Program* program)
 {
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
     Object* object = static_cast<Object*>(programStackPopPointer(program));
 
     Object* result = nullptr;
     if (object != nullptr) {
-        result = objectGetCarriedObjectByPid(object, pid);
+        result = objectGetCarriedObjectByProtoId(object, protoId);
     } else {
         scriptPredefinedError(program, "obj_carrying_pid_obj", SCRIPT_ERROR_OBJECT_IS_NULL);
     }
@@ -3537,7 +3537,7 @@ static void opRegAnimAnimate(Program* program)
     Object* object = static_cast<Object*>(programStackPopPointer(program));
 
     if (!animationCheckCombatMode()) {
-        if (anim != ANIM_FALL_BACK || object == nullptr || object->pid != 0x100002F || (settings.preferences.violence_level >= 2)) {
+        if (anim != ANIM_FALL_BACK || ProtoId(object) != CritterProtoTypeId::GunGuardFemale || (settings.preferences.violence_level >= 2)) {
             if (object != nullptr) {
                 animationRegisterAnimate(object, anim, delay);
             } else {
@@ -3699,9 +3699,6 @@ static void opAddMultipleObjectsToInventory(Program* program)
 
     if (quantity < 0) {
         quantity = 1;
-    } else if (quantity > 99999) {
-        // SFALL
-        quantity = 99999;
     }
 
     if (itemAdd(object, item, quantity) == 0) {
@@ -4296,7 +4293,7 @@ static void _op_anim_action_frame(Program* program)
     int actionFrame = 0;
 
     if (object != nullptr) {
-        FrmId fid = FrmId(object, anim, WEAPON_ANIMATION_NONE, object->rotation);
+        FrmId fid = FrmId(object, anim, WeaponAnimation::None, object->rotation);
         CacheEntry* frmHandle;
         Art* frm = artLock(fid, &frmHandle);
         if (frm != nullptr) {
@@ -4384,18 +4381,23 @@ static void opCritterModifySkill(Program* program)
 // 0x45B9C4 op_sfx_build_char_name
 static void opSfxBuildCharName(Program* program)
 {
-    WeaponAnimation weaponType = programStackPopEnum<WeaponAnimation>(program);
+    CharacterSoundEffect soundEffect = programStackPopEnum<CharacterSoundEffect>(program);
     AnimationType anim = programStackPopEnum<AnimationType>(program);
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
     if (obj != nullptr) {
-        char soundEffectName[16];
-        strcpy(soundEffectName, sfxBuildCharName(obj, anim, weaponType));
-        programStackPushString(program, soundEffectName);
+        const char* charName = sfxBuildCharName(obj, anim, soundEffect);
+        if (charName != nullptr) {
+            char soundEffectName[16];
+            strcpy(soundEffectName, charName);
+            programStackPushString(program, soundEffectName);
+            return;
+        }
     } else {
         scriptPredefinedError(program, "sfx_build_char_name", SCRIPT_ERROR_OBJECT_IS_NULL);
-        programStackPushString(program, nullptr);
     }
+
+    programStackPushString(program, nullptr);
 }
 
 // sfx_build_ambient_name
@@ -4744,9 +4746,9 @@ static void opGetFidAnim(Program* program)
 // 0x45C66C op_party_member_obj
 static void opGetPartyMember(Program* program)
 {
-    int data = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
 
-    Object* object = partyMemberFindByPid(data);
+    Object* object = partyMemberFindByProtoId(protoId);
     programStackPushPointer(program, object);
 }
 
@@ -4893,7 +4895,7 @@ static void opCritterStopAttacking(Program* program)
 // 0x45CBF8 op_tile_contains_pid_obj
 static void opTileGetObjectWithPid(Program* program)
 {
-    int pid = programStackPopInteger(program);
+    const ProtoId protoId = programStackPopProtoId(program);
     int elevation = programStackPopInteger(program);
     int tile = programStackPopInteger(program);
     Object* found = nullptr;
@@ -4901,7 +4903,7 @@ static void opTileGetObjectWithPid(Program* program)
     if (tile != -1) {
         Object* object = objectFindFirstAtLocation(elevation, tile);
         while (object != nullptr) {
-            if (object->pid == pid) {
+            if (ProtoId(object) == protoId) {
                 found = object;
                 break;
             }

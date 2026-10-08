@@ -169,7 +169,7 @@ namespace {
 
         int width2;
         int height2;
-        const FrmId frmId(critter, ANIM_CALLED_SHOT_PIC, WEAPON_ANIMATION_NONE, ROTATION_NE);
+        const FrmId frmId(critter, ANIM_CALLED_SHOT_PIC, WeaponAnimation::None, ROTATION_NE);
         SDL_Texture* texture = muiArtTexture(frmId, 0, &width2, &height2);
         if (texture != nullptr) {
             muiDrawTexture(texture, muiFitRect(picture, static_cast<float>(width2), static_cast<float>(height2)));

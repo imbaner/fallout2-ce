@@ -40,6 +40,7 @@
 #include "interface.h"
 #include "item.h"
 #include "kb.h"
+#include "mainmenu.h"
 #include "map.h"
 #include "memory.h"
 #include "message.h"
@@ -1389,8 +1390,7 @@ int lsgLoadGame(int mode)
         windowRefresh(gLoadSaveWindow);
         renderPresent();
         if (mode == LOAD_SAVE_MODE_FROM_MAIN_MENU) {
-            colorPaletteLoad("color.pal");
-            paletteFadeTo(_cmap);
+            mainMenuShowSubscreen(true);
         }
         soundPlayFile("iisxxxx1");
         stringCopy(_str0, getmsg(&gLoadSaveMessageList, &gLoadSaveMessageListItem, 106));
@@ -1445,8 +1445,7 @@ int lsgLoadGame(int mode)
     windowRefresh(gLoadSaveWindow);
     renderPresent();
     if (mode == LOAD_SAVE_MODE_FROM_MAIN_MENU) {
-        colorPaletteLoad("color.pal");
-        paletteFadeTo(_cmap);
+        mainMenuShowSubscreen(true);
     }
     _dbleclkcntr = 24;
 
@@ -1779,7 +1778,7 @@ int lsgLoadGame(int mode)
     }
 
     if (mode == LOAD_SAVE_MODE_FROM_MAIN_MENU && rc == 0) {
-        paletteFadeTo(gPaletteBlack);
+        mainMenuFadeOutForMenuReturn(true);
     }
 
     lsgWindowFree(mode == LOAD_SAVE_MODE_FROM_MAIN_MENU
@@ -3506,17 +3505,17 @@ static int _GameMap2Slot(File* stream)
     }
 
     for (int index = 1; index < gPartyMemberDescriptionsLength; index += 1) {
-        int pid = gPartyMemberPids[index];
-        if (pid == -2) {
+        const ProtoId protoId = ProtoId(gPartyMemberPids[index]);
+        if (!protoId.valid()) {
             continue;
         }
 
         char path[COMPAT_MAX_PATH];
-        if (_proto_list_str(pid, path) != 0) {
+        if (_proto_list_str(protoId, path) != 0) {
             continue;
         }
 
-        const char* critterItemPath = (pid >> 24) == OBJ_TYPE_CRITTER
+        const char* critterItemPath = protoId.objectType() == OBJ_TYPE_CRITTER
             ? PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME
             : PROTO_DIR_NAME "\\" ITEMS_DIR_NAME;
         snprintf(_str0, sizeof(_str0), "%s\\%s\\%s", _patches, critterItemPath, path);
@@ -3646,11 +3645,11 @@ static int _SlotMap2Game(File* stream)
     compat_remove(_str0);
 
     for (int index = 1; index < gPartyMemberDescriptionsLength; index += 1) {
-        int pid = gPartyMemberPids[index];
-        if (pid != -2) {
+        const ProtoId protoId = ProtoId(gPartyMemberPids[index]);
+        if (protoId.valid()) {
             char protoPath[COMPAT_MAX_PATH];
-            if (_proto_list_str(pid, protoPath) == 0) {
-                const char* basePath = objectTypeFromPid(pid) == OBJ_TYPE_CRITTER
+            if (_proto_list_str(protoId, protoPath) == 0) {
+                const char* basePath = protoId.objectType() == OBJ_TYPE_CRITTER
                     ? PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME
                     : PROTO_DIR_NAME "\\" ITEMS_DIR_NAME;
                 snprintf(_str0, sizeof(_str0), "%s\\%s\\%s", _patches, basePath, protoPath);

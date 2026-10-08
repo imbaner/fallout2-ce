@@ -2,11 +2,25 @@
 #define GAME_SOUND_H
 
 #include "animation_defs.h"
+#include "art_defs.h"
 #include "combat_defs.h"
 #include "obj_types.h"
 #include "sound.h"
 
 namespace fallout {
+
+enum class CharacterSoundEffect : int {
+    Unused,
+    KnockDown,
+    PassOut,
+    Die,
+    Contact
+};
+
+constexpr inline bool characterSoundEffectIsValid(int soundEffect)
+{
+    return soundEffect >= static_cast<int>(CharacterSoundEffect::Unused) && soundEffect <= static_cast<int>(CharacterSoundEffect::Contact);
+}
 
 typedef enum WeaponSoundEffect {
     WEAPON_SOUND_EFFECT_READY,
@@ -87,6 +101,21 @@ int speechGetDuration();
 int speechLoad(const char* fileName, GameSoundReadLimitMode readLimitMode, GameSoundStorageType storageType, GameSoundLoopingMode loopingMode);
 int _gsound_speech_play_preloaded();
 void speechDelete();
+
+// Plays a voiced float line (speech file name without extension) on the float
+// channel pool at speech volume. Evicts the oldest float when every channel is
+// busy. Falls back to sound\sfx\ when the file is not in the speech folders,
+// like sfall.
+// [speaker] (optional) keeps one line per object: a new line from the same
+// speaker replaces the one still playing.
+int floatSoundPlay(const char* fileName, Object* speaker = nullptr);
+void floatSoundStopAll();
+
+// Plays a voiced Pip-Boy line (file name in sound\pipboy\ without extension,
+// e.g. a holodisk narration) on the Pip-Boy channel pool at speech volume.
+int pipboySoundPlay(const char* fileName);
+void pipboySoundStop();
+
 int _gsound_play_sfx_file_volume(const char* name, int volume);
 // CE: [tempo] - plays that many times as fast, same pitch (`soundSetTempo`).
 Sound* soundEffectLoad(const char* name, Object* object, double tempo = 1.0);
@@ -95,7 +124,7 @@ void soundEffectDelete(Sound* sound);
 int _gsnd_anim_sound(Sound* sound, void* objectPtr);
 int soundEffectPlay(Sound* sound);
 int _gsound_compute_relative_volume(Object* obj);
-char* sfxBuildCharName(Object* object, AnimationType anim, WeaponAnimation weaponType);
+char* sfxBuildCharName(Object* object, AnimationType anim, CharacterSoundEffect soundEffect);
 char* gameSoundBuildAmbientSoundEffectName(const char* name);
 char* gameSoundBuildInterfaceName(const char* name);
 char* sfxBuildWeaponName(int effectType, Object* weapon, HitMode hitMode, Object* target);

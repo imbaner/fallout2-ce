@@ -1417,10 +1417,10 @@ void tileRenderRoofsInRect(Rect* rect, int elevation)
     for (int y = minY; y <= maxY; y++) {
         for (int x = minX; x <= maxX; x++) {
             int squareTile = baseSquareTile + x;
-            TileFID roofTileFid = roofTileFidFromCombinedTileFid(gTileSquares[elevation]->tileFid[squareTile]);
+            const RoofTileFrmId roofTileFrmId = RoofTileFrmId(gTileSquares[elevation]->tileFid[squareTile]);
 
-            if ((tileFlagsFromTileFid(roofTileFid) & TileFlags::TemporarilyHidden) == TileFlags::None) {
-                TileFrameId frameId = FrmId(roofTileFid).frameId().tile;
+            if ((roofTileFrmId.flags() & TileFlags::TemporarilyHidden) == TileFlags::None) {
+                TileFrameId frameId = roofTileFrmId.frameId<TileFrameId>();
                 if (frameId == TileFrameId::Invalid) {
                     frameId = TileFrameId::Last;
                 }
@@ -1450,15 +1450,15 @@ static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, 
 
     int squareTileIndex = gSquareGridWidth * y + x;
     int squareTile = gTileSquares[elevation]->tileFid[squareTileIndex];
-    TileFID floorTileFid = floorTileFidFromCombinedTileFid(squareTile);
-    TileFID roofTileFid = roofTileFidFromCombinedTileFid(squareTile);
-    TileFrameId roofFrameId = FrmId(roofTileFid).frameId().tile;
+    const FloorTileFrmId floorTileFrmId = FloorTileFrmId(squareTile);
+    const RoofTileFrmId roofTileFrmId = RoofTileFrmId(squareTile);
+    TileFrameId roofFrameId = roofTileFrmId.frameId<TileFrameId>();
     if (roofFrameId == TileFrameId::Invalid) {
         roofFrameId = TileFrameId::Last;
     }
 
     if (roofFrameId != TileFrameId::Grid) {
-        TileFlags flag = tileFlagsFromTileFid(roofTileFid);
+        TileFlags flag = roofTileFrmId.flags();
 
         bool updateFid = false;
         if (on) {
@@ -1474,7 +1474,8 @@ static void roof_fill_off_process_task(std::stack<roof_fill_task>& tasks_stack, 
         }
 
         if (updateFid) {
-            gTileSquares[elevation]->tileFid[squareTileIndex] = floorTileFid | (roofFrameId | flag);
+            const TileFrmId updatedFrmId = TileFrmId(floorTileFrmId, RoofTileFrmId(roofFrameId, flag));
+            gTileSquares[elevation]->tileFid[squareTileIndex] = updatedFrmId.fid();
 
             // CE: Where the roof tile is on screen.
             if (changed != nullptr) {
@@ -1666,12 +1667,12 @@ void tileRenderFloorsInRect(Rect* rect, int elevation)
     for (int y = minY; y <= maxY; y++) {
         for (int x = minX; x <= maxX; x++) {
             int squareTile = baseSquareTile + x;
-            TileFID floorTileFid = floorTileFidFromCombinedTileFid(gTileSquares[elevation]->tileFid[squareTile]);
-            if ((tileFlagsFromTileFid(floorTileFid) & TileFlags::TemporarilyHidden) == TileFlags::None) {
+            const FloorTileFrmId floorTileFrmId = FloorTileFrmId(gTileSquares[elevation]->tileFid[squareTile]);
+            if ((floorTileFrmId.flags() & TileFlags::TemporarilyHidden) == TileFlags::None) {
                 int tileScreenX;
                 int tileScreenY;
                 squareTileToScreenXY(squareTile, &tileScreenX, &tileScreenY, elevation);
-                TileFrameId frameId = FrmId(floorTileFid).frameId().tile;
+                TileFrameId frameId = floorTileFrmId.frameId<TileFrameId>();
                 if (frameId == TileFrameId::Invalid) {
                     frameId = TileFrameId::Last;
                 }
@@ -1745,14 +1746,14 @@ bool _square_roof_intersect(int x, int y, int elevation)
 
     TileData* ptr = gTileSquares[elevation];
     int idx = gSquareGridWidth * tileY + tileX;
-    TileFID roofTileFid = roofTileFidFromCombinedTileFid(ptr->tileFid[gSquareGridWidth * tileY + tileX]);
-    TileFrameId frameId = FrmId(roofTileFid).frameId().tile;
+    const RoofTileFrmId roofTileFrmId = RoofTileFrmId(ptr->tileFid[gSquareGridWidth * tileY + tileX]);
+    TileFrameId frameId = roofTileFrmId.frameId<TileFrameId>();
     if (frameId == TileFrameId::Invalid) {
         frameId = TileFrameId::Last;
     }
 
     if (frameId != TileFrameId::Grid) {
-        if ((tileFlagsFromTileFid(roofTileFid) & TileFlags::TemporarilyHidden) == TileFlags::None) {
+        if ((roofTileFrmId.flags() & TileFlags::TemporarilyHidden) == TileFlags::None) {
             CacheEntry* handle;
             Art* art = artLock(frameId, &handle);
             if (art != nullptr) {

@@ -59,7 +59,7 @@ struct RadialMenu {
     int anchorX = 0;
     int anchorY = 0;
 
-    int items[kRadialMenuMaxItems];
+    GameMouseActionMenuItem items[kRadialMenuMaxItems];
     int itemsLength = 0;
 
     // Index of the item in the list the menu was opened with.
@@ -127,7 +127,7 @@ static const char* const kActionNameFallbacks[GAME_MOUSE_ACTION_MENU_ITEM_COUNT]
 
 static RadialMenuScreen gRadialMenuScreen;
 
-static void touchControlsSetGameMouseMode(int mode);
+static void touchControlsSetGameMouseMode(GameMouseMode mode);
 static TouchAction touchControlsGetActionAt(int worldX, int worldY, Object** targetPtr);
 static void touchControlsHandleTap(int x, int y);
 static void touchControlsSnapTap(int x, int y, int* tile, TouchAction* action, Object** target);
@@ -137,7 +137,7 @@ static bool touchControlsObjectExists(Object* object);
 static void touchControlsPerform(TouchAction action, int tile, Object* target);
 static void touchControlsClearSelection();
 static bool radialMenuOpen(int x, int y);
-static bool radialMenuOpenItems(const int* items, int itemsLength, int x, int y);
+static bool radialMenuOpenItems(const GameMouseActionMenuItem* items, int itemsLength, int x, int y);
 static void radialMenuClose();
 static int radialMenuHitTest(int x, int y);
 static void radialMenuHighlight(int index);
@@ -524,7 +524,7 @@ bool touchControlsGetRadialMenuItemPosition(int menuItem, int* x, int* y)
 
 // Moves (hidden) mouse cursor, which is used by the game mouse code to find
 // tile and objects to act upon.
-static void touchControlsSetGameMouseMode(int mode)
+static void touchControlsSetGameMouseMode(GameMouseMode mode)
 {
     if (gameMouseGetMode() != mode) {
         gameMouseSetMode(mode);
@@ -864,7 +864,7 @@ static bool radialMenuOpen(int x, int y)
         return false;
     }
 
-    int items[GAME_MOUSE_ACTION_MENU_ITEM_COUNT - 1];
+    GameMouseActionMenuItem items[GAME_MOUSE_ACTION_MENU_ITEM_COUNT - 1];
     int itemsLength = gameMouseBuildActionMenuItems(target, items);
     if (!radialMenuOpenItems(items, itemsLength, x, y)) {
         return false;
@@ -876,7 +876,7 @@ static bool radialMenuOpen(int x, int y)
 
 // Opens radial menu with action menu items around the point. Cancel item is
 // left out (tapping outside of the menu cancels it).
-static bool radialMenuOpenItems(const int* items, int itemsLength, int x, int y)
+static bool radialMenuOpenItems(const GameMouseActionMenuItem* items, int itemsLength, int x, int y)
 {
     radialMenuClose();
 
@@ -1019,7 +1019,7 @@ static bool radialMenuOpenItems(const int* items, int itemsLength, int x, int y)
     return true;
 }
 
-int touchControlsChooseActionMenuItem(const int* items, int itemsLength, int x, int y)
+int touchControlsChooseActionMenuItem(const GameMouseActionMenuItem* items, int itemsLength, int x, int y)
 {
     if (!radialMenuOpenItems(items, itemsLength, x, y)) {
         return -1;
@@ -1242,7 +1242,7 @@ static void radialMenuSelect(int index)
     }
 
     Object* target = gRadialMenu.target;
-    int menuItem = gRadialMenu.items[index];
+    GameMouseActionMenuItem menuItem = gRadialMenu.items[index];
 
     radialMenuClose();
 

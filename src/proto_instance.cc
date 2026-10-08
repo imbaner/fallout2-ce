@@ -98,13 +98,14 @@ int objectSetScriptFromProto(Object* object, int* sidPtr)
 {
     *sidPtr = -1;
 
+    const ProtoId protoId = object;
     Proto* proto;
-    if (protoGetProto(object->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return -1;
     }
 
     int sid;
-    int objectType = objectTypeFromPid(object->pid);
+    ObjectType objectType = protoId.objectType();
     if (objectType < OBJ_TYPE_TILE) {
         sid = proto->sid;
     } else if (objectType == OBJ_TYPE_TILE) {
@@ -209,7 +210,7 @@ int objectLookAtFunc(Object* critter, Object* target, void (*fn)(const char* str
     }
 
     Proto* proto;
-    if (protoGetProto(target->pid, &proto) == -1) {
+    if (protoGetProto(target, &proto) == -1) {
         return -1;
     }
 
@@ -227,7 +228,7 @@ int objectLookAtFunc(Object* critter, Object* target, void (*fn)(const char* str
     if (!scriptOverrides) {
         MessageListItem messageListItem;
 
-        if (objectTypeFromPid(target->pid) == OBJ_TYPE_CRITTER && critterIsDead(target)) {
+        if (ProtoId(target).objectType() == OBJ_TYPE_CRITTER && critterIsDead(target)) {
             messageListItem.num = 491 + randomBetween(0, 1);
         } else {
             messageListItem.num = 490;
@@ -352,8 +353,8 @@ int objectExamineFunc(Object* critter, Object* target, void (*fn)(const char* st
                 snprintf(format, sizeof(format), "%s%s", hpMessageListItem.text, weaponMessageListItem.text);
 
                 if (ammoGetCaliber(item2) != CALIBER_TYPE_NONE) {
-                    const int ammoTypePid = weaponGetAmmoTypePid(item2);
-                    const char* ammoName = protoGetName(ammoTypePid);
+                    const ProtoId ammoTypeProtoId = weaponGetAmmoTypeProtoId(item2);
+                    const char* ammoName = protoGetName(ammoTypeProtoId);
                     const int ammoCapacity = ammoGetCapacity(item2);
                     const int ammoQuantity = ammoGetQuantity(item2);
                     const char* weaponName = objectGetName(item2);
@@ -480,7 +481,7 @@ int objectExamineFunc(Object* critter, Object* target, void (*fn)(const char* st
 
         fn(formattedText);
     } else if (type == OBJ_TYPE_SCENERY) {
-        if (target->pid == PROTO_ID_CAR) {
+        if (ProtoId(target) == SceneryProtoTypeId::Car) {
             MessageListItem carMessageListItem;
             carMessageListItem.num = 549; // The car is running at %d%% power.
 
@@ -514,8 +515,8 @@ int objectExamineFunc(Object* critter, Object* target, void (*fn)(const char* st
                     exit(1);
                 }
 
-                int ammoTypePid = weaponGetAmmoTypePid(target);
-                const char* ammoName = protoGetName(ammoTypePid);
+                const ProtoId ammoTypeProtoId = weaponGetAmmoTypeProtoId(target);
+                const char* ammoName = protoGetName(ammoTypeProtoId);
                 int ammoCapacity = ammoGetCapacity(target);
                 int ammoQuantity = ammoGetQuantity(target);
                 snprintf(formattedText, sizeof(formattedText), weaponMessageListItem.text, ammoQuantity, ammoCapacity, ammoName);
@@ -605,7 +606,7 @@ int objectPickup(Object* critter, Object* item)
 
     if (!overriden) {
         int rc;
-        if (item->pid == PROTO_ID_MONEY) {
+        if (ProtoId(item) == ItemProtoTypeId::Money) {
             int amount = itemGetMoney(item);
             if (amount <= 0) {
                 amount = 1;
@@ -664,7 +665,7 @@ static int _obj_remove_from_inven(Object* critter, Object* item)
         scriptHooks_InvenWield(critter, item, slot, 0, 1);
         if (slot == InvenSlot::RightHand) {
             if (critter != gDude || interfaceGetCurrentHand() == HAND_RIGHT) {
-                frmId = FrmId(critter, WEAPON_ANIMATION_NONE, critter->rotation);
+                frmId = FrmId(critter, WeaponAnimation::None, critter->rotation);
                 objectSetFrmId(critter, frmId, &updatedRect);
                 appearanceUpdateType = 2;
             } else {
@@ -672,7 +673,7 @@ static int _obj_remove_from_inven(Object* critter, Object* item)
             }
         } else if (slot == InvenSlot::LeftHand) {
             if (critter == gDude && interfaceGetCurrentHand() == HAND_LEFT) {
-                frmId = FrmId(critter, WEAPON_ANIMATION_NONE, critter->rotation);
+                frmId = FrmId(critter, WeaponAnimation::None, critter->rotation);
                 objectSetFrmId(critter, frmId, &updatedRect);
                 appearanceUpdateType = 2;
             } else {
@@ -683,8 +684,8 @@ static int _obj_remove_from_inven(Object* critter, Object* item)
                 CritterFrameId defaultFrameId = CritterFrameId::First;
 
                 Proto* proto;
-                if (protoGetProto(0x1000000, &proto) != -1) {
-                    defaultFrameId = FrmId(proto).frameId().critter;
+                if (protoGetProto(CritterProtoTypeId::Dude, &proto) != -1) {
+                    defaultFrameId = FrmId(proto).frameId<CritterFrameId>();
                 }
 
                 const FrmId dudeFrmId = FrmId(critter);
@@ -794,7 +795,7 @@ static UseItemResultCode _obj_use_book(Object* book)
     Skill skill;
 
     // SFALL
-    if (!booksGetInfo(book->pid, &messageId, &skill)) {
+    if (!booksGetInfo(book, &messageId, &skill)) {
         return USE_ITEM_RESULT_ERROR;
     }
 
@@ -860,7 +861,7 @@ static UseItemResultCode _obj_use_flare(Object* critter, Object* flare)
 {
     MessageListItem messageListItem;
 
-    if (flare->pid != PROTO_ID_FLARE) {
+    if (ProtoId(flare) != ItemProtoTypeId::Flare) {
         return USE_ITEM_RESULT_ERROR;
     }
 
@@ -873,6 +874,21 @@ static UseItemResultCode _obj_use_flare(Object* critter, Object* flare)
             }
         }
     } else {
+        // CE: Light one flare rather than the whole stack, which is what the singular message
+        // below has always said. A stack is a single object, so lighting it in place turned every
+        // flare in it into a lit flare sharing one timer; when that fired it spent one and left
+        // the rest burning for good. itemRemoveWithReason() takes one off a
+        // stack — _obj_copy() leaves the remainder behind and hands this pointer back as a single
+        // item — and is what the inventory screen does before it reaches here.
+        // Whose inventory it is, not who is using it. They are the same for every path the game
+        // takes today — the backpack window lists the player's own items — but the flare's own
+        // owner is the thing that has to give it up, it costs nothing to ask, and it puts the lit
+        // flare back where it came from when that is a container rather than a pocket.
+        Object* holder = flare->owner != nullptr ? flare->owner : critter;
+        bool takenOffAStack = holder != nullptr
+            && itemGetQuantity(holder, flare) > 1
+            && itemRemoveWithReason(holder, flare, 1, RemoveInventoryObjectHookReason::UseObj) == 0;
+
         if (critter == gDude) {
             // You light the flare.
             messageListItem.num = 587;
@@ -881,10 +897,17 @@ static UseItemResultCode _obj_use_flare(Object* critter, Object* flare)
             }
         }
 
-        flare->pid = PROTO_ID_LIT_FLARE;
+        flare->pid = ProtoId(ItemProtoTypeId::LitFlare).pid();
 
         objectSetLight(flare, 8, 0x10000, nullptr);
         queueAddEvent(72000, flare, nullptr, EVENT_TYPE_FLARE);
+
+        if (takenOffAStack && itemAdd(holder, flare, 1) != 0) {
+            // Nothing sensible is left to do with it, and dropping it at their feet beats
+            // leaking it: it is lit, so it lights the ground the way a thrown one would.
+            Object* ground = critter != nullptr ? critter : holder;
+            _obj_connect(flare, ground->tile, ground->elevation, nullptr);
+        }
     }
 
     return USE_ITEM_RESULT_OK;
@@ -909,9 +932,8 @@ static UseItemResultCode _obj_use_explosive(Object* explosive)
 {
     MessageListItem messageListItem;
 
-    int pid = explosive->pid;
     // SFALL
-    if (!explosiveIsExplosive(pid)) {
+    if (!explosiveIsExplosive(explosive)) {
         return USE_ITEM_RESULT_ERROR;
     }
 
@@ -931,7 +953,9 @@ static UseItemResultCode _obj_use_explosive(Object* explosive)
             }
 
             // SFALL
-            explosiveActivate(&(explosive->pid));
+            ProtoId explosiveProtoId = explosive;
+            explosiveActivate(explosiveProtoId);
+            explosive->pid = explosiveProtoId.pid();
 
             int delay = 10 * seconds;
 
@@ -981,14 +1005,16 @@ static UseItemResultCode _obj_use_power_on_car(Object* item)
     bool isEnergy = false;
     int energyDensity;
 
-    switch (item->pid) {
-    case PROTO_ID_SMALL_ENERGY_CELL:
+    switch (ProtoId(item).protoId<ItemProtoTypeId>()) {
+    case ItemProtoTypeId::SmallEnergyCell:
         energyDensity = 16000;
         isEnergy = true;
         break;
-    case PROTO_ID_MICRO_FUSION_CELL:
+    case ItemProtoTypeId::MicroFusionCell:
         energyDensity = 40000;
         isEnergy = true;
+        break;
+    default:
         break;
     }
 
@@ -1030,13 +1056,13 @@ static UseItemResultCode _obj_use_misc_item(Object* item)
         return USE_ITEM_RESULT_ERROR;
     }
 
-    switch (item->pid) {
-    case PROTO_ID_RAMIREZ_BOX_CLOSED:
-    case PROTO_ID_RAIDERS_MAP:
-    case PROTO_ID_CATS_PAW_ISSUE_5:
-    case PROTO_ID_PIP_BOY_LINGUAL_ENHANCER:
-    case PROTO_ID_SURVEY_MAP:
-    case PROTO_ID_PIP_BOY_MEDICAL_ENHANCER:
+    switch (ProtoId(item).protoId<ItemProtoTypeId>()) {
+    case ItemProtoTypeId::RamirezBoxClosed:
+    case ItemProtoTypeId::RaidersMap:
+    case ItemProtoTypeId::CatsPawIssue5:
+    case ItemProtoTypeId::PipBoyLingualEnhancer:
+    case ItemProtoTypeId::SurveyMap:
+    case ItemProtoTypeId::PipBoyMedicalEnhancer:
         if (item->sid == -1) {
             return USE_ITEM_RESULT_REMOVE;
         }
@@ -1046,9 +1072,9 @@ static UseItemResultCode _obj_use_misc_item(Object* item)
         }
 
         return USE_ITEM_RESULT_REMOVE;
+    default:
+        return USE_ITEM_RESULT_ERROR;
     }
-
-    return USE_ITEM_RESULT_ERROR;
 }
 
 // 0x49BF38
@@ -1118,7 +1144,7 @@ UseItemResultCode objectUseItemInternal(Object* critter, Object* item)
 static int _protinstTestDroppedExplosive(Object* explosiveItem)
 {
     // SFALL
-    if (explosiveIsActiveExplosive(explosiveItem->pid)) {
+    if (explosiveIsActiveExplosive(explosiveItem)) {
         Attack attack;
         attackInit(&attack, gDude, nullptr, HIT_MODE_PUNCH, HIT_LOCATION_TORSO);
         attack.attackerFlags = DAM_HIT;
@@ -1256,7 +1282,7 @@ static UseItemResultCode _protinst_default_use_item(Object* user, Object* target
     case ITEM_TYPE_AMMO:
         // SFALL: Fix for being able to charge the car by using cells on other
         // scenery/critters.
-        if (targetObj->pid == PROTO_ID_CAR || targetObj->pid == PROTO_ID_CAR_TRUNK) {
+        if (ProtoId(targetObj) == SceneryProtoTypeId::Car || ProtoId(targetObj) == ItemProtoTypeId::CarTrunk) {
             rc = _obj_use_power_on_car(item);
             if (rc == USE_ITEM_RESULT_REMOVE) {
                 return USE_ITEM_RESULT_REMOVE;
@@ -1298,34 +1324,36 @@ UseItemResultCode objectUseItemOnInternal(Object* critter, Object* targetObj, Ob
     int skillBonus = 0;
     Skill skill = SKILL_INVALID;
 
-    switch (item->pid) {
-    case PROTO_ID_DOCTORS_BAG:
+    switch (ProtoId(item).protoId<ItemProtoTypeId>()) {
+    case ItemProtoTypeId::DoctorsBag:
         // The supplies in the Doctor's Bag run out.
         messageId = 900;
         skillBonus = 20;
         skill = SKILL_DOCTOR;
         break;
-    case PROTO_ID_FIRST_AID_KIT:
+    case ItemProtoTypeId::FirstAidKit:
         // The supplies in the First Aid Kit run out.
         messageId = 901;
         skillBonus = 20;
         skill = SKILL_FIRST_AID;
         break;
-    case PROTO_ID_PARAMEDICS_BAG:
+    case ItemProtoTypeId::ParamedicsBag:
         // The supplies in the Paramedic's Bag run out.
         messageId = 910;
         skillBonus = 40;
         skill = SKILL_DOCTOR;
         break;
-    case PROTO_ID_FIELD_MEDIC_FIRST_AID_KIT:
+    case ItemProtoTypeId::FieldMedicsFirstAidKit:
         // The supplies in the Field Medic First Aid Kit run out.
         messageId = 911;
         skillBonus = 40;
         skill = SKILL_FIRST_AID;
         break;
+    default:
+        break;
     }
 
-    if (skill == -1) {
+    if (skill == SKILL_INVALID) {
         const int itemSid = item->sid;
         if (itemSid != -1) {
             Script* itemScript;
@@ -1489,11 +1517,11 @@ int objectUse(Object* user, Object* targetObj)
     }
 
     Proto* sceneryProto;
-    if (protoGetProto(targetObj->pid, &sceneryProto) == -1) {
+    if (protoGetProto(targetObj, &sceneryProto) == -1) {
         return -1;
     }
 
-    if (objectTypeFromPid(targetObj->pid) == OBJ_TYPE_SCENERY && sceneryProto->scenery.type == SCENERY_TYPE_DOOR) {
+    if (ProtoId(targetObj).objectType() == OBJ_TYPE_SCENERY && sceneryProto->scenery.type == SCENERY_TYPE_DOOR) {
         return objectUseDoor(user, targetObj);
     }
 
@@ -1509,7 +1537,7 @@ int objectUse(Object* user, Object* targetObj)
     }
 
     if (!scriptOverrides) {
-        if (objectTypeFromPid(targetObj->pid) == OBJ_TYPE_SCENERY) {
+        if (ProtoId(targetObj).objectType() == OBJ_TYPE_SCENERY) {
             if (sceneryProto->scenery.type == SCENERY_TYPE_LADDER_DOWN) {
                 if (useLadderDown(user, targetObj) == 0) {
                     scriptOverrides = true;
@@ -1831,7 +1859,7 @@ int objectUseContainer(Object* critter, Object* item)
     }
 
     Proto* itemProto;
-    if (protoGetProto(item->pid, &itemProto) == -1) {
+    if (protoGetProto(item, &itemProto) == -1) {
         return -1;
     }
 
@@ -1918,7 +1946,7 @@ int objectUseSkillOn(Object* source, Object* target, Skill skill)
     }
 
     Proto* proto;
-    if (protoGetProto(target->pid, &proto) == -1) {
+    if (protoGetProto(target, &proto) == -1) {
         return -1;
     }
 
@@ -1952,7 +1980,7 @@ static bool _obj_is_portal(Object* obj)
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(obj, &proto) == -1) {
         return false;
     }
 
@@ -1963,16 +1991,16 @@ static bool _obj_is_portal(Object* obj)
 static bool _obj_is_lockable(Object* obj)
 {
     Proto* proto;
-
-    if (obj == nullptr) {
+    const ProtoId protoId = obj;
+    if (!protoId.valid()) {
         return false;
     }
 
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
-    switch (objectTypeFromPid(obj->pid)) {
+    switch (protoId.objectType()) {
     case OBJ_TYPE_ITEM:
         if (proto->item.type == ITEM_TYPE_CONTAINER) {
             return true;
@@ -2051,17 +2079,18 @@ int objectUnlock(Object* object)
 // 0x49D294
 bool objectIsOpenable(Object* obj)
 {
-    if (obj == nullptr) {
+    const ProtoId protoId = obj;
+    if (!protoId.valid()) {
         return false;
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
     bool couldBeOpenable = false;
-    switch (objectTypeFromPid(obj->pid)) {
+    switch (protoId.objectType()) {
     case OBJ_TYPE_ITEM:
         if (proto->item.type == ITEM_TYPE_CONTAINER) {
             couldBeOpenable = true;

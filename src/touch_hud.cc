@@ -1087,7 +1087,7 @@ namespace {
         }
 
         if (critterIsDead(object)) {
-            if (!config.corpses || critterFlagCheck(object->pid, CRITTER_NO_STEAL)) {
+            if (!config.corpses || critterFlagCheck(object, CRITTER_NO_STEAL)) {
                 return 0;
             }
             if (config.checkLineOfSight && !dudeCanSee(object)) {
@@ -1177,7 +1177,7 @@ namespace {
             return true;
         }
 
-        Object* scanner = objectGetCarriedObjectByPid(gDude, PROTO_ID_MOTION_SENSOR);
+        Object* scanner = objectGetCarriedObjectByProtoId(gDude, ItemProtoTypeId::MotionSensor);
         if (scanner == nullptr) {
             displayMonitorAddMessage(const_cast<char*>(text(kTextNoMotionSensor)));
             return false;

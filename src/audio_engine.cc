@@ -2,29 +2,47 @@
 
 #include <string.h>
 
+#include <memory>
 #include <mutex>
 
 #include <SDL.h>
 
 namespace fallout {
 
-#define AUDIO_ENGINE_SOUND_BUFFERS 8
-
 static constexpr int kAudioEngineTargetSampleRate = 44100;
 
 struct AudioEngineSoundBuffer {
-    bool active;
-    unsigned int size;
-    int bitsPerSample;
-    int channels;
-    int rate;
-    void* data;
-    int volume;
-    bool playing;
-    bool looping;
-    unsigned int pos;
-    SDL_AudioStream* stream;
+    bool active = false;
+    unsigned int size = 0;
+    int bitsPerSample = 0;
+    int channels = 0;
+    int rate = 0;
+    void* data = nullptr;
+    int volume = 0;
+    bool playing = false;
+    bool looping = false;
+    unsigned int pos = 0;
+    SDL_AudioStream* stream = nullptr;
     std::recursive_mutex mutex;
+
+    AudioEngineSoundBuffer() = default;
+
+    ~AudioEngineSoundBuffer()
+    {
+        if (active) {
+            if (data) {
+                free(data);
+                data = nullptr;
+            }
+            if (stream) {
+                SDL_FreeAudioStream(stream);
+                stream = nullptr;
+            }
+        }
+    }
+
+    AudioEngineSoundBuffer(const AudioEngineSoundBuffer&) = delete;
+    AudioEngineSoundBuffer& operator=(const AudioEngineSoundBuffer&) = delete;
 };
 
 extern bool gProgramIsActive;
@@ -34,7 +52,8 @@ static void audioEngineMixin(void* userData, Uint8* stream, int length);
 
 static SDL_AudioSpec gAudioEngineSpec;
 static SDL_AudioDeviceID gAudioEngineDeviceId = -1;
-static AudioEngineSoundBuffer gAudioEngineSoundBuffers[AUDIO_ENGINE_SOUND_BUFFERS];
+static std::unique_ptr<AudioEngineSoundBuffer[]> gAudioEngineSoundBuffers;
+static int audioEngineSoundBufferCount = 0;
 
 static bool audioEngineIsInitialized()
 {
@@ -43,7 +62,7 @@ static bool audioEngineIsInitialized()
 
 static bool soundBufferIsValid(int soundBufferIndex)
 {
-    return soundBufferIndex >= 0 && soundBufferIndex < AUDIO_ENGINE_SOUND_BUFFERS;
+    return soundBufferIndex >= 0 && soundBufferIndex < audioEngineSoundBufferCount;
 }
 
 static void audioEngineMixin(void* userData, Uint8* stream, int length)
@@ -54,7 +73,7 @@ static void audioEngineMixin(void* userData, Uint8* stream, int length)
         return;
     }
 
-    for (int index = 0; index < AUDIO_ENGINE_SOUND_BUFFERS; index++) {
+    for (int index = 0; index < audioEngineSoundBufferCount; index++) {
         AudioEngineSoundBuffer* soundBuffer = &(gAudioEngineSoundBuffers[index]);
         std::lock_guard<std::recursive_mutex> lock(soundBuffer->mutex);
 
@@ -95,8 +114,16 @@ static void audioEngineMixin(void* userData, Uint8* stream, int length)
     }
 }
 
-bool audioEngineInit()
+bool audioEngineInit(int soundBufferCount)
 {
+    if (soundBufferCount <= 0) {
+        return false;
+    }
+
+    // Buffers must exist before the device starts calling the mixer.
+    gAudioEngineSoundBuffers = std::make_unique<AudioEngineSoundBuffer[]>(soundBufferCount);
+    audioEngineSoundBufferCount = soundBufferCount;
+
     SDL_AudioSpec desiredSpec;
     // Request 44.1 kHz output so 44.1 kHz ACM music can play without being
     // downsampled by the mixer on the common path.
@@ -112,6 +139,8 @@ bool audioEngineInit()
     gAudioEngineDeviceId = SDL_OpenAudioDevice(nullptr, 0, &desiredSpec, &gAudioEngineSpec, allowedChanges);
     if (gAudioEngineDeviceId == 0) {
         gAudioEngineDeviceId = -1;
+        gAudioEngineSoundBuffers.reset();
+        audioEngineSoundBufferCount = 0;
         return false;
     }
 
@@ -125,6 +154,9 @@ void audioEngineExit()
     if (audioEngineIsInitialized()) {
         SDL_CloseAudioDevice(gAudioEngineDeviceId);
         gAudioEngineDeviceId = -1;
+
+        gAudioEngineSoundBuffers.reset();
+        audioEngineSoundBufferCount = 0;
     }
 }
 
@@ -148,7 +180,7 @@ int audioEngineCreateSoundBuffer(unsigned int size, int bitsPerSample, int chann
         return -1;
     }
 
-    for (int index = 0; index < AUDIO_ENGINE_SOUND_BUFFERS; index++) {
+    for (int index = 0; index < audioEngineSoundBufferCount; index++) {
         AudioEngineSoundBuffer* soundBuffer = &(gAudioEngineSoundBuffers[index]);
         std::lock_guard<std::recursive_mutex> lock(soundBuffer->mutex);
 

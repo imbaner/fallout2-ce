@@ -49,32 +49,6 @@ namespace fallout {
 // in [gRadiationEffectPenalties] for every [RadiationLevel].
 #define RADIATION_EFFECT_COUNT 8
 
-// Radiation levels.
-//
-// The names of levels are taken from Fallout 3, comments from Fallout 2.
-typedef enum RadiationLevel {
-    // Very nauseous.
-    RADIATION_LEVEL_NONE,
-
-    // Slightly fatigued.
-    RADIATION_LEVEL_MINOR,
-
-    // Vomiting does not stop.
-    RADIATION_LEVEL_ADVANCED,
-
-    // Hair is falling out.
-    RADIATION_LEVEL_CRITICAL,
-
-    // Skin is falling off.
-    RADIATION_LEVEL_DEADLY,
-
-    // Intense agony.
-    RADIATION_LEVEL_FATAL,
-
-    // The number of radiation levels.
-    RADIATION_LEVEL_COUNT,
-} RadiationLevel;
-
 static int _get_rad_damage_level(Object* obj, void* data);
 static int critter_kill_count_clear();
 static int _critterClearObjDrugs(Object* obj, void* data);
@@ -160,7 +134,7 @@ static int gKillsByType[KILL_TYPE_DEFAULT_COUNT];
 // Something with radiation.
 //
 // 0x56D7CC old_rad_level
-static int oldRadLevel;
+static RadiationLevel oldRadLevel;
 
 // scrname_init
 // 0x42CF50 critter_init
@@ -213,7 +187,7 @@ int critterLoad(File* stream)
     }
 
     Proto* proto;
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     return protoCritterDataRead(stream, &(proto->critter.data));
 }
@@ -226,7 +200,7 @@ int critterSave(File* stream)
     }
 
     Proto* proto;
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     return protoCritterDataWrite(stream, &(proto->critter.data));
 }
@@ -269,7 +243,7 @@ char* critterGetName(Object* obj)
     }
 
     if (name == nullptr || *name == '\0') {
-        name = protoGetName(obj->pid);
+        name = protoGetName(obj);
     }
 
     _name_critter = name;
@@ -432,7 +406,7 @@ int critterAdjustRadiation(Object* obj, int amount)
     amount = scriptHooks_AdjustRads(obj, amount);
 
     Proto* proto;
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     if (amount > 0) {
         amount -= critterGetStat(obj, STAT_RADIATION_RESISTANCE) * amount / 100;
@@ -446,17 +420,15 @@ int critterAdjustRadiation(Object* obj, int amount)
         Object* geigerCounter = nullptr;
 
         Object* item1 = critterGetItem1(gDude);
-        if (item1 != nullptr) {
-            if (item1->pid == PROTO_ID_GEIGER_COUNTER_I || item1->pid == PROTO_ID_GEIGER_COUNTER_II) {
-                geigerCounter = item1;
-            }
+        const ProtoId item1ProtoId = ProtoId(item1);
+        if (item1ProtoId == ItemProtoTypeId::GeigerCounter || item1ProtoId == ItemProtoTypeId::ActivatedGeigerCounter) {
+            geigerCounter = item1;
         }
 
         Object* item2 = critterGetItem2(gDude);
-        if (item2 != nullptr) {
-            if (item2->pid == PROTO_ID_GEIGER_COUNTER_I || item2->pid == PROTO_ID_GEIGER_COUNTER_II) {
-                geigerCounter = item2;
-            }
+        const ProtoId item2ProtoId = ProtoId(item2);
+        if (item2ProtoId == ItemProtoTypeId::GeigerCounter || item2ProtoId == ItemProtoTypeId::ActivatedGeigerCounter) {
+            geigerCounter = item2;
         }
 
         if (geigerCounter != nullptr) {
@@ -506,19 +478,19 @@ int critterCheckRadiationEvent(Object* obj)
     }
 
     Proto* proto;
-    protoGetProto(obj->pid, &proto);
+    protoGetProto(obj, &proto);
     if ((proto->critter.data.flags & CRITTER_DUDE_RADIATED) == CRITTER_NONE) {
         return 0;
     }
 
-    oldRadLevel = 0;
+    oldRadLevel = RADIATION_LEVEL_NONE;
 
     queueClearByEventType(EVENT_TYPE_RADIATION, _get_rad_damage_level);
 
     // NOTE: Uninline
     int radiation = critterGetRadiation(obj);
 
-    int radiationLevel;
+    RadiationLevel radiationLevel;
     if (radiation > 999)
         radiationLevel = RADIATION_LEVEL_FATAL;
     else if (radiation > 599)
@@ -578,7 +550,7 @@ int radiationClearDamage(Object* obj, void* data)
 // Applies radiation.
 //
 // 0x42D63C process_rads
-void radiationProcess(Object* obj, int radiationLevel, bool isHealing)
+void radiationProcess(Object* obj, RadiationLevel radiationLevel, bool isHealing)
 {
     MessageListItem messageListItem;
 
@@ -666,7 +638,7 @@ int radiationEventRead(File* stream, void** dataPtr)
         return -1;
     }
 
-    if (fileReadInt32(stream, &(radiationEvent->radiationLevel)) == -1) goto err;
+    if (fileReadInt32Enum<RadiationLevel>(stream, &(radiationEvent->radiationLevel)) == -1) goto err;
     if (fileReadInt32(stream, &(radiationEvent->isHealing)) == -1) goto err;
 
     *dataPtr = radiationEvent;
@@ -683,7 +655,7 @@ int radiationEventWrite(File* stream, void* data)
 {
     RadiationEvent* radiationEvent = (RadiationEvent*)data;
 
-    if (fileWriteInt32(stream, radiationEvent->radiationLevel) == -1) return -1;
+    if (fileWriteInt32Enum<RadiationLevel>(stream, radiationEvent->radiationLevel) == -1) return -1;
     if (fileWriteInt32(stream, radiationEvent->isHealing) == -1) return -1;
 
     return 0;
@@ -692,12 +664,13 @@ int radiationEventWrite(File* stream, void* data)
 // 0x42D82C critter_get_base_damage_type
 DamageType critterGetDamageType(Object* obj)
 {
-    if (objectTypeFromPid(obj->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = ProtoId(obj);
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return DAMAGE_TYPE_NORMAL;
     }
 
     Proto* proto;
-    if (protoGetProto(obj->pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return DAMAGE_TYPE_NORMAL;
     }
 
@@ -767,12 +740,13 @@ KillType critterGetKillType(Object* obj)
         return KILL_TYPE_MAN;
     }
 
-    if (objectTypeFromPid(obj->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = obj;
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return KILL_TYPE_INVALID;
     }
 
     Proto* proto;
-    protoGetProto(obj->pid, &proto);
+    protoGetProto(protoId, &proto);
 
     return proto->critter.data.killType;
 }
@@ -895,7 +869,7 @@ void critterKill(Object* critter, AnimationType anim, bool refreshRect)
         rectUnion(&updatedRect, &tempRect, &updatedRect);
     }
 
-    if (!critterFlagCheck(critter->pid, CRITTER_FLAT)) {
+    if (!critterFlagCheck(critter, CRITTER_FLAT)) {
         critter->flags |= OBJECT_NO_BLOCK;
         if ((critter->flags & OBJECT_FLAT) == OBJECT_NONE) {
             _obj_toggle_flat(critter, &tempRect);
@@ -935,7 +909,7 @@ void critterKill(Object* critter, AnimationType anim, bool refreshRect)
 int critterGetExp(Object* critter)
 {
     Proto* proto;
-    protoGetProto(critter->pid, &proto);
+    protoGetProto(critter, &proto);
     return proto->critter.data.experience;
 }
 
@@ -1024,12 +998,13 @@ BodyType critterGetBodyType(Object* critter)
         return BODY_TYPE_BIPED;
     }
 
-    if (objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = critter;
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return BODY_TYPE_BIPED;
     }
 
     Proto* proto;
-    protoGetProto(critter->pid, &proto);
+    protoGetProto(protoId, &proto);
     return proto->critter.data.bodyType;
 }
 
@@ -1063,7 +1038,7 @@ CritterFrmId critterBuildGorisFrmId(Object* critter, CritterFrameId frameId)
         return CritterFrameId::Invalid;
     }
 
-    assert(critter->pid == PROTO_ID_GORIS);
+    assert(ProtoId(critter) == CritterProtoTypeId::Goris);
 
     const FrmId frmId = FrmId(critter);
 
@@ -1081,7 +1056,7 @@ int gcdLoad(const char* path)
     }
 
     Proto* proto;
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     if (protoCritterDataRead(stream, &(proto->critter.data)) == -1) {
         fileClose(stream);
@@ -1153,7 +1128,7 @@ int gcdSave(const char* path)
     }
 
     Proto* proto;
-    protoGetProto(gDude->pid, &proto);
+    protoGetProto(gDude, &proto);
 
     if (protoCritterDataWrite(stream, &(proto->critter.data)) == -1) {
         fileClose(stream);
@@ -1215,7 +1190,7 @@ void dudeDisableState(DudeState state)
     }
 
     Proto* proto;
-    if (protoGetProto(gDude->pid, &proto) == -1) {
+    if (protoGetProto(gDude, &proto) == -1) {
         return;
     }
 
@@ -1247,7 +1222,7 @@ void dudeEnableState(DudeState state)
     }
 
     Proto* proto;
-    if (protoGetProto(gDude->pid, &proto) == -1) {
+    if (protoGetProto(gDude, &proto) == -1) {
         return;
     }
 
@@ -1302,7 +1277,7 @@ bool dudeHasState(DudeState state)
     }
 
     Proto* proto;
-    if (protoGetProto(gDude->pid, &proto) == -1) {
+    if (protoGetProto(gDude, &proto) == -1) {
         return false;
     }
 
@@ -1512,18 +1487,18 @@ bool critterIsFleeing(Object* critter)
 // Checks proto critter flag.
 //
 // 0x42E6AC critter_flag_check
-bool critterFlagCheck(int pid, CritterFlags flag)
+bool critterFlagCheck(const ProtoId& protoId, CritterFlags flag)
 {
-    if (pid == -1) {
+    if (!protoId.valid()) {
         return false;
     }
 
-    if (objectTypeFromPid(pid) != OBJ_TYPE_CRITTER) {
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return false;
     }
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return false;
     }
 
@@ -1531,18 +1506,18 @@ bool critterFlagCheck(int pid, CritterFlags flag)
 }
 
 // 0x42E6F0 critter_flag_set
-void critterFlagSet(int pid, CritterFlags flag)
+void critterFlagSet(const ProtoId& protoId, CritterFlags flag)
 {
-    if (pid == -1) {
+    if (!protoId.valid()) {
         return;
     }
 
-    if (objectTypeFromPid(pid) != OBJ_TYPE_CRITTER) {
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return;
     }
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return;
     }
 
@@ -1550,18 +1525,18 @@ void critterFlagSet(int pid, CritterFlags flag)
 }
 
 // 0x42E71C critter_flag_unset
-void critterFlagUnset(int pid, CritterFlags flag)
+void critterFlagUnset(const ProtoId& protoId, CritterFlags flag)
 {
-    if (pid == -1) {
+    if (!protoId.valid()) {
         return;
     }
 
-    if (objectTypeFromPid(pid) != OBJ_TYPE_CRITTER) {
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return;
     }
 
     Proto* proto;
-    if (protoGetProto(pid, &proto) == -1) {
+    if (protoGetProto(protoId, &proto) == -1) {
         return;
     }
 

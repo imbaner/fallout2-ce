@@ -112,7 +112,7 @@ std::vector<MuiListItem> muiInventoryItems(Object* owner, const MuiItemFilterSta
 
     // Money first.
     std::stable_partition(items.begin(), items.end(), [](const MuiListItem& entry) {
-        return entry.item->pid == PROTO_ID_MONEY;
+        return ProtoId(entry.item) == ItemProtoTypeId::Money;
     });
 
     return items;
@@ -158,8 +158,8 @@ void muiDrawItemCell(MuiContext& ui, const MuiRect& rect, Object* item, int quan
         muiDrawTexture(texture, { area.centerX() - w / 2.0f, area.centerY() - h / 2.0f, w, h });
     }
 
-    if (quantity > 1 || item->pid == PROTO_ID_MONEY) {
-        std::string label = item->pid == PROTO_ID_MONEY ? "$" + std::to_string(quantity) : "x" + std::to_string(quantity);
+    if (quantity > 1 || ProtoId(item) == ItemProtoTypeId::Money) {
+        std::string label = ProtoId(item) == ItemProtoTypeId::Money ? "$" + std::to_string(quantity) : "x" + std::to_string(quantity);
         float size = ui.dp(11.0f);
         MuiRect labelRect = { rect.x, rect.bottom() - muiLineHeight(size) - ui.dp(2.0f), rect.w - ui.dp(4.0f), muiLineHeight(size) };
         muiDrawTextAligned(muiDecodeUtf8(label.c_str()), labelRect, size, theme.text, MuiAlign::End, MuiAlign::Start);

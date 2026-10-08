@@ -2328,7 +2328,7 @@ static bool _combat_safety_invalidate_weapon_func(Object* attacker, Object* weap
         *safeDistancePtr = 0;
     }
 
-    if (attacker->pid == PROTO_ID_0x10001E0) {
+    if (ProtoId(attacker) == CritterProtoTypeId::AutoCannon) {
         return false;
     }
 
@@ -2667,7 +2667,7 @@ static void _combat_begin(Object* attacker)
 
             scriptSetObjects(critter->sid, nullptr, nullptr);
             scriptSetFixedParam(critter->sid, 0);
-            if (critter->pid == PROTO_ID_GORIS && !critterIsDead(critter)) {
+            if (ProtoId(critter) == CritterProtoTypeId::Goris && !critterIsDead(critter)) {
                 goris = critter;
             }
         }
@@ -2835,7 +2835,7 @@ static void _combat_over()
         scriptSetObjects(critter->sid, nullptr, nullptr);
         scriptSetFixedParam(critter->sid, 0);
 
-        if (critter->pid == PROTO_ID_GORIS && !critterIsDead(critter) && !_isLoadingGame()) {
+        if (ProtoId(critter) == CritterProtoTypeId::Goris && !critterIsDead(critter) && !_isLoadingGame()) {
             waitForGorisAnimation(critter);
         }
     }
@@ -3250,7 +3250,7 @@ static int _combat_input()
         sharedFpsLimiter.throttle();
     }
 
-    int v4 = _game_user_wants_to_quit;
+    GameQuitRequest gameQuitRequest = _game_user_wants_to_quit;
     if (_game_user_wants_to_quit == GAME_QUIT_REQUEST_END_COMBAT) {
         _game_user_wants_to_quit = GAME_QUIT_REQUEST_NONE;
     }
@@ -3260,7 +3260,7 @@ static int _combat_input()
         return -1;
     }
 
-    if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE || v4 != GAME_QUIT_REQUEST_NONE || _combat_end_due_to_load != 0) {
+    if (_game_user_wants_to_quit != GAME_QUIT_REQUEST_NONE || gameQuitRequest != GAME_QUIT_REQUEST_NONE || _combat_end_due_to_load != 0) {
         return -1;
     }
 
@@ -3602,7 +3602,7 @@ void _combat(CombatStartData* csd)
             // CE: start Goris animation before iface animations to reduce wait time
             for (int index = 0; index < _list_total; index++) {
                 Object* critter = _combat_list[index];
-                if (critter->pid == PROTO_ID_GORIS && !critterIsDead(critter) && !_isLoadingGame()) {
+                if (ProtoId(critter) == CritterProtoTypeId::Goris && !critterIsDead(critter) && !_isLoadingGame()) {
                     if (animationIsBusy(critter)) {
                         waitForGorisAnimation(critter);
                     }
@@ -4280,11 +4280,12 @@ void _compute_explosion_on_extras(Attack* attack, bool isFromAttacker, bool isGr
 static int attackComputeCriticalHit(Attack* attack)
 {
     Object* defender = attack->defender;
-    if (defender != nullptr && critterFlagCheck(defender->pid, CRITTER_INVULNERABLE)) {
+    const ProtoId& defenderProtoId = defender;
+    if (defender != nullptr && critterFlagCheck(defenderProtoId, CRITTER_INVULNERABLE)) {
         return 2;
     }
 
-    if (defender != nullptr && objectTypeFromPid(defender->pid) != OBJ_TYPE_CRITTER) {
+    if (defender != nullptr && defenderProtoId.objectType() != OBJ_TYPE_CRITTER) {
         return 2;
     }
 
@@ -4353,8 +4354,8 @@ static int attackComputeCriticalHit(Attack* attack)
 static Dam _attackFindInvalidFlags(Object* critter, Object* item)
 {
     Dam flags = DAM_NONE;
-
-    if (critter != nullptr && objectTypeFromPid(critter->pid) == OBJ_TYPE_CRITTER && critterFlagCheck(critter->pid, CRITTER_NO_DROP)) {
+    const ProtoId& critterProtoId = critter;
+    if (critterProtoId.objectType() == OBJ_TYPE_CRITTER && critterFlagCheck(critterProtoId, CRITTER_NO_DROP)) {
         flags |= DAM_DROP;
     }
 
@@ -4370,7 +4371,7 @@ static int attackComputeCriticalFailure(Attack* attack)
 {
     attack->attackerFlags &= ~DAM_HIT;
 
-    if (attack->attacker != nullptr && critterFlagCheck(attack->attacker->pid, CRITTER_INVULNERABLE)) {
+    if (attack->attacker != nullptr && critterFlagCheck(attack->attacker, CRITTER_INVULNERABLE)) {
         return 0;
     }
 
@@ -4668,11 +4669,13 @@ static int attackDetermineToHit(Object* attacker, int tile, Object* defender, Hi
 
     if (attacker->data.critter.combat.team != gDude->data.critter.combat.team) {
         switch (settings.preferences.combat_difficulty) {
-        case 0:
+        case COMBAT_DIFFICULTY_EASY:
             toHit -= 20;
             break;
-        case 2:
+        case COMBAT_DIFFICULTY_HARD:
             toHit += 20;
+            break;
+        case COMBAT_DIFFICULTY_NORMAL:
             break;
         }
     }
@@ -4753,6 +4756,8 @@ static void attackComputeDamage(Attack* attack, int numRounds, int baseDamageMul
         case COMBAT_DIFFICULTY_HARD:
             difficultyDamagePercent = 125;
             break;
+        case COMBAT_DIFFICULTY_NORMAL:
+            break;
         }
     }
 
@@ -4828,11 +4833,12 @@ static void attackComputeDamage(Attack* attack, int numRounds, int baseDamageMul
         }
     }
 
+    const ProtoId& critterProtoId = critter;
     if (knockbackDistancePtr != nullptr
         && (critter->flags & OBJECT_MULTIHEX) == OBJECT_NONE
         && (damageType == DAMAGE_TYPE_EXPLOSION || attack->weapon == nullptr || weaponGetAttackTypeForHitMode(attack->weapon, attack->hitMode) == ATTACK_TYPE_MELEE)
-        && objectTypeFromPid(critter->pid) == OBJ_TYPE_CRITTER
-        && !critterFlagCheck(critter->pid, CRITTER_NO_KNOCKBACK)) {
+        && critterProtoId.objectType() == OBJ_TYPE_CRITTER
+        && !critterFlagCheck(critterProtoId, CRITTER_NO_KNOCKBACK)) {
         bool shouldKnockback = true;
         bool hasStonewall = false;
         if (critter == gDude) {
@@ -4954,8 +4960,9 @@ void _apply_damage(Attack* attack, bool animated)
 // 0x424EE8
 static void _check_for_death(Object* object, int damage, Dam* flags)
 {
-    if (object == nullptr || !critterFlagCheck(object->pid, CRITTER_INVULNERABLE)) {
-        if (object == nullptr || objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+    const ProtoId& protoId = object;
+    if (object == nullptr || !critterFlagCheck(protoId, CRITTER_INVULNERABLE)) {
+        if (object == nullptr || protoId.objectType() == OBJ_TYPE_CRITTER) {
             if (damage > 0) {
                 if (critterGetHitPoints(object) - damage <= 0) {
                     *flags |= DAM_DEAD;
@@ -4976,11 +4983,12 @@ static void _set_new_results(Object* critter, Dam flags)
         return;
     }
 
-    if (critterFlagCheck(critter->pid, CRITTER_INVULNERABLE)) {
+    const ProtoId& critterProtoId = critter;
+    if (critterFlagCheck(critterProtoId, CRITTER_INVULNERABLE)) {
         return;
     }
 
-    if (objectTypeFromPid(critter->pid) != OBJ_TYPE_CRITTER) {
+    if (critterProtoId.objectType() != OBJ_TYPE_CRITTER) {
         return;
     }
 
@@ -5017,7 +5025,7 @@ static void _damage_object(Object* target, int damage, bool animated, int hitUni
         return;
     }
 
-    if (critterFlagCheck(target->pid, CRITTER_INVULNERABLE)) {
+    if (critterFlagCheck(target, CRITTER_INVULNERABLE)) {
         return;
     }
 
@@ -5519,7 +5527,7 @@ void _combat_anim_begin()
 {
     if (++_combat_turn_running == 1 && gDude == _main_ctd.attacker) {
         gameUiDisable(1);
-        gameMouseSetCursor(26);
+        gameMouseSetCursor(MOUSE_CURSOR_WAIT_WATCH);
         if (_combat_highlight == 2) {
             _combat_outline_off();
         }
@@ -5634,7 +5642,7 @@ static void _print_tohit(unsigned char* dest, int destPitch, int accuracy)
 static char* hitLocationGetName(Object* critter, HitLocation hitLocation)
 {
     MessageListItem messageListItem;
-    messageListItem.num = 1000 + 10 * static_cast<int>(_art_alias_num(FrmId(critter).frameId().critter)) + hitLocation;
+    messageListItem.num = 1000 + 10 * static_cast<int>(_art_alias_num(FrmId(critter).frameId<CritterFrameId>())) + hitLocation;
     if (messageListGetItem(&gCombatMessageList, &messageListItem)) {
         return messageListItem.text;
     }
@@ -5744,7 +5752,7 @@ static int calledShotSelectHitLocation(Object* critter, HitLocation* hitLocation
         CALLED_SHOT_WINDOW_WIDTH);
 
     FrmImage critterFrm;
-    const FrmId critterFrmId = FrmId(critter, ANIM_CALLED_SHOT_PIC, WEAPON_ANIMATION_NONE, ROTATION_NE);
+    const FrmId critterFrmId = FrmId(critter, ANIM_CALLED_SHOT_PIC, WeaponAnimation::None, ROTATION_NE);
     if (critterFrm.lock(critterFrmId)) {
         blitBufferToBuffer(critterFrm.getData(),
             170,

@@ -215,6 +215,7 @@ static void pipboyWindowHandleStatus(int userInput);
 static void pipboyWindowRenderQuestLocationList(int a1);
 static void pipboyWindowQuestList(int a1);
 static void pipboyRenderHolodiskText();
+static void pipboyPlayHolodiskAudio();
 static int pipboyWindowRenderHolodiskList(int a1);
 static int _qscmp(const void* a1, const void* a2);
 static void pipboyWindowHandleAutomaps(int a1);
@@ -401,6 +402,8 @@ int gPipboyCurrentLine;
 // 0x664518 rest_time
 int _rest_time;
 
+static int restHealTime = 180;
+
 // 0x66451C amcty_indx
 Map _amcty_indx;
 
@@ -443,6 +446,9 @@ void handlePipboyPageNavigation(
     void (*updatePage)(void));
 
 static int gPipboyPrevTab;
+
+// Nesting depth of `pipboyRest` (it calls itself for the heal options).
+static int pipboyRestDepth = 0;
 
 static int totalPages; // for tracking between pipboyWindowHandleAutomaps and _PrintAMelevList/_PrintAMList and others for pagination
 
@@ -618,6 +624,9 @@ int pipboyOpen(int intent)
             // (alarm clock in particular) can fallback if something goes wrong.
             gPipboyPrevTab = gPipboyTab;
 
+            // Switching tabs leaves the holodisk, so stop its narration.
+            pipboySoundStop();
+
             gPipboyTab = keyCode - 500;
             _view_page_automap_main = 0; // ensures button click to automaps renders first page
             _view_page_quest = 0; // ensures button click to status renders first page
@@ -708,6 +717,8 @@ static int pipboyStateInit()
 
 static void pipboyStateFree()
 {
+    pipboySoundStop();
+
     if (settings.debug.show_script_messages) {
         debugPrint("\nScript <Map Update>");
     }
@@ -963,6 +974,7 @@ static void _pip_init_()
 // pip_init
 void pipboyInit()
 {
+    restHealTime = 180;
     pipboyRestOptionsReset();
     _pip_init_();
 }
@@ -970,8 +982,16 @@ void pipboyInit()
 // NOTE: Uncollapsed 0x497918.
 void pipboyReset()
 {
+    restHealTime = 180;
     pipboyRestOptionsReset();
     _pip_init_();
+}
+
+void pipboySetRestHealTime(int minutes)
+{
+    if (minutes > 0) {
+        restHealTime = minutes;
+    }
 }
 
 // 0x49791C
@@ -1110,6 +1130,12 @@ int pipboyLoad(File* stream)
     return _save_pipboy(stream);
 }
 
+// True while the alarm clock is passing time.
+bool pipboyIsResting()
+{
+    return pipboyRestDepth > 0;
+}
+
 int pipboyGetWindow()
 {
     return windowGetWindow(gPipboyWindow) != nullptr ? gPipboyWindow : -1;
@@ -1132,6 +1158,8 @@ static void pipboyWindowHandleStatus(int userInput)
 
         _holo_flag = 0;
         _holodisk = -1;
+        // Back to the holodisk list, so stop the narration.
+        pipboySoundStop();
         gPipboyWindowHolodisksCount = 0;
         _view_page = 0;
         _view_page_questlist = 0;
@@ -1239,6 +1267,7 @@ static void pipboyWindowHandleStatus(int userInput)
                 inputPauseForTocks(200);
                 pipboyWindowDestroyButtons();
                 pipboyRenderHolodiskText();
+                pipboyPlayHolodiskAudio();
                 _holo_flag = 1;
             }
         }
@@ -1637,6 +1666,33 @@ static void pipboyRenderHolodiskText()
     renderNavigationButtons(_view_page, gPipboyHolodiskLastPage + 1, true);
 
     windowRefresh(gPipboyWindow);
+}
+
+// Plays the voiced narration attached to the holodisk's title entry in
+// pipboy.msg, if it has one. Turning pages keeps it playing, opening another
+// holodisk or closing the Pip-Boy stops it.
+static void pipboyPlayHolodiskAudio()
+{
+    pipboyPlayHolodiskNarration(_holodisk);
+}
+
+void pipboyPlayHolodiskNarration(int index)
+{
+    pipboySoundStop();
+
+    if (index < 0 || index >= gHolodisksCount) {
+        return;
+    }
+
+    MessageListItem messageListItem;
+    messageListItem.num = gHolodiskDescriptions[index].name;
+    if (!messageListGetItem(&gPipboyMessageList, &messageListItem)) {
+        return;
+    }
+
+    if (messageListItem.audio != nullptr && messageListItem.audio[0] != '\0') {
+        pipboySoundPlay(messageListItem.audio);
+    }
 }
 
 // 0x498C40
@@ -2353,6 +2409,11 @@ void pipboyStopRest()
 static bool pipboyRest(int hours, int minutes, int duration)
 {
     gPipboyRestStopRequested = false;
+    struct RestDepthGuard {
+        RestDepthGuard() { pipboyRestDepth++; }
+        ~RestDepthGuard() { pipboyRestDepth--; }
+    } restDepthGuard;
+
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_WATCH);
 
     bool rc = false;
@@ -2579,7 +2640,7 @@ static bool _Check4Health(int minutes)
 {
     _rest_time += minutes;
 
-    if (_rest_time < 180) {
+    if (_rest_time < restHealTime) {
         return false;
     }
 

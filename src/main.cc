@@ -62,6 +62,7 @@ static void mainHandleDevEndgameRequests();
 static void mainRequestDevEndgameIfNeeded();
 static void mainRunDevEndgameMovieIfNeeded();
 static void mainLoop();
+static void mainRunGameLoopAndCleanup();
 static void showDeath();
 static int mainCurtainShow();
 static void mainCurtainHide(int win);
@@ -117,7 +118,9 @@ int falloutMain(int argc, char** argv)
         bool done = false;
         while (!done) {
             keyboardReset();
-            _gsound_background_play_level_music(gameSoundGetMusicOverride("main_menu_music", "07desert"), GSOUND_LIMIT_BEFORE);
+            if (!backgoundSoundIsPlaying()) {
+                _gsound_background_play_level_music(gameSoundGetMusicOverride("main_menu_music", "07desert"), GSOUND_LIMIT_BEFORE);
+            }
             mainMenuWindowUnhide(true);
 
             mouseShowCursor();
@@ -144,11 +147,12 @@ int falloutMain(int argc, char** argv)
                 gameMoviePlay(MOVIE_INTRO, GAME_MOVIE_STOP_MUSIC);
                 gameMoviePlay(MOVIE_CREDITS, 0);
                 break;
-            case MAIN_MENU_NEW_GAME:
-                mainMenuWindowHide(true);
-                mainMenuWindowFree();
+            case MAIN_MENU_NEW_GAME: {
+                mainMenuBeginSubscreen();
                 // CE: `--dev-new-game` starts with default character.
                 if (devNewGame || characterSelectorOpen() == 2) {
+                    mainMenuFinishSubscreen();
+
                     if (!devNewGame) {
                         gameMoviePlay(MOVIE_ELDER, GAME_MOVIE_STOP_MUSIC);
                     }
@@ -177,70 +181,49 @@ int falloutMain(int argc, char** argv)
                     sfallOnAfterGameStarted();
                     gGameLoaded = true;
 
-                    mainHandleDevEndgameRequests();
-                    mainLoop();
-                    paletteFadeTo(gPaletteWhite);
-
-                    // NOTE: Uninline.
-                    main_unload_new();
-
-                    // NOTE: Uninline.
-                    main_reset_system();
-
-                    if (_main_show_death_scene != 0) {
-                        showDeath();
-                        _main_show_death_scene = 0;
-                    }
-                }
-
-                mainMenuWindowInit();
-
-                break;
-            case MAIN_MENU_CONTINUE:
-            case MAIN_MENU_LOAD_GAME:
-                if (1) {
-                    int win = mainCurtainShow();
-                    bool curtain = true;
-                    mainMenuWindowHide(true);
-                    mainMenuWindowFree();
-
-                    // NOTE: Uninline.
-                    main_loadgame_new();
-
-                    if (devLoadGameSlot != -1) {
-                        lsgDevSetLoadGameSlot(devLoadGameSlot);
-                    }
-                    // CE: Continue of the mobile main menu loads the save
-                    // made last without the load screen.
-                    int loadGameRc = mainMenuRc == MAIN_MENU_CONTINUE
-                        ? lsgContinueGame()
-                        : lsgLoadGame(LOAD_SAVE_MODE_FROM_MAIN_MENU);
-                    if (loadGameRc == -1) {
-                        debugPrint("\n ** Error running LoadGame()! **\n");
-                    } else if (loadGameRc != 0) {
-                        mainCurtainHide(win);
-                        curtain = false;
-                        mainHandleDevEndgameRequests();
-                        mainLoop();
-                        paletteFadeTo(gPaletteWhite);
-                    }
-                    if (curtain) {
-                        mainCurtainHide(win);
-                    }
-
-                    // NOTE: Uninline.
-                    main_unload_new();
-
-                    // NOTE: Uninline.
-                    main_reset_system();
-
-                    if (_main_show_death_scene != 0) {
-                        showDeath();
-                        _main_show_death_scene = 0;
-                    }
+                    mainRunGameLoopAndCleanup();
                     mainMenuWindowInit();
+                } else {
+                    mainMenuCancelSubscreen();
                 }
                 break;
+            }
+            case MAIN_MENU_CONTINUE:
+            case MAIN_MENU_LOAD_GAME: {
+                // CE: The mobile curtain covers the screen while a save loads
+                // (on a PC the menu's subscreen handling does).
+                int win = muiIsEnabled() ? mainCurtainShow() : -1;
+                mainMenuBeginSubscreen();
+
+                // NOTE: Uninline.
+                main_loadgame_new();
+
+                if (devLoadGameSlot != -1) {
+                    lsgDevSetLoadGameSlot(devLoadGameSlot);
+                }
+                // CE: Continue of the mobile main menu loads the save
+                // made last without the load screen.
+                int loadGameRc = mainMenuRc == MAIN_MENU_CONTINUE
+                    ? lsgContinueGame()
+                    : lsgLoadGame(LOAD_SAVE_MODE_FROM_MAIN_MENU);
+                if (loadGameRc == -1) {
+                    debugPrint("\n ** Error running LoadGame()! **\n");
+                }
+                mainCurtainHide(win);
+
+                if (loadGameRc > 0) {
+                    mainMenuFinishSubscreen();
+                    mainRunGameLoopAndCleanup();
+                    mainMenuWindowInit();
+                } else {
+                    main_unload_new();
+                    mainMenuCancelSubscreen();
+                    if (loadGameRc < 0) {
+                        main_reset_system();
+                    }
+                }
+                break;
+            }
             case MAIN_MENU_TIMEOUT:
                 debugPrint("Main menu timed-out\n");
                 // FALLTHROUGH
@@ -248,10 +231,12 @@ int falloutMain(int argc, char** argv)
                 mainMenuWindowHide(true);
                 gameMoviePlay(MOVIE_INTRO, GAME_MOVIE_PAUSE_MUSIC);
                 break;
-            case MAIN_MENU_OPTIONS:
-                mainMenuWindowHide(true);
+            case MAIN_MENU_OPTIONS: {
+                mainMenuBeginSubscreen();
                 doPreferences(true);
+                mainMenuCancelSubscreen();
                 break;
+            }
             case MAIN_MENU_CREDITS:
                 mainMenuWindowHide(true);
                 creditsOpen("credits.txt", InterfaceFrameId::Invalid, false);
@@ -539,6 +524,24 @@ static void mainLoop()
 
     if (cursorWasHidden) {
         mouseHideCursor();
+    }
+}
+
+static void mainRunGameLoopAndCleanup()
+{
+    mainHandleDevEndgameRequests();
+    mainLoop();
+    paletteFadeTo(gPaletteWhite);
+
+    // NOTE: Uninline.
+    main_unload_new();
+
+    // NOTE: Uninline.
+    main_reset_system();
+
+    if (_main_show_death_scene != 0) {
+        showDeath();
+        _main_show_death_scene = 0;
     }
 }
 

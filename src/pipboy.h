@@ -40,9 +40,11 @@ const char* pipboyUnavailableText(PipboyUnavailable reason);
 void pipboyShowUnavailable(PipboyUnavailable reason);
 void pipboyInit();
 void pipboyReset();
+void pipboySetRestHealTime(int minutes);
 int pipboySave(File* stream);
 int pipboyLoad(File* stream);
 int pipboyGetWindow();
+bool pipboyIsResting();
 bool pipboyRestOptionMsgsSetBase(int baseMessageId);
 bool pipboyRestOptionSet(int restOption, int value);
 
@@ -83,6 +85,10 @@ std::vector<PipboyHolodisk> pipboyGetHolodisks();
 
 // Paragraphs of holodisk [index] (its lines joined).
 std::vector<std::string> pipboyGetHolodiskText(int index);
+
+// Plays the voiced narration of holodisk [index] if it has one (stops the
+// one playing); `pipboySoundStop` stops it.
+void pipboyPlayHolodiskNarration(int index);
 
 struct PipboyAutomap {
     Map map;

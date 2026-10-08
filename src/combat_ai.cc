@@ -270,6 +270,11 @@ static Object** _curr_crit_list;
 // 0x56D624 attack_str
 static char _attack_str[AI_MESSAGE_SIZE];
 
+// Speech file names for [_target_str] and [_attack_str], taken from the audio
+// field of combatai.msg. Empty when the line is not voiced.
+static char _target_audio[AI_MESSAGE_SIZE];
+static char _attack_audio[AI_MESSAGE_SIZE];
+
 // parse hurt_too_much
 static void _parse_hurt_str(char* str, Dam* valuePtr)
 {
@@ -548,10 +553,10 @@ int aiExit()
 int aiLoad(File* stream)
 {
     for (int index = 0; index < gPartyMemberDescriptionsLength; index++) {
-        int pid = gPartyMemberPids[index];
-        if (pid != -1 && objectTypeFromPid(pid) == OBJ_TYPE_CRITTER) {
+        const ProtoId protoId = ProtoId(gPartyMemberPids[index]);
+        if (protoId.valid() && protoId.objectType() == OBJ_TYPE_CRITTER) {
             Proto* proto;
-            if (protoGetProto(pid, &proto) == -1) {
+            if (protoGetProto(protoId, &proto) == -1) {
                 return -1;
             }
 
@@ -569,10 +574,10 @@ int aiLoad(File* stream)
 int aiSave(File* stream)
 {
     for (int index = 0; index < gPartyMemberDescriptionsLength; index++) {
-        int pid = gPartyMemberPids[index];
-        if (pid != -1 && objectTypeFromPid(pid) == OBJ_TYPE_CRITTER) {
+        const ProtoId protoId = ProtoId(gPartyMemberPids[index]);
+        if (protoId.valid() && protoId.objectType() == OBJ_TYPE_CRITTER) {
             Proto* proto;
-            if (protoGetProto(pid, &proto) == -1) {
+            if (protoGetProto(protoId, &proto) == -1) {
                 return -1;
             }
 
@@ -1018,8 +1023,7 @@ static int _ai_check_drugs(Object* critter)
                 break;
             }
 
-            int drugPid = drug->pid;
-            if (itemIsHealing(drugPid)) {
+            if (itemIsHealing(drug)) {
                 if (itemRemoveWithReason(critter, drug, 1, RemoveInventoryObjectHookReason::AIUseDrugOn) == 0) {
                     if (drugItemTakeDrug(critter, drug) == -1) {
                         itemAdd(critter, drug, 1);
@@ -1075,10 +1079,11 @@ static int _ai_check_drugs(Object* critter)
                         break;
                     }
 
-                    if (!itemIsHealing(drug->pid)) {
+                    const ProtoId drugProtoId = drug;
+                    if (!itemIsHealing(drugProtoId)) {
                         bool isPrimary = false;
                         for (int index = 0; index < AI_PACKET_CHEM_PRIMARY_DESIRE_COUNT; index++) {
-                            if (ai->chem_primary_desire[index] == drug->pid) {
+                            if (ai->chem_primary_desire[index] == drugProtoId.pid()) {
                                 isPrimary = true;
                                 break;
                             }
@@ -1812,7 +1817,7 @@ static bool aiHaveAmmo(Object* critter, Object* weapon, Object** ammoPtr)
         *ammoPtr = nullptr;
     }
 
-    if (weapon->pid == PROTO_ID_SOLAR_SCORCHER) {
+    if (ProtoId(weapon) == ItemProtoTypeId::SolarScorcher) {
         return lightGetAmbientIntensity() > LIGHT_INTENSITY_MAX * 0.95;
     }
 
@@ -1831,7 +1836,7 @@ static bool aiHaveAmmo(Object* critter, Object* weapon, Object** ammoPtr)
             return true;
         }
 
-        if (weaponGetAnimationCode(weapon)) {
+        if (weaponGetAnimationCode(weapon) != WeaponAnimation::None) {
             if (weaponGetRange(critter, HIT_MODE_RIGHT_WEAPON_PRIMARY) < 3) {
                 inventoryUnequip(critter, HAND_RIGHT);
             }
@@ -1846,7 +1851,7 @@ static bool aiHaveAmmo(Object* critter, Object* weapon, Object** ammoPtr)
 static int aiGetWeaponRangeForHitMode(Object* critter, Object* weapon, HitMode hitMode)
 {
     if (weapon == nullptr) {
-        if (critterFlagCheck(critter->pid, CRITTER_LONG_LIMBS)) {
+        if (critterFlagCheck(critter, CRITTER_LONG_LIMBS)) {
             return 2;
         }
 
@@ -1854,7 +1859,7 @@ static int aiGetWeaponRangeForHitMode(Object* critter, Object* weapon, HitMode h
     }
 
     Proto* proto;
-    protoGetProto(weapon->pid, &proto);
+    protoGetProto(weapon, &proto);
 
     int range;
     if (hitMode == HIT_MODE_LEFT_WEAPON_PRIMARY || hitMode == HIT_MODE_RIGHT_WEAPON_PRIMARY) {
@@ -2098,11 +2103,11 @@ static Object* _ai_best_weapon(Object* attacker, Object* weapon1, Object* weapon
         return avgDamage2 > avgDamage1 ? weapon2 : weapon1;
     }
 
-    if (weapon1 != nullptr && weapon1->pid == PROTO_ID_FLARE && weapon2 != nullptr) {
+    if (ProtoId(weapon1) == ItemProtoTypeId::Flare && weapon2 != nullptr) {
         return weapon2;
     }
 
-    if (weapon2 != nullptr && weapon2->pid == PROTO_ID_FLARE && weapon1 != nullptr) {
+    if (ProtoId(weapon2) == ItemProtoTypeId::Flare && weapon1 != nullptr) {
         return weapon1;
     }
 
@@ -2141,7 +2146,7 @@ Object* _ai_search_inven_weap(Object* critter, bool checkRequiredActionPoints, O
     BodyType bodyType = critterGetBodyType(critter);
     if (bodyType != BODY_TYPE_BIPED
         && bodyType != BODY_TYPE_ROBOTIC
-        && critter->pid != PROTO_ID_GORIS) {
+        && ProtoId(critter) != CritterProtoTypeId::Goris) {
         return nullptr;
     }
 
@@ -2282,7 +2287,7 @@ static bool aiCanUseItem(Object* critter, Object* item)
     }
 
     // SFALL: Check healing items.
-    if (!itemIsHealing(item->pid)) {
+    if (!itemIsHealing(item)) {
         return false;
     }
 
@@ -2863,8 +2868,8 @@ static int _ai_try_attack(Object* attacker, Object* defender)
     int actionPointsToUse = 0;
     if (weapon != nullptr
         || (critterGetBodyType(defender) == BODY_TYPE_BIPED
-            && (FrmId(defender).weaponAnimation() == WEAPON_ANIMATION_NONE)
-            && FrmId(attacker, ANIM_THROW_PUNCH, WEAPON_ANIMATION_NONE, attacker->rotation + 1).exist())) {
+            && (FrmId(defender).weaponAnimation() == WeaponAnimation::None)
+            && FrmId(attacker, ANIM_THROW_PUNCH, WeaponAnimation::None, attacker->rotation + 1).exist())) {
         // SFALL: Check the safety of weapons based on the selected attack mode
         // instead of always the primary weapon hit mode.
         if (_combat_safety_invalidate_weapon(attacker, weapon, hitMode, defender, &safeDistance)) {
@@ -3079,7 +3084,7 @@ static int _ai_try_attack(Object* attacker, Object* defender)
 // 0x42AE90
 int _cAIPrepWeaponItem(Object* critter, Object* item)
 {
-    if (item != nullptr && critterGetStat(critter, STAT_INTELLIGENCE) >= 3 && item->pid == PROTO_ID_FLARE && lightGetAmbientIntensity() < LIGHT_INTENSITY_MAX * 0.85) {
+    if (critterGetStat(critter, STAT_INTELLIGENCE) >= 3 && ProtoId(item) == ItemProtoTypeId::Flare && lightGetAmbientIntensity() < LIGHT_INTENSITY_MAX * 0.85) {
         objectUseItem(critter, item);
     }
     return 0;
@@ -3462,7 +3467,8 @@ int critterSetTeam(Object* obj, int team)
 // 0x42B5D4
 int critterSetAiPacket(Object* object, int aiPacket)
 {
-    if (objectTypeFromPid(object->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId protoId = object;
+    if (protoId.objectType() != OBJ_TYPE_CRITTER) {
         return -1;
     }
 
@@ -3470,7 +3476,7 @@ int critterSetAiPacket(Object* object, int aiPacket)
 
     if (_isPotentialPartyMember(object)) {
         Proto* proto;
-        if (protoGetProto(object->pid, &proto) == -1) {
+        if (protoGetProto(protoId, &proto) == -1) {
             return -1;
         }
 
@@ -3511,32 +3517,38 @@ int _combatai_msg(Object* critter, Attack* attack, AiMessageType type, int delay
     int start;
     int end;
     char* string;
+    char* audio;
 
     switch (type) {
     case AI_MESSAGE_TYPE_RUN:
         start = ai->run.start;
         end = ai->run.end;
         string = _attack_str;
+        audio = _attack_audio;
         break;
     case AI_MESSAGE_TYPE_MOVE:
         start = ai->move.start;
         end = ai->move.end;
         string = _attack_str;
+        audio = _attack_audio;
         break;
     case AI_MESSAGE_TYPE_ATTACK:
         start = ai->attack.start;
         end = ai->attack.end;
         string = _attack_str;
+        audio = _attack_audio;
         break;
     case AI_MESSAGE_TYPE_MISS:
         start = ai->miss.start;
         end = ai->miss.end;
         string = _target_str;
+        audio = _target_audio;
         break;
     case AI_MESSAGE_TYPE_HIT:
         start = ai->hit[attack->defenderHitLocation].start;
         end = ai->hit[attack->defenderHitLocation].end;
         string = _target_str;
+        audio = _target_audio;
         break;
     default:
         return -1;
@@ -3555,6 +3567,7 @@ int _combatai_msg(Object* critter, Attack* attack, AiMessageType type, int delay
 
     debugPrint("%s said message %d\n", objectGetName(critter), messageListItem.num);
     snprintf(string, AI_MESSAGE_SIZE, "%s", messageListItem.text);
+    snprintf(audio, AI_MESSAGE_SIZE, "%s", messageListItem.audio != nullptr ? messageListItem.audio : "");
 
     // TODO: Get rid of casts.
     return animationRegisterCallback(critter, (void*)(uintptr_t)type, (AnimationCallback*)_ai_print_msg, delay);
@@ -3568,13 +3581,16 @@ static int _ai_print_msg(Object* critter, int type)
     }
 
     char* string;
+    char* audio;
     switch (type) {
     case AI_MESSAGE_TYPE_HIT:
     case AI_MESSAGE_TYPE_MISS:
         string = _target_str;
+        audio = _target_audio;
         break;
     default:
         string = _attack_str;
+        audio = _attack_audio;
         break;
     }
 
@@ -3583,6 +3599,10 @@ static int _ai_print_msg(Object* critter, int type)
     Rect rect;
     if (textObjectAdd(critter, string, ai->font, ai->color, ai->outline_color, &rect) == 0) {
         tileWindowRefreshRect(&rect, critter->elevation);
+
+        if (audio[0] != '\0') {
+            floatSoundPlay(audio, critter);
+        }
     }
 
     return 0;

@@ -241,6 +241,31 @@ gone.
 - Later: several games on one phone (Fallout 2, Nevada, Sonora...), each
   with its own folder and saves.
 
+## Keeping up with CE upstream (2026-10-08)
+
+The port started from a ZIP of github.com/fallout2-ce/fallout2-ce at
+79bdb28a (2026-09-24, found by the files' dates and contents). `main`
+now continues that history: the port is one commit over 79bdb28a, so
+updates are ordinary merges:
+
+    git fetch upstream            # https://github.com/fallout2-ce/fallout2-ce
+    git merge upstream/main
+
+First merge (2026-10-08, up to 85134d30): 29 upstream changes, 22
+conflicts in 14 files. Most came from upstream's typed ids (ProtoId,
+FrmId, scoped enums): the port's code now uses `ProtoId(obj) ==
+ItemProtoTypeId::...`, `frameId<CritterFrameId>()`,
+`GameMouseActionMenuItem` for action menus. Points where upstream's
+features had to be carried into the mobile screens:
+
+- main menu "behind submenus" (`mainMenuBeginSubscreen`...): PC as
+  upstream; the mobile menu creates no backdrop window and keeps
+  Continue and the loading curtain;
+- holodisk narration: the mobile Pip-Boy plays it when a holodisk is
+  shown and stops it when leaving the holodisks (as upstream's window).
+
+RPU had no release after 2.4.34 (checked 2026-10-08).
+
 ## Navigation and screen layout rules (2026-09-29)
 
 Agreed while designing the settings screen:

@@ -208,13 +208,28 @@ void erase_rect(Rect* rect)
 }
 
 // 0x484400
-int toolbar_proto(ObjectType type, int id)
+ProtoId toolbar_proto(ObjectType type, int id)
 {
     if (id < proto_max_id(type)) {
-        return (type << 24) | id;
-    } else {
-        return -1;
+        switch (type) {
+        case OBJ_TYPE_ITEM:
+            return static_cast<ItemProtoTypeId>(id);
+        case OBJ_TYPE_CRITTER:
+            return static_cast<CritterProtoTypeId>(id);
+        case OBJ_TYPE_SCENERY:
+            return static_cast<SceneryProtoTypeId>(id);
+        case OBJ_TYPE_WALL:
+            return static_cast<WallProtoTypeId>(id);
+        case OBJ_TYPE_TILE:
+            return static_cast<TileProtoTypeId>(id);
+        case OBJ_TYPE_MISC:
+            return static_cast<MiscProtoTypeId>(id);
+        default:
+            return ProtoId::Empty();
+        }
     }
+
+    return ProtoId::Empty();
 }
 
 // 0x485D44
@@ -252,7 +267,7 @@ void map_toggle_block_obj_viewing(int mode)
             } else {
                 if (blockedFidCache[index] == 0) {
                     Proto* proto;
-                    if (protoGetProto(obj->pid, &proto) == 0) {
+                    if (protoGetProto(obj, &proto) == 0) {
                         blockedFidCache[index] = proto->fid;
                     }
                 }
@@ -429,7 +444,7 @@ ObjectType pickToolbar(int topY)
 }
 
 // place_object_
-void placeObject(int pid, const FrmId& frmId)
+void placeObject(const ProtoId& protoId, const FrmId& frmId)
 {
     int x, y;
     mouseGetPosition(&x, &y);
@@ -439,7 +454,7 @@ void placeObject(int pid, const FrmId& frmId)
     }
 
     Object* obj;
-    if (objectCreateWithFrmIdPid(&obj, frmId, pid) == -1) {
+    if (objectCreateWithFrmIdProtoId(&obj, frmId, protoId) == -1) {
         return;
     }
 
@@ -449,7 +464,7 @@ void placeObject(int pid, const FrmId& frmId)
 }
 
 // place_tile_
-void placeTile(int pid, const FrmId& frmId)
+void placeTile(const ProtoId& protoId, const FrmId& frmId)
 {
     int x, y;
     mouseGetPosition(&x, &y);
@@ -458,7 +473,7 @@ void placeTile(int pid, const FrmId& frmId)
         return;
     }
 
-    TileFrameId newFrameId = frmId.frameId().tile;
+    TileFrameId newFrameId = frmId.frameId<TileFrameId>();
     if (newFrameId == TileFrameId::Invalid) {
         newFrameId = TileFrameId::Last;
     }
@@ -466,31 +481,27 @@ void placeTile(int pid, const FrmId& frmId)
     int* squarePtr = &_square[gElevation]->tileFid[squareTile];
     int oldValue = *squarePtr;
 
-    TileFID oldFloorFid = floorTileFidFromCombinedTileFid(oldValue);
-    TileFID oldRoofFid = roofTileFidFromCombinedTileFid(oldValue);
+    const FloorTileFrmId oldFloorFrmId = FloorTileFrmId(oldValue);
+    const RoofTileFrmId oldRoofFrmId = RoofTileFrmId(oldValue);
 
     int sx, sy;
 
     if (tileRoofIsVisible()) {
-        const TileFrmId oldRoofFrmId = FrmId(oldRoofFid).frameId().tile;
-        if (oldRoofFrmId == frmId) {
+        if (FrmId(oldRoofFrmId.frameId<TileFrameId>()) == frmId) {
             return;
         }
 
-        TileFlags roofFlags = tileFlagsFromTileFid(oldRoofFid);
-        TileFID newRoofFid = newFrameId | roofFlags;
-        *squarePtr = oldFloorFid | newRoofFid;
+        const RoofTileFrmId newRoofFrmId = RoofTileFrmId(newFrameId, oldRoofFrmId.flags());
+        *squarePtr = TileFrmId(oldFloorFrmId, newRoofFrmId).fid();
 
         squareTileToRoofScreenXY(squareTile, &sx, &sy, gElevation);
     } else {
-        const TileFrmId oldFloorFrmId = FrmId(oldFloorFid).frameId().tile;
-        if (oldFloorFrmId == frmId) {
+        if (FrmId(oldFloorFrmId.frameId<TileFrameId>()) == frmId) {
             return;
         }
 
-        TileFlags floorFlags = tileFlagsFromTileFid(oldFloorFid);
-        TileFID newFloorFid = newFrameId | floorFlags;
-        *squarePtr = newFloorFid | oldRoofFid;
+        const FloorTileFrmId newFloorFid = FloorTileFrmId(newFrameId, oldFloorFrmId.flags());
+        *squarePtr = TileFrmId(newFloorFid, oldRoofFrmId).fid();
 
         squareTileToScreenXY(squareTile, &sx, &sy, gElevation);
     }
@@ -658,11 +669,12 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
     bool useArtNotProtos = settings.mapper.use_art_not_protos;
 
     Proto* proto = nullptr;
+    const ProtoId protoId = srcObj;
     bool gatePassed = useArtNotProtos
         || existing == nullptr
         || srcObj == nullptr
-        || objectTypeFromPid(srcObj->pid) == OBJ_TYPE_TILE
-        || protoGetProto(srcObj->pid, &proto) == -1
+        || protoId.objectType() == OBJ_TYPE_TILE
+        || protoGetProto(protoId, &proto) == -1
         || (proto != nullptr && (proto->flags & 0x10) != 0);
 
     if (!gatePassed) {
@@ -684,7 +696,7 @@ static void copy_object_to_tile_pobj(int srcFid, int dstTile, Object* srcObj, bo
 
     if (existing != nullptr) {
         // Stackable item (PID 41 in F2 == bottle caps) auto-merges by bumping count.
-        if (existing->pid == 41) {
+        if (ProtoId(existing) == ItemProtoTypeId::Money) {
             existing->data.item.misc.charges++;
         }
         return;
@@ -889,7 +901,7 @@ void copyTile()
     int srcDx[kMaxTiles];
     int srcDy[kMaxTiles];
     for (int i = 0; i < srcCount; i++) {
-        TileFrameId floorArt = FrmId(floorTileFidFromCombinedTileFid(_square[gElevation]->tileFid[srcTiles[i]])).frameId().tile;
+        TileFrameId floorArt = FloorTileFrmId(_square[gElevation]->tileFid[srcTiles[i]]).frameId<TileFrameId>();
         srcFrmId[i] = floorArt;
 
         int sx, sy;
@@ -908,15 +920,14 @@ void copyTile()
             int dstSquare = squareTileFromScreenXY(dstSx, dstSy, gElevation);
             if (dstSquare != -1) {
                 int* tileFid = &_square[gElevation]->tileFid[dstSquare];
-                TileFID floorFid = floorTileFidFromCombinedTileFid(*tileFid);
-                TileFID roofFid = roofTileFidFromCombinedTileFid(*tileFid);
-                TileFlags floorFlags = tileFlagsFromTileFid(floorFid);
-                TileFrameId newFloorFrameId = srcFrmId[i].frameId().tile;
+                const FloorTileFrmId floorFrmId = FloorTileFrmId(*tileFid);
+                const RoofTileFrmId roofFrmId = RoofTileFrmId(*tileFid);
+                TileFrameId newFloorFrameId = srcFrmId[i].frameId<TileFrameId>();
                 if (newFloorFrameId == TileFrameId::Invalid) {
                     newFloorFrameId = TileFrameId::Last;
                 }
-                TileFID newFloorFid = newFloorFrameId | floorFlags;
-                *tileFid = newFloorFid | roofFid;
+                const FloorTileFrmId newFloorFrmId = FloorTileFrmId(newFloorFrameId, floorFrmId.flags());
+                *tileFid = TileFrmId(newFloorFrmId, roofFrmId).fid();
             }
         }
     });
@@ -1222,13 +1233,11 @@ void mapper_shift_map_elev()
     int* src = _square[gElevation]->tileFid;
     for (int i = 0; i < SQUARE_GRID_SIZE; i++) {
         int v = src[i];
-        TileFID floorTileFid = floorTileFidFromCombinedTileFid(v);
-        TileFID roofTileFid = roofTileFidFromCombinedTileFid(v);
-        TileFlags floorRot = tileFlagsFromTileFid(floorTileFid);
-        TileFlags roofRot = tileFlagsFromTileFid(roofTileFid);
-        TileFID newRoofFid = kBlankFrameId | roofRot;
-        TileFID newFloorFid = kBlankFrameId | floorRot;
-        src[i] = newFloorFid | newRoofFid;
+        const FloorTileFrmId floorTileFrmId = FloorTileFrmId(v);
+        const RoofTileFrmId roofTileFrmId = RoofTileFrmId(v);
+        const RoofTileFrmId newRoofFrmId = RoofTileFrmId(kBlankFrameId, roofTileFrmId.flags());
+        const FloorTileFrmId newFloorFrmId = FloorTileFrmId(kBlankFrameId, floorTileFrmId.flags());
+        src[i] = TileFrmId(newFloorFrmId, newRoofFrmId).fid();
     }
 
     // Move all spatial scripts from source elevation to destination, plus any exit-grid objects

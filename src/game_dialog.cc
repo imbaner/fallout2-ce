@@ -223,9 +223,9 @@ typedef enum PartyMemberCustomizationOption {
 
 // 0x444D10 Dogs
 static int _Dogs[3] = {
-    0x1000088,
-    0x1000156,
-    0x1000180,
+    ProtoId(CritterProtoTypeId::Cyberdog).pid(),
+    ProtoId(CritterProtoTypeId::Dogmeat).pid(),
+    ProtoId(CritterProtoTypeId::PariahDog).pid(),
 };
 
 static std::unordered_map<int, AiMessageRange> partyMemberCcMsgIds;
@@ -502,7 +502,7 @@ static int _head_phoneme_lookup[PHONEME_COUNT] = {
 };
 
 // 0x518900 phone_anim
-static HeadAnimation _phone_anim = HEAD_ANIMATION_VERY_GOOD_REACTION;
+static HeadAnimation _phone_anim = HeadAnimation::VeryGoodReaction;
 
 // 0x518904 loop_cnt
 static int _loop_cnt = -1;
@@ -883,6 +883,15 @@ bool _gdialogActive()
     return _dialog_state_fix != 0;
 }
 
+// _gdialogActive() stays true for the whole talk_p_proc call, even if the
+// script never opens a window (e.g. a flavor NPC that just floats a line
+// and returns). This checks the actual window state instead, so callers can
+// tell whether there's a head on screen to lip-sync against.
+bool gameDialogWindowActive()
+{
+    return _gdialog_state == GAME_DIALOG_ACTIVE;
+}
+
 // gdialogEnter
 // 0x444D3C
 void gameDialogEnter(Object* speaker, int mode)
@@ -1028,7 +1037,7 @@ void _gdialogSystemEnter()
 
     gameDialogRestoreCenterTile();
 
-    gameRequestState(GAME_STATE_2);
+    gameRequestState(GameState::DialogFinished);
 
     gameUpdateState();
 }
@@ -1039,6 +1048,12 @@ void gameDialogStartLips(const char* audioFileName)
     if (audioFileName == nullptr) {
         debugPrint("\nGDialog: Bleep!");
         soundPlayFile("censor");
+        return;
+    }
+
+    // speech=0 in fallout2.cfg turns off every voiced line, lip-synced ones
+    // included. The reply is still shown as text.
+    if (!speechIsEnabled()) {
         return;
     }
 
@@ -2871,7 +2886,7 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
         gameDialogFidgetFrmId = HeadFrameId::Invalid;
         gameDialogFidgetFrm = nullptr;
         gameDialogFidgetFrmHandle = INVALID_CACHE_ENTRY;
-        gameDialogFidgetReaction = FIDGET_INVALID;
+        gameDialogFidgetReaction = HeadFidget::Invalid;
         gameDialogFidgetUpdateDelay = 0;
         gameDialogFidgetLastUpdateTimestamp = 0;
         gameDialogRenderTalkingHead(nullptr, 0);
@@ -2883,14 +2898,14 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
 
     HeadAnimation anim;
     switch (reaction) {
-    case FIDGET_GOOD:
-        anim = HEAD_ANIMATION_GOOD_PHONEMES;
+    case HeadFidget::Good:
+        anim = HeadAnimation::GoodPhonemes;
         break;
-    case FIDGET_BAD:
-        anim = HEAD_ANIMATION_BAD_PHONEMES;
+    case HeadFidget::Bad:
+        anim = HeadAnimation::BadPhonemes;
         break;
     default:
-        anim = HEAD_ANIMATION_NEUTRAL_PHONEMES;
+        anim = HeadAnimation::NeutralPhonemes;
         break;
     }
 
@@ -2911,7 +2926,7 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
 
     if (_lipsFrmId == HeadFrameId::None) {
         _phone_anim = anim;
-        _lipsFrmId = HeadFrmId(headFrmId.frameId().head, anim);
+        _lipsFrmId = HeadFrmId(headFrmId.frameId<HeadFrameId>(), anim);
         _lipsFp = artLock(_lipsFrmId, &_lipsKey);
         if (_lipsFp == nullptr) {
             debugPrint("failure!\n");
@@ -2922,7 +2937,7 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
         }
     }
 
-    int fidgetCount = artGetFidgetCount(HeadFrmId(headFrmId.frameId().head, headAnimationFromHeadFidget(reaction)));
+    int fidgetCount = artGetFidgetCount(HeadFrmId(headFrmId.frameId<HeadFrameId>(), reaction));
     if (fidgetCount == -1) {
         debugPrint("\tError - No available fidgets for given frame id\n");
         return;
@@ -2930,31 +2945,31 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
 
     int chance = randomBetween(1, 100) + _dialogue_seconds_since_last_input / 2;
 
-    int fidget = fidgetCount;
+    HeadFidgetAnimation fidget = static_cast<HeadFidgetAnimation>(fidgetCount);
     switch (fidgetCount) {
     case 1:
-        fidget = 1;
+        fidget = HeadFidgetAnimation::First;
         break;
     case 2:
         if (chance < 68) {
-            fidget = 1;
+            fidget = HeadFidgetAnimation::First;
         } else {
-            fidget = 2;
+            fidget = HeadFidgetAnimation::Second;
         }
         break;
     case 3:
         _dialogue_seconds_since_last_input = 0;
         if (chance < 52) {
-            fidget = 1;
+            fidget = HeadFidgetAnimation::First;
         } else if (chance < 77) {
-            fidget = 2;
+            fidget = HeadFidgetAnimation::Second;
         } else {
-            fidget = 3;
+            fidget = HeadFidgetAnimation::Third;
         }
         break;
     }
 
-    debugPrint("Choosing fidget %d out of %d\n", fidget, fidgetCount);
+    debugPrint("Choosing fidget %d out of %d\n", static_cast<int>(fidget), fidgetCount);
 
     if (gameDialogFidgetFrm != nullptr) {
         if (artUnlock(gameDialogFidgetFrmHandle) == -1) {
@@ -2962,7 +2977,7 @@ void _gdSetupFidget(const HeadFrmId& headFrmId, HeadFidget reaction)
         }
     }
 
-    gameDialogFidgetFrmId = HeadFrmId(headFrmId.frameId().head, headAnimationFromHeadFidget(reaction), fidget);
+    gameDialogFidgetFrmId = HeadFrmId(headFrmId.frameId<HeadFrameId>(), reaction, fidget);
     gameDialogFidgetFrmCurrentFrame = 0;
     gameDialogFidgetFrm = artLock(gameDialogFidgetFrmId, &gameDialogFidgetFrmHandle);
     if (gameDialogFidgetFrm == nullptr) {
@@ -3088,7 +3103,7 @@ void _gdPlayTransition(HeadAnimation anim)
     }
 
     CacheEntry* headFrmHandle;
-    const HeadFrmId headFid = HeadFrmId(gGameDialogHeadFrmId.frameId().head, anim);
+    const HeadFrmId headFid = HeadFrmId(gGameDialogHeadFrmId.frameId<HeadFrameId>(), anim);
     Art* headFrm = artLock(headFid, &headFrmHandle);
     if (headFrm == nullptr) {
         debugPrint("\tError locking transition...\n");
@@ -3411,17 +3426,17 @@ void _talk_to_critter_reacts(int reaction)
     switch (reactionCode) {
     case GAME_DIALOG_REACTION_GOOD:
         switch (gameDialogFidgetReaction) {
-        case FIDGET_GOOD:
-            _gdPlayTransition(HEAD_ANIMATION_VERY_GOOD_REACTION);
-            _gdSetupFidget(gGameDialogHeadFrmId, FIDGET_GOOD);
+        case HeadFidget::Good:
+            _gdPlayTransition(HeadAnimation::VeryGoodReaction);
+            _gdSetupFidget(gGameDialogHeadFrmId, HeadFidget::Good);
             break;
-        case FIDGET_NEUTRAL:
-            _gdPlayTransition(HEAD_ANIMATION_NEUTRAL_TO_GOOD);
-            _gdSetupFidget(gGameDialogHeadFrmId, FIDGET_GOOD);
+        case HeadFidget::Neutral:
+            _gdPlayTransition(HeadAnimation::NeutralToGood);
+            _gdSetupFidget(gGameDialogHeadFrmId, HeadFidget::Good);
             break;
-        case FIDGET_BAD:
-            _gdPlayTransition(HEAD_ANIMATION_BAD_TO_NEUTRAL);
-            _gdSetupFidget(gGameDialogHeadFrmId, FIDGET_NEUTRAL);
+        case HeadFidget::Bad:
+            _gdPlayTransition(HeadAnimation::BadToNeutral);
+            _gdSetupFidget(gGameDialogHeadFrmId, HeadFidget::Neutral);
             break;
         default:
             break;
@@ -3431,17 +3446,17 @@ void _talk_to_critter_reacts(int reaction)
         break;
     case GAME_DIALOG_REACTION_BAD:
         switch (gameDialogFidgetReaction) {
-        case FIDGET_GOOD:
-            _gdPlayTransition(HEAD_ANIMATION_GOOD_TO_NEUTRAL);
-            _gdSetupFidget(gGameDialogHeadFrmId, FIDGET_NEUTRAL);
+        case HeadFidget::Good:
+            _gdPlayTransition(HeadAnimation::GoodToNeutral);
+            _gdSetupFidget(gGameDialogHeadFrmId, HeadFidget::Neutral);
             break;
-        case FIDGET_NEUTRAL:
-            _gdPlayTransition(HEAD_ANIMATION_NEUTRAL_TO_BAD);
-            _gdSetupFidget(gGameDialogHeadFrmId, FIDGET_BAD);
+        case HeadFidget::Neutral:
+            _gdPlayTransition(HeadAnimation::NeutralToBad);
+            _gdSetupFidget(gGameDialogHeadFrmId, HeadFidget::Bad);
             break;
-        case FIDGET_BAD:
-            _gdPlayTransition(HEAD_ANIMATION_VERY_BAD_REACTION);
-            _gdSetupFidget(gGameDialogHeadFrmId, FIDGET_BAD);
+        case HeadFidget::Bad:
+            _gdPlayTransition(HeadAnimation::VeryBadReaction);
+            _gdSetupFidget(gGameDialogHeadFrmId, HeadFidget::Bad);
             break;
         default:
             break;
@@ -3740,15 +3755,15 @@ void gameDialogEndBarter()
 static int gameDialogCreateBarterTables()
 {
     UniqueObject playerTableObj;
-    if (objectCreateWithFrmIdPid(playerTableObj, FrmId::Empty(), -1) == -1) return -1;
+    if (objectCreateWithFrmIdProtoId(playerTableObj, FrmId::Empty(), ProtoId::Empty()) == -1) return -1;
     playerTableObj->flags |= OBJECT_HIDDEN;
 
     UniqueObject bartererTableObj;
-    if (objectCreateWithFrmIdPid(bartererTableObj, FrmId::Empty(), -1) == -1) return -1;
+    if (objectCreateWithFrmIdProtoId(bartererTableObj, FrmId::Empty(), ProtoId::Empty()) == -1) return -1;
     bartererTableObj->flags |= OBJECT_HIDDEN;
 
     UniqueObject bartererTempObj;
-    if (objectCreateWithFrmIdPid(bartererTempObj, FrmId(gGameDialogSpeaker), -1) == -1) return -1;
+    if (objectCreateWithFrmIdProtoId(bartererTempObj, FrmId(gGameDialogSpeaker), ProtoId::Empty()) == -1) return -1;
     bartererTempObj->flags |= OBJECT_HIDDEN | OBJECT_NO_SAVE;
     bartererTempObj->sid = -1;
 
@@ -4253,11 +4268,11 @@ int _gdPickAIUpdateMsg(Object* critter)
     return 670 + randomBetween(0, 4);
 }
 
-void gameDialogSetPartyMemberCcMsgIds(int pid, int startMsgId, int endMsgId)
+void gameDialogSetPartyMemberCcMsgIds(const ProtoId& protoId, int startMsgId, int endMsgId)
 {
     assert(startMsgId <= endMsgId);
 
-    partyMemberCcMsgIds[pid] = { startMsgId, endMsgId };
+    partyMemberCcMsgIds[protoId.pid()] = { startMsgId, endMsgId };
 }
 
 void gameDialogResetPartyMemberCcMsgIds()
@@ -4268,12 +4283,13 @@ void gameDialogResetPartyMemberCcMsgIds()
 // 0x449330
 int _gdCanBarter()
 {
-    if (objectTypeFromPid(gGameDialogSpeaker->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId speakerProtoId = gGameDialogSpeaker;
+    if (speakerProtoId.objectType() != OBJ_TYPE_CRITTER) {
         return 1;
     }
 
     Proto* proto;
-    if (protoGetProto(gGameDialogSpeaker->pid, &proto) == -1) {
+    if (protoGetProto(speakerProtoId, &proto) == -1) {
         return 1;
     }
 
@@ -4888,7 +4904,8 @@ void _gdCustomUpdateSetting(int option, int value)
 // 0x44A52C
 void gameDialogBarterButtonUpMouseUp(int btn, int keyCode)
 {
-    if (objectTypeFromPid(gGameDialogSpeaker->pid) != OBJ_TYPE_CRITTER) {
+    const ProtoId speakerProtoId = gGameDialogSpeaker;
+    if (speakerProtoId.objectType() != OBJ_TYPE_CRITTER) {
         return;
     }
 
@@ -4898,7 +4915,7 @@ void gameDialogBarterButtonUpMouseUp(int btn, int keyCode)
     }
 
     Proto* proto;
-    protoGetProto(gGameDialogSpeaker->pid, &proto);
+    protoGetProto(speakerProtoId, &proto);
     if ((proto->critter.data.flags & CRITTER_BARTER) != CRITTER_NONE) {
         if (gameDialogLipSyncStarted) {
             if (soundIsPlaying(gLipsData.sound)) {
@@ -5396,7 +5413,7 @@ bool gameDialogSpeakerCanBarter()
     }
 
     Proto* proto;
-    if (protoGetProto(gGameDialogSpeaker->pid, &proto) == -1) {
+    if (protoGetProto(gGameDialogSpeaker, &proto) == -1) {
         return false;
     }
 
@@ -5418,7 +5435,7 @@ static void partyMemberUseBestWeapon(Object* critter)
 // "Use best armor" of the combat control panel.
 static void partyMemberUseBestArmor(Object* critter)
 {
-    if (partyMemberPidCanEquipArmor(critter->pid)) {
+    if (partyMemberProtoIdCanEquipArmor(critter)) {
         Object* armor = _ai_search_inven_armor(critter);
         if (armor != nullptr) {
             inventoryEquip(critter, armor, HAND_LEFT);
@@ -5494,7 +5511,7 @@ bool gameDialogGetPartyControlView(PartyControlView* view)
     view->level = partyMemberGetCurrentLevel(critter);
     view->armorClass = critterGetStat(critter, STAT_ARMOR_CLASS);
     view->addicted = queueFindFirstEvent(critter, EVENT_TYPE_WITHDRAWAL) != nullptr;
-    view->canEquipArmor = partyMemberPidCanEquipArmor(critter->pid);
+    view->canEquipArmor = partyMemberProtoIdCanEquipArmor(critter);
 
     view->disposition = aiGetDisposition(critter);
     for (int disposition = 0; disposition < kPartyControlDispositionCount; disposition++) {

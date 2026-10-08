@@ -141,6 +141,8 @@ namespace {
         Section section = Section::Quests;
         int quest = 0;
         int holodisk = 0;
+        // Holodisk whose narration was started (-1 none).
+        int narratedHolodisk = -1;
         int mapLocation = 0;
         int mapEntry = 0;
         int video = 0;
@@ -181,6 +183,7 @@ namespace {
         section = rest ? Section::Rest : Section::Quests;
         quest = 0;
         holodisk = 0;
+        narratedHolodisk = -1;
         mapLocation = 0;
         mapEntry = 0;
         video = 0;
@@ -267,6 +270,12 @@ namespace {
         }
 
         muiFillRect(ui.screenRect(), kBackground);
+
+        // Leaving the holodisks stops the narration.
+        if (section != Section::Data && narratedHolodisk != -1) {
+            pipboySoundStop();
+            narratedHolodisk = -1;
+        }
 
         MuiRect content;
         MuiRect tabs;
@@ -606,6 +615,12 @@ namespace {
 
         const PipboyHolodisk& entry = holodisks[holodisk];
         resetDetail(ui, "data." + std::to_string(entry.index));
+
+        // As the game: a holodisk shown plays its narration.
+        if (entry.index != narratedHolodisk) {
+            pipboyPlayHolodiskNarration(entry.index);
+            narratedHolodisk = entry.index;
+        }
 
         std::vector<std::u32string> paragraphs;
         for (const std::string& paragraph : pipboyGetHolodiskText(entry.index)) {

@@ -189,7 +189,7 @@ namespace {
         look.right = pidOf(critterGetItem2(critter));
         look.left = pidOf(critterGetItem1(critter));
         const FrmId frmId(critter);
-        look.art = static_cast<int>(frmId.frameId().critter);
+        look.art = static_cast<int>(frmId.frameId<CritterFrameId>());
         look.weapon = static_cast<int>(frmId.weaponAnimation());
         return look;
     }
@@ -253,7 +253,7 @@ namespace {
                 interfaceGetCurrentHand(),
                 frmId.animationType(),
                 frmId.rotation());
-            expectedArt = static_cast<int>(expected.frameId().critter);
+            expectedArt = static_cast<int>(expected.frameId<CritterFrameId>());
             mismatch = expectedArt != gDudeLook.art;
         }
 
@@ -567,8 +567,8 @@ void actionLogDudeFid(int oldFid, int newFid)
     const FrmId newFrmId(newFid);
     char text[1024];
     snprintf(text, sizeof(text), "dude look: art %d -> %d, fid %08x -> %08x, screens %s, from%s",
-        static_cast<int>(oldFrmId.frameId().critter),
-        static_cast<int>(newFrmId.frameId().critter),
+        static_cast<int>(oldFrmId.frameId<CritterFrameId>()),
+        static_cast<int>(newFrmId.frameId<CritterFrameId>()),
         oldFid,
         newFid,
         perfMonitorGameModeNames(GameMode::getCurrentGameMode()).c_str(),
