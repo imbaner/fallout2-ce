@@ -154,6 +154,8 @@ public:
     // must use ids starting with "<id>." - they lose their press when the
     // finger starts scrolling. Returns scroll offset (0 - top of content).
     float scroll(const std::string& id, const MuiRect& rect, float contentHeight);
+    // The same sideways over content of [contentWidth] (0 - its left end).
+    float scrollHorizontal(const std::string& id, const MuiRect& rect, float contentWidth);
     void setScroll(const std::string& id, float offset);
     bool isScrolling(const std::string& id) const;
 
@@ -198,6 +200,8 @@ public:
     // One of [labels] in a row of joined buttons over [rect] (ids
     // "<id>.<index>"): a tap picks it. Returns true when [selected] changed.
     bool segmented(const std::string& id, const MuiRect& rect, const std::vector<std::u32string>& labels, int* selected);
+
+    float scrollAlong(const std::string& id, const MuiRect& rect, float contentSize, bool horizontal);
 
     // Internal state, filled by mui.cc.
     float pixelsPerDp = 1.0f;

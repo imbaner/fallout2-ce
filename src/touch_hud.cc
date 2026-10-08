@@ -230,7 +230,8 @@ namespace {
     bool gLogScrollToEnd = false;
 
     std::vector<ModeChip> gModeChips;
-    int gModeFirstVisible = 0;
+    // Selected mode and how many there are when last brought into view.
+    int gModeShownKey = -1;
 
     MessageList gMessageList;
     bool gMessageListLoaded = false;
@@ -728,8 +729,8 @@ namespace {
     }
 
     // Attack modes strip: mode names, aimed modes are a crosshair right after
-    // their base mode, reload is an icon. Fixed width, arrows when it
-    // overflows.
+    // their base mode, reload is an icon. Fixed width, scrolls sideways
+    // with a position bar when it overflows.
     void buildModes(MuiContext& ui, const MuiRect& rect)
     {
         const MuiTheme& theme = muiTheme();
@@ -782,62 +783,62 @@ namespace {
 
         float gap = ui.dp(6.0f);
         float total = 0.0f;
+        std::vector<float> starts;
         for (const Chip& chip : chips) {
-            total += chip.chipWidth + (total > 0.0f ? gap : 0.0f);
+            total += total > 0.0f ? gap : 0.0f;
+            starts.push_back(total);
+            total += chip.chipWidth;
         }
 
-        bool overflow = total > rect.w;
-        float arrowWidth = overflow ? ui.dp(26.0f) : 0.0f;
-        float available = rect.w - (overflow ? (arrowWidth + gap) * 2.0f : 0.0f);
+        // Chips over the top, the position bar's place under them always
+        // (the group keeps its height whatever the weapon).
+        float barHeight = ui.dp(3.0f);
+        float barGap = ui.dp(3.0f);
+        MuiRect strip = { rect.x, rect.y, rect.w, rect.h - barHeight - barGap };
+        bool overflow = total > strip.w;
 
-        if (!overflow) {
-            gModeFirstVisible = 0;
-        }
-        gModeFirstVisible = std::clamp(gModeFirstVisible, 0, count - 1);
-
-        auto lastVisibleFrom = [&](int first) {
-            float width = 0.0f;
-            int last = first;
-            for (int index = first; index < count; index++) {
-                float next = width + (index > first ? gap : 0.0f) + chips[index].chipWidth;
-                if (next > available + 0.5f) {
-                    break;
-                }
-                width = next;
-                last = index;
+        // A finger moves the modes sideways; a mode chosen anew (the weapon
+        // switched, a key) is brought into view once.
+        float offset = ui.scrollHorizontal("hud.mode", strip, total);
+        int shownKey = static_cast<int>(current) * 64 + count;
+        if (shownKey != gModeShownKey) {
+            gModeShownKey = shownKey;
+            float maxOffset = std::max(total - strip.w, 0.0f);
+            float start = starts[selectedIndex];
+            float end = start + chips[selectedIndex].chipWidth;
+            float wanted = offset;
+            if (start < offset) {
+                wanted = start;
+            } else if (end > offset + strip.w) {
+                wanted = end - strip.w;
+            } else if (offset == 0.0f && overflow && selectedIndex == count - 1) {
+                wanted = maxOffset;
             }
-            return last;
-        };
-
-        // Keep the selected mode visible.
-        if (selectedIndex < gModeFirstVisible) {
-            gModeFirstVisible = selectedIndex;
-        }
-        while (lastVisibleFrom(gModeFirstVisible) < selectedIndex && gModeFirstVisible < selectedIndex) {
-            gModeFirstVisible++;
-        }
-        int lastVisible = lastVisibleFrom(gModeFirstVisible);
-
-        float visibleWidth = 0.0f;
-        for (int index = gModeFirstVisible; index <= lastVisible; index++) {
-            visibleWidth += chips[index].chipWidth + (index > gModeFirstVisible ? gap : 0.0f);
+            if (wanted != offset) {
+                offset = std::clamp(wanted, 0.0f, maxOffset);
+                ui.setScroll("hud.mode", offset);
+            }
         }
 
-        // Right aligned (the group is attached to the right edge).
-        float x = overflow
-            ? rect.x + arrowWidth + gap + (available - visibleWidth)
-            : rect.right() - visibleWidth;
+        // Right aligned when they fit (the group is attached to the right
+        // edge).
+        float left = overflow ? strip.x - offset : strip.right() - total;
 
+        muiPushClip(strip);
         for (int index = 0; index < count; index++) {
-            ModeChip modeChip = { chips[index].action, { 0, 0, 0, 0 } };
-            if (index >= gModeFirstVisible && index <= lastVisible) {
-                const Chip& chip = chips[index];
-                MuiRect chipRect = { x, rect.y, chip.chipWidth, rect.h };
-                x += chip.chipWidth + gap;
-                modeChip.rect = chipRect;
+            const Chip& chip = chips[index];
+            MuiRect chipRect = { left + starts[index], strip.y, chip.chipWidth, strip.h };
+            ModeChip modeChip = { chip.action, { 0, 0, 0, 0 } };
+            bool visible = chipRect.right() > strip.x && chipRect.x < strip.right();
+            if (visible) {
+                // Only its visible part takes touches.
+                float touchLeft = std::max(chipRect.x, strip.x);
+                float touchRight = std::min(chipRect.right(), strip.right());
+                MuiRect touchRect = { touchLeft, chipRect.y, touchRight - touchLeft, chipRect.h };
+                modeChip.rect = touchRect;
 
                 bool pressed;
-                bool tapped = ui.touchable("hud.mode." + std::to_string(index), chipRect, &pressed);
+                bool tapped = ui.touchable("hud.mode." + std::to_string(index), touchRect, &pressed);
 
                 bool selected = chip.action == current;
                 bool warning = chip.action == INTERFACE_ITEM_ACTION_RELOAD && empty;
@@ -848,7 +849,7 @@ namespace {
                 muiStrokeRoundRect(chipRect, ui.dp(6.0f), ui.dp(warning ? 2.0f : 1.0f), border);
 
                 if (chip.icon != MuiIcon::Count) {
-                    muiDrawIcon(chip.icon, chipRect.centerX(), chipRect.centerY(), rect.h * 0.56f, ui.dp(1.6f), color);
+                    muiDrawIcon(chip.icon, chipRect.centerX(), chipRect.centerY(), strip.h * 0.56f, ui.dp(1.6f), color);
                 } else {
                     muiDrawTextAligned(chip.label, chipRect, textSize, color, MuiAlign::Center, MuiAlign::Center);
                 }
@@ -859,16 +860,16 @@ namespace {
             }
             gModeChips.push_back(modeChip);
         }
+        muiPopClip();
 
+        // Where the visible part is in the whole list (not touchable).
         if (overflow) {
-            MuiRect previous = { rect.x, rect.y, arrowWidth, rect.h };
-            MuiRect next = { rect.right() - arrowWidth, rect.y, arrowWidth, rect.h };
-            if (gModeFirstVisible > 0 && ui.button("hud.mode.previous", previous, U"‹")) {
-                gModeFirstVisible--;
-            }
-            if (lastVisible < count - 1 && ui.button("hud.mode.next", next, U"›")) {
-                gModeFirstVisible++;
-            }
+            MuiRect track = { strip.x, strip.bottom() + barGap, strip.w, barHeight };
+            float thumbWidth = std::max(track.w * strip.w / total, ui.dp(16.0f));
+            float maxOffset = total - strip.w;
+            float thumbX = track.x + (track.w - thumbWidth) * std::clamp(offset / maxOffset, 0.0f, 1.0f);
+            muiFillRoundRect(track, barHeight / 2.0f, theme.button);
+            muiFillRoundRect({ thumbX, track.y, thumbWidth, track.h }, barHeight / 2.0f, theme.accent);
         }
     }
 

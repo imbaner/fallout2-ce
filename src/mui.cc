@@ -141,6 +141,7 @@ namespace {
         // Content pixels per ms.
         float velocity = 0.0f;
         bool dragging = false;
+        // Finger position along the scroll.
         float lastY = 0.0f;
         unsigned int lastTime = 0;
         unsigned int lastUpdate = 0;
@@ -398,11 +399,21 @@ bool MuiContext::button(const std::string& id, const MuiRect& rect, const std::u
 
 float MuiContext::scroll(const std::string& id, const MuiRect& rect, float contentHeight)
 {
+    return scrollAlong(id, rect, contentHeight, false);
+}
+
+float MuiContext::scrollHorizontal(const std::string& id, const MuiRect& rect, float contentWidth)
+{
+    return scrollAlong(id, rect, contentWidth, true);
+}
+
+float MuiContext::scrollAlong(const std::string& id, const MuiRect& rect, float contentSize, bool horizontal)
+{
     region(rect);
     gFrameWidgets[id] = rect;
 
     ScrollState& state = gScrolls[id];
-    float maxOffset = std::max(contentHeight - rect.h, 0.0f);
+    float maxOffset = std::max(contentSize - (horizontal ? rect.w : rect.h), 0.0f);
     unsigned int dt = state.lastUpdate != 0 ? now - state.lastUpdate : 0;
     state.lastUpdate = now;
 
@@ -413,26 +424,27 @@ float MuiContext::scroll(const std::string& id, const MuiRect& rect, float conte
             // Touch stops a fling.
             state.velocity = 0.0f;
             state.dragging = false;
-            state.lastY = gPointer.y;
+            state.lastY = horizontal ? gPointer.x : gPointer.y;
             state.lastTime = now;
         }
 
         float slop = dp(kTheme.touchSlop);
-        float dy = gPointer.y - gPointer.startY;
-        float dx = gPointer.x - gPointer.startX;
+        // Along the scroll and across it.
+        float dy = horizontal ? gPointer.x - gPointer.startX : gPointer.y - gPointer.startY;
+        float dx = horizontal ? gPointer.y - gPointer.startY : gPointer.x - gPointer.startX;
         bool ownedByChild = gActiveId.empty() || gActiveId.rfind(id + ".", 0) == 0;
         // Content that fits doesn't scroll, the finger stays with the child.
         if (gPointer.down && startedInside && !state.dragging && ownedByChild && maxOffset > 0.0f
             && std::fabs(dy) > slop && std::fabs(dy) > std::fabs(dx)) {
             state.dragging = true;
             gActiveId = id;
-            state.lastY = gPointer.y;
+            state.lastY = horizontal ? gPointer.x : gPointer.y;
             state.lastTime = now;
         }
 
         if (state.dragging && gActiveId == id) {
             if (gPointer.down || gPointer.released) {
-                float move = gPointer.y - state.lastY;
+                float move = (horizontal ? gPointer.x : gPointer.y) - state.lastY;
                 unsigned int elapsed = std::max(now - state.lastTime, 1u);
                 state.offset -= move;
                 if (move != 0.0f || elapsed > 50) {
@@ -440,7 +452,7 @@ float MuiContext::scroll(const std::string& id, const MuiRect& rect, float conte
                     state.velocity = state.velocity * 0.3f + (-move / elapsed) * 0.7f;
                     state.lastTime = now;
                 }
-                state.lastY = gPointer.y;
+                state.lastY = horizontal ? gPointer.x : gPointer.y;
             }
 
             if (gPointer.released) {
