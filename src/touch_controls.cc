@@ -791,13 +791,15 @@ static void touchControlsStickToSelection(int x, int y, int worldX, int worldY, 
 }
 
 // Nearest item on the ground whose sprite box on screen is within magnet
-// radius. Box, not pixels: thin items (spear, knife) are hard to hit.
+// radius. Box, not pixels: thin items (spear, knife) are hard to hit. Only
+// items showing an outline (the highlight's): what the highlight leaves out
+// (out of sight, behind walls) the finger doesn't jump to.
 static Object* touchControlsFindItemNear(int x, int y)
 {
     Object* nearest = nullptr;
     float nearestDistance = kItemSnapRadiusDp * hudGetPixelsPerDp();
     for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
-        if (FrmId(object).objectType() != OBJ_TYPE_ITEM || (object->flags & OBJECT_HIDDEN) != 0) {
+        if (FrmId(object).objectType() != OBJ_TYPE_ITEM || (object->flags & OBJECT_HIDDEN) != 0 || !objectHasVisibleOutline(object)) {
             continue;
         }
 

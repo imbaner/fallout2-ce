@@ -147,8 +147,10 @@ namespace {
         return { static_cast<Uint8>(palette[index * 3] << 2), static_cast<Uint8>(palette[index * 3 + 1] << 2), static_cast<Uint8>(palette[index * 3 + 2] << 2), alpha };
     }
 
-    // The top layer's pixels in view (`objectSeeThroughTopLayer`) as runs
-    // of a color along a row, made again when it or the view changes.
+    // The top layer's pixels (`objectSeeThroughTopLayer`) as runs of a
+    // color along a row, made again only when it changes: it's what the
+    // outlines and the dude drew, so only around the critters is looked at
+    // (moving the view or zooming costs nothing).
     struct TopRun {
         int x;
         int y;
@@ -158,7 +160,60 @@ namespace {
 
     std::vector<TopRun> gTopRuns;
     unsigned int gTopRunsVersion = 0;
-    Rect gTopRunsRect = { 0, 0, -1, -1 };
+
+    void collectTopRuns(const unsigned char* top, const unsigned char* buffer, int width, int height, int pitch)
+    {
+        gTopRuns.clear();
+        std::vector<Rect> scanned;
+        for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
+            if (FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0) {
+                continue;
+            }
+
+            // The outline goes a pixel around the sprite.
+            Rect rect;
+            objectGetRect(object, &rect);
+            rect.left = std::max(rect.left - 1, 0);
+            rect.top = std::max(rect.top - 1, 0);
+            rect.right = std::min(rect.right + 1, width - 1);
+            rect.bottom = std::min(rect.bottom + 1, height - 1);
+            if (rect.left > rect.right || rect.top > rect.bottom) {
+                continue;
+            }
+
+            for (int y = rect.top; y <= rect.bottom; y++) {
+                const unsigned char* row = top + pitch * y;
+                const unsigned char* shown = buffer + pitch * y;
+                int x = rect.left;
+                while (x <= rect.right) {
+                    // Each pixel once where critters overlap.
+                    bool seen = false;
+                    for (const Rect& other : scanned) {
+                        if (y >= other.top && y <= other.bottom && x >= other.left && x <= other.right) {
+                            x = other.right + 1;
+                            seen = true;
+                            break;
+                        }
+                    }
+                    if (seen) {
+                        continue;
+                    }
+
+                    unsigned char color = row[x];
+                    if (color == 0 || shown[x] != color) {
+                        x++;
+                        continue;
+                    }
+                    int start = x;
+                    while (x <= rect.right && row[x] == color && shown[x] == color) {
+                        x++;
+                    }
+                    gTopRuns.push_back({ start, y, x - start, color });
+                }
+            }
+            scanned.push_back(rect);
+        }
+    }
 
     // The outlines and the dude drawn again over the tiles, pixel for pixel
     // where the map shows them.
@@ -172,49 +227,31 @@ namespace {
         const unsigned char* top = objectSeeThroughTopLayer(&buffer, &width, &height, &pitch, &version);
         SDL_Renderer* renderer = muiDrawGetRenderer();
         if (top == nullptr || renderer == nullptr) {
+            gTopRuns.clear();
+            return;
+        }
+
+        if (version != gTopRunsVersion) {
+            gTopRunsVersion = version;
+            collectTopRuns(top, buffer, width, height, pitch);
+        }
+        if (gTopRuns.empty()) {
             return;
         }
 
         Rect visible;
         worldViewGetVisibleRect(&visible);
-        visible.left = std::max(visible.left, 0);
-        visible.top = std::max(visible.top, 0);
-        visible.right = std::min(visible.right, width - 1);
-        visible.bottom = std::min(visible.bottom, height - 1);
-
-        if (version != gTopRunsVersion || visible.left != gTopRunsRect.left || visible.top != gTopRunsRect.top || visible.right != gTopRunsRect.right || visible.bottom != gTopRunsRect.bottom) {
-            gTopRunsVersion = version;
-            gTopRunsRect = visible;
-            gTopRuns.clear();
-            for (int y = visible.top; y <= visible.bottom; y++) {
-                const unsigned char* row = top + pitch * y;
-                const unsigned char* shown = buffer + pitch * y;
-                int x = visible.left;
-                while (x <= visible.right) {
-                    unsigned char color = row[x];
-                    if (color == 0 || shown[x] != color) {
-                        x++;
-                        continue;
-                    }
-                    int start = x;
-                    while (x <= visible.right && row[x] == color && shown[x] == color) {
-                        x++;
-                    }
-                    gTopRuns.push_back({ start, y, x - start, color });
-                }
-            }
-        }
-
-        if (gTopRuns.empty()) {
-            return;
-        }
 
         const unsigned char* palette = directDrawGetPalette();
-        std::vector<SDL_Vertex> vertices;
-        std::vector<int> indices;
-        vertices.reserve(gTopRuns.size() * 4);
-        indices.reserve(gTopRuns.size() * 6);
+        static std::vector<SDL_Vertex> vertices;
+        static std::vector<int> indices;
+        vertices.clear();
+        indices.clear();
         for (const TopRun& run : gTopRuns) {
+            if (run.y < visible.top || run.y > visible.bottom || run.x > visible.right || run.x + run.length <= visible.left) {
+                continue;
+            }
+
             float left;
             float topY;
             float right;
@@ -229,7 +266,9 @@ namespace {
             vertices.push_back({ { left * scale, bottom * scale }, color, { 0.0f, 0.0f } });
             indices.insert(indices.end(), { first, first + 1, first + 2, first, first + 2, first + 3 });
         }
-        SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+        if (!indices.empty()) {
+            SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+        }
     }
 
     // Under the selected tile and the hit chance: a faint grid where the

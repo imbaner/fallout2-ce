@@ -3041,16 +3041,13 @@ void objectSeeThroughScrolled(int dx, int dy)
 
     // As the buffer: the contents move by (-dx, -dy).
     std::vector<unsigned char> moved(gSeeThroughTop.size(), 0);
-    for (int y = 0; y < gObjectsWindowHeight; y++) {
+    int fromX = std::max(dx, 0);
+    int toX = std::max(-dx, 0);
+    int length = gObjectsWindowWidth - std::abs(dx);
+    for (int y = 0; y < gObjectsWindowHeight && length > 0; y++) {
         int fromY = y + dy;
-        if (fromY < 0 || fromY >= gObjectsWindowHeight) {
-            continue;
-        }
-        for (int x = 0; x < gObjectsWindowWidth; x++) {
-            int fromX = x + dx;
-            if (fromX >= 0 && fromX < gObjectsWindowWidth) {
-                moved[gObjectsWindowPitch * y + x] = gSeeThroughTop[gObjectsWindowPitch * fromY + fromX];
-            }
+        if (fromY >= 0 && fromY < gObjectsWindowHeight) {
+            memcpy(moved.data() + gObjectsWindowPitch * y + toX, gSeeThroughTop.data() + gObjectsWindowPitch * fromY + fromX, length);
         }
     }
     gSeeThroughTop.swap(moved);
