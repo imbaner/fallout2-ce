@@ -2969,7 +2969,7 @@ static bool objectHasDrawnOutline(Object* object)
 
 static bool objectIsSeeThrough(Object* object, ObjectType type)
 {
-    return gObjectsSeeThrough && object != gEgg && (type == OBJ_TYPE_CRITTER || type == OBJ_TYPE_ITEM);
+    return gObjectsSeeThrough && object != gEgg && object != gDude && (type == OBJ_TYPE_CRITTER || type == OBJ_TYPE_ITEM);
 }
 
 void objectSetSeeThrough(bool seeThrough)

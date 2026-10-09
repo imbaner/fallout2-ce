@@ -95,8 +95,8 @@ int objectClearOutline(Object* obj, Rect* rect);
 // red bands, so it stands out among the others. nullptr - none. Only
 // compared with, never read (it may be gone).
 void objectSetTargetOutline(Object* obj);
-// CE: The tactical view (touch controls): critters and items on the ground
-// are drawn half see-through, so the tiles under them show; every critter
+// CE: The tactical view (touch controls): critters (the dude aside) and
+// items on the ground are drawn half see-through, so the tiles under them show; every critter
 // with an outline shows it (target highlight aside). Drawing only - objects aren't changed (their flags
 // are saved). Redraws the map when it changes.
 void objectSetSeeThrough(bool seeThrough);
