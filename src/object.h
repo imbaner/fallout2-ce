@@ -115,6 +115,12 @@ enum class ObjectSeeThroughCover : unsigned char {
     Top,
 };
 const unsigned char* objectSeeThroughCover(int* width, int* height, int* pitch);
+// While see-through, drawing the map's standing objects and roofs: [src]'s
+// pixels (non-zero) drawn at [destX], [destY] of the buffer cover the
+// ground there with [cover]. [eggMask] - the dude's see-through-walls egg
+// it was drawn through (`_intensity_mask_buf_to_buf`): mostly transparent
+// pixels don't cover.
+void objectSeeThroughMark(const unsigned char* src, int width, int height, int srcPitch, int destX, int destY, ObjectSeeThroughCover cover, const unsigned char* eggMask = nullptr, int eggPitch = 0);
 // While see-through the critters' outlines (and the tactical view's tiles)
 // don't cycle, but the picked target's (`objectSetTargetOutline`): the
 // palette entry [object]'s outline is drawn with; false - as the game draws

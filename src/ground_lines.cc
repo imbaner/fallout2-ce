@@ -13,7 +13,7 @@ namespace {
     // How much of a line shows over what covers the ground there
     // (`ObjectSeeThroughCover`).
     constexpr float kShownOverGround = 1.0f;
-    constexpr float kShownThroughSeeThrough = 0.45f;
+    constexpr float kShownThroughSeeThrough = 0.4f;
     constexpr float kShownBehindSolid = 0.4f;
     constexpr float kShownUnderTop = 0.0f;
 

@@ -1606,21 +1606,27 @@ static void tileRenderRoof(const TileFrmId& frmId, int x, int y, Rect* rect, int
                             cr->top,
                             gTileWindowPitch,
                             light);
+                        // CE: The tactical view: roofs cover the ground.
+                        objectSeeThroughMark(tileFrmBuffer + tileWidth * (cr->top - tileRect.top) + (cr->left - tileRect.left), cr->right - cr->left + 1, cr->bottom - cr->top + 1, tileWidth, cr->left, cr->top, ObjectSeeThroughCover::Solid);
                     }
                 }
 
                 unsigned char* eggBuf = artGetFrameData(eggFrm);
-                _intensity_mask_buf_to_buf(tileFrmBuffer + tileWidth * (intersectedRect.top - tileRect.top) + (intersectedRect.left - tileRect.left),
+                unsigned char* roofSrc = tileFrmBuffer + tileWidth * (intersectedRect.top - tileRect.top) + (intersectedRect.left - tileRect.left);
+                unsigned char* eggMask = eggBuf + eggWidth * (intersectedRect.top - eggRect.top) + (intersectedRect.left - eggRect.left);
+                _intensity_mask_buf_to_buf(roofSrc,
                     intersectedRect.right - intersectedRect.left + 1,
                     intersectedRect.bottom - intersectedRect.top + 1,
                     tileWidth,
                     gTileWindowBuffer + gTileWindowPitch * intersectedRect.top + intersectedRect.left,
                     gTileWindowPitch,
-                    eggBuf + eggWidth * (intersectedRect.top - eggRect.top) + (intersectedRect.left - eggRect.left),
+                    eggMask,
                     eggWidth,
                     light);
+                objectSeeThroughMark(roofSrc, intersectedRect.right - intersectedRect.left + 1, intersectedRect.bottom - intersectedRect.top + 1, tileWidth, intersectedRect.left, intersectedRect.top, ObjectSeeThroughCover::Solid, eggMask, eggWidth);
             } else {
                 _dark_trans_buf_to_buf(tileFrmBuffer, tileRect.right - tileRect.left + 1, tileRect.bottom - tileRect.top + 1, tileWidth, gTileWindowBuffer, tileRect.left, tileRect.top, gTileWindowPitch, light);
+                objectSeeThroughMark(tileFrmBuffer, tileRect.right - tileRect.left + 1, tileRect.bottom - tileRect.top + 1, tileWidth, tileRect.left, tileRect.top, ObjectSeeThroughCover::Solid);
             }
 
             artUnlock(eggFrmHandle);

@@ -271,7 +271,7 @@ namespace {
                 groundLinesAddPath(loop, true, ui.dp(1.4f) + ui.dp(2.0f), muiRgb(0x000000, 70));
             }
             for (const std::vector<SDL_FPoint>& loop : loops) {
-                groundLinesAddPath(loop, true, ui.dp(1.4f), muiTheme().accent.withAlpha(140));
+                groundLinesAddPath(loop, true, ui.dp(1.4f), muiTheme().accent.withAlpha(115));
             }
         }
 

@@ -28,10 +28,17 @@ namespace {
     // and doors move on their own).
     constexpr unsigned int kReachRefreshMs = 250;
 
-    // The outlines' colors are the game's sight of each critter, kept up to
-    // date while shown: from the dude's tile when it changes.
-    int gOutlinesTile = -1;
+    // The outlines' colors are the game's sight of each critter (a line of
+    // fire blocked or not), kept up to date while shown: when anyone in the
+    // combat moves (`gOutlinesPlaces`: where everyone stands).
+    std::size_t gOutlinesPlaces = 0;
+    std::size_t gPlaces = 0;
     bool gOutlinesEnabled = false;
+
+    void addPlace(Object* critter)
+    {
+        gPlaces = gPlaces * 31 + static_cast<std::size_t>(critter->tile) * 4 + static_cast<std::size_t>(critter->elevation);
+    }
 
     // The game changes outlines without drawing the map again (its callers
     // redraw it all): a critter whose outline changed is drawn again.
@@ -59,9 +66,11 @@ namespace {
     };
 
     // The game's combat outlines' colors (object.cc): still ones, but the
-    // target's, which cycles (cycle.cc's fire_fast) as its outline does.
+    // target's, which cycle (cycle.cc's slime, fire_fast) as its outline
+    // does; a blocked one's never does.
     constexpr int kBlockedColor = 61;
-    constexpr int kTargetColor = 243;
+    constexpr int kCycledFriendlyColor = 229;
+    constexpr int kCycledHostileColor = 243;
 
     TacticalViewReach gReach;
     ReachKey gReachKey;
@@ -133,18 +142,16 @@ bool tacticalViewTileLook(Object* critter, int* color, bool* thick)
         *thick = true;
         return true;
     }
-    if (critter == mapHintsGetAttackTarget()) {
-        *color = kTargetColor;
-        *thick = true;
-        return true;
-    }
+
+    bool target = critter == mapHintsGetAttackTarget();
+    *thick = target;
     switch (critter->outline & OUTLINE_TYPE_MAX) {
     case OUTLINE_TYPE_HOSTILE:
-        *color = objectStillOutlineColor(OUTLINE_TYPE_HOSTILE);
+        *color = target ? kCycledHostileColor : objectStillOutlineColor(OUTLINE_TYPE_HOSTILE);
         return true;
     case OUTLINE_TYPE_FRIENDLY:
     case OUTLINE_TYPE_SAME_TEAM:
-        *color = objectStillOutlineColor(OUTLINE_TYPE_FRIENDLY);
+        *color = target ? kCycledFriendlyColor : objectStillOutlineColor(OUTLINE_TYPE_FRIENDLY);
         return true;
     case OUTLINE_TYPE_BLOCKED:
         *color = kBlockedColor;
@@ -178,11 +185,16 @@ void tacticalViewUpdate()
 {
     bool shown = tacticalViewIsShown();
     if (!shown) {
-        gOutlinesTile = -1;
-    } else if (gDude->tile != gOutlinesTile) {
+        gOutlinesPlaces = 0;
+    } else {
+        gPlaces = static_cast<std::size_t>(gDude->tile) + 1;
+        combatForEachCritter(addPlace);
+    }
+
+    if (shown && gPlaces != gOutlinesPlaces) {
         // Who the dude sees (as `_combat_outline_on`), enabled only where
         // the game shows them now - the view draws them anyway.
-        gOutlinesTile = gDude->tile;
+        gOutlinesPlaces = gPlaces;
         gOutlinesEnabled = settings.preferences.target_highlight != TARGET_HIGHLIGHT_OFF
             && (combatOutlinesFollowTurn() || gameMouseGetMode() == GAME_MOUSE_MODE_CROSSHAIR);
         combatForEachCritter(updateOutline);

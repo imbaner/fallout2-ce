@@ -65,8 +65,7 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect);
 static void objectDrawOutline(Object* object, Rect* rect);
 static void _obj_render_object(Object* object, Rect* rect, int light);
 static void objectRenderPreRoof(Object* object, Rect* rect, int light);
-static void objectSeeThroughGroundTaken(const Rect& rect);
-static void objectSeeThroughCoverRect(const Rect& rect);
+static void objectSeeThroughCoverStart(const Rect& rect);
 static bool objectHasDrawnOutline(Object* object);
 static int _obj_preload_sort(const void* fid1, const void* fid2);
 static Object* objectPrepareWhoHitMeForSave(CritterCombatData* combatData);
@@ -269,19 +268,16 @@ static std::vector<Color> gSeeThroughMix;
 // How much of a see-through object shows (the rest is what is under it),
 // and of an outline where what it outlines is behind something.
 static constexpr int kSeeThroughOpacity = 65;
-static constexpr int kHiddenOutlineOpacity = 40;
+static constexpr int kHiddenOutlineOpacity = 45;
 static std::vector<Color> gSeeThroughHiddenOutlineMix;
 
 // The tactical view: what covers each pixel of the buffer
 // (`ObjectSeeThroughCover`), laid out as the buffer.
 static std::vector<unsigned char> gSeeThroughCover;
 
-// The part being redrawn as it was before anything standing was drawn (the
-// floor, flat objects); see-through objects draw into it too, so what
-// differs from it at the end is covered by something solid.
-static std::vector<unsigned char> gSeeThroughGround;
-static Rect gSeeThroughGroundRect;
-static bool gSeeThroughGroundValid = false;
+// What is drawn now covers the ground (`objectSeeThroughMark`): from the
+// standing objects to the roofs of the part being redrawn.
+static bool gSeeThroughMarking = false;
 
 // The dude as last drawn while see-through (`objectRenderPreRoof`): its
 // pixels' colors in [gSeeThroughDudeRect], -1 - not the dude's. Kept over
@@ -857,7 +853,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
 
     outlinedObjects.clear();
     gSeeThroughDude.clear();
-    gSeeThroughGroundValid = false;
+    gSeeThroughMarking = false;
 
     int renderCount = 0;
     for (int i = 0; i < gObjectsUpdateAreaHexSize; i++) {
@@ -902,9 +898,9 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
         }
     }
 
-    // CE: The tactical view: the ground as it is now.
+    // CE: The tactical view: what stands on the ground covers it from now.
     if (gObjectsSeeThrough) {
-        objectSeeThroughGroundTaken(updatedRect);
+        objectSeeThroughCoverStart(updatedRect);
     }
 
     tileRenderEdgeBlackSquares(&updatedRect, elevation, false);
@@ -958,13 +954,13 @@ void _obj_render_post_roof(Rect* rect, int elevation)
     // tiles, `ObjectSeeThroughCover::Top`).
     std::vector<std::pair<int, unsigned char>> dudePixels;
     std::vector<int> topPixels;
+    gSeeThroughMarking = false;
     if (gObjectsSeeThrough) {
-        objectSeeThroughCoverRect(updatedRect);
-
         int width = gSeeThroughDudeRect.right - gSeeThroughDudeRect.left + 1;
         for (int index = 0; index < static_cast<int>(gSeeThroughDude.size()); index++) {
             int offset = gObjectsWindowPitch * (gSeeThroughDudeRect.top + index / width) + gSeeThroughDudeRect.left + index % width;
-            if (gSeeThroughDude[index] == gObjectsWindowBuffer[offset]) {
+            if (gSeeThroughDude[index] == gObjectsWindowBuffer[offset]
+                && gSeeThroughCover[offset] == static_cast<unsigned char>(ObjectSeeThroughCover::Top)) {
                 dudePixels.push_back({ offset, gObjectsWindowBuffer[offset] });
             }
         }
@@ -1055,7 +1051,6 @@ void _obj_render_post_roof(Rect* rect, int elevation)
 
     for (const auto& pixel : dudePixels) {
         gObjectsWindowBuffer[pixel.first] = pixel.second;
-        topPixels.push_back(pixel.first);
     }
 
     for (int offset : topPixels) {
@@ -3097,46 +3092,43 @@ const unsigned char* objectSeeThroughCover(int* width, int* height, int* pitch)
 
 // Before anything standing on the ground in [rect] is drawn: nothing covers
 // it yet.
-static void objectSeeThroughGroundTaken(const Rect& rect)
+static void objectSeeThroughCoverStart(const Rect& rect)
 {
     gSeeThroughCover.resize(static_cast<size_t>(gObjectsWindowPitch) * gObjectsWindowHeight);
-
-    int width = rect.right - rect.left + 1;
-    int height = rect.bottom - rect.top + 1;
-    gSeeThroughGround.resize(static_cast<size_t>(width) * height);
-    for (int y = 0; y < height; y++) {
-        int offset = gObjectsWindowPitch * (rect.top + y) + rect.left;
-        memcpy(gSeeThroughGround.data() + width * y, gObjectsWindowBuffer + offset, width);
-        memset(gSeeThroughCover.data() + offset, static_cast<int>(ObjectSeeThroughCover::None), width);
+    for (int y = rect.top; y <= rect.bottom; y++) {
+        memset(gSeeThroughCover.data() + gObjectsWindowPitch * y + rect.left, static_cast<int>(ObjectSeeThroughCover::None), rect.right - rect.left + 1);
     }
-    gSeeThroughGroundRect = rect;
-    gSeeThroughGroundValid = true;
+    gSeeThroughMarking = true;
 }
 
-// After the roofs of [rect]: what differs from the ground (see-through
-// objects drew into it) is covered by something solid.
-static void objectSeeThroughCoverRect(const Rect& rect)
+void objectSeeThroughMark(const unsigned char* src, int width, int height, int srcPitch, int destX, int destY, ObjectSeeThroughCover cover, const unsigned char* eggMask, int eggPitch)
 {
-    if (!gSeeThroughGroundValid
-        || rect.left != gSeeThroughGroundRect.left || rect.top != gSeeThroughGroundRect.top
-        || rect.right != gSeeThroughGroundRect.right || rect.bottom != gSeeThroughGroundRect.bottom) {
+    if (!gSeeThroughMarking) {
         return;
     }
 
-    int width = rect.right - rect.left + 1;
-    int height = rect.bottom - rect.top + 1;
     for (int y = 0; y < height; y++) {
-        int offset = gObjectsWindowPitch * (rect.top + y) + rect.left;
-        const unsigned char* ground = gSeeThroughGround.data() + width * y;
-        const unsigned char* shown = gObjectsWindowBuffer + offset;
-        unsigned char* cover = gSeeThroughCover.data() + offset;
+        int bufferY = destY + y;
+        if (bufferY < 0 || bufferY >= gObjectsWindowHeight) {
+            continue;
+        }
+        unsigned char* row = gSeeThroughCover.data() + gObjectsWindowPitch * bufferY;
         for (int x = 0; x < width; x++) {
-            if (shown[x] != ground[x]) {
-                cover[x] = static_cast<unsigned char>(ObjectSeeThroughCover::Solid);
+            int bufferX = destX + x;
+            if (src[srcPitch * y + x] == 0 || bufferX < 0 || bufferX >= gObjectsWindowWidth) {
+                continue;
             }
+            // In the egg (`_intensity_mask_buf_to_buf`) the image shows by
+            // the mask's value of 128 (0 - outside: all of it).
+            if (eggMask != nullptr) {
+                unsigned char shown = eggMask[eggPitch * y + x];
+                if (shown != 0 && shown < 64) {
+                    continue;
+                }
+            }
+            row[bufferX] = static_cast<unsigned char>(cover);
         }
     }
-    gSeeThroughGroundValid = false;
 }
 
 void objectSeeThroughScrolled(int dx, int dy)
@@ -3212,9 +3204,7 @@ void objectSetSeeThrough(bool seeThrough)
     if (!seeThrough) {
         gSeeThroughCover.clear();
         gSeeThroughCover.shrink_to_fit();
-        gSeeThroughGround.clear();
-        gSeeThroughGround.shrink_to_fit();
-        gSeeThroughGroundValid = false;
+        gSeeThroughMarking = false;
     }
     tileWindowRefresh();
 }
@@ -3234,19 +3224,6 @@ static void objectDrawSeeThrough(unsigned char* src, int srcWidth, int srcHeight
                     color = intensityColorTable[color][intensityIndex];
                 }
                 dp[x] = gSeeThroughMix[color * COLOR_COUNT + dp[x]];
-
-                // Still the ground for the cover (`objectSeeThroughCoverRect`),
-                // seen through it.
-                if (gSeeThroughGroundValid) {
-                    int bufferX = destX + x;
-                    int bufferY = destY + y;
-                    if (bufferX >= gSeeThroughGroundRect.left && bufferX <= gSeeThroughGroundRect.right
-                        && bufferY >= gSeeThroughGroundRect.top && bufferY <= gSeeThroughGroundRect.bottom) {
-                        int width = gSeeThroughGroundRect.right - gSeeThroughGroundRect.left + 1;
-                        gSeeThroughGround[width * (bufferY - gSeeThroughGroundRect.top) + bufferX - gSeeThroughGroundRect.left] = dp[x];
-                        gSeeThroughCover[gObjectsWindowPitch * bufferY + bufferX] = static_cast<unsigned char>(ObjectSeeThroughCover::SeeThrough);
-                    }
-                }
             }
         }
         sp += srcPitch;
@@ -3283,8 +3260,9 @@ static Color objectStaticColor(int red, int green, int blue)
 
 Color objectStillOutlineColor(OutlineType outlineType)
 {
-    // The cycled outlines' middle colors (cycle.cc: slime, fire_fast).
-    static const Color kFriendly = objectStaticColor(27, 123, 15);
+    // Near the cycled outlines' colors (cycle.cc: slime - a bit brighter -
+    // and fire_fast).
+    static const Color kFriendly = objectStaticColor(43, 150, 30);
     static const Color kHostile = objectStaticColor(150, 0, 0);
     return outlineType == OUTLINE_TYPE_HOSTILE ? kHostile : kFriendly;
 }
@@ -5573,20 +5551,24 @@ static void _obj_render_object(Object* object, Rect* rect, int light)
                         if (v21->left <= v21->right && v21->top <= v21->bottom) {
                             unsigned char* sp = src + frameWidth * (v21->top - objectRect.top) + (v21->left - objectRect.left);
                             _dark_trans_buf_to_buf(sp, v21->right - v21->left + 1, v21->bottom - v21->top + 1, frameWidth, gObjectsWindowBuffer, v21->left, v21->top, gObjectsWindowPitch, light);
+                            objectSeeThroughMark(sp, v21->right - v21->left + 1, v21->bottom - v21->top + 1, frameWidth, v21->left, v21->top, ObjectSeeThroughCover::Solid);
                         }
                     }
 
                     unsigned char* mask = artGetFrameData(egg);
+                    unsigned char* eggSrc = src + frameWidth * (updatedEggRect.top - objectRect.top) + (updatedEggRect.left - objectRect.left);
+                    unsigned char* eggMask = mask + eggWidth * (updatedEggRect.top - eggRect.top) + (updatedEggRect.left - eggRect.left);
                     _intensity_mask_buf_to_buf(
-                        src + frameWidth * (updatedEggRect.top - objectRect.top) + (updatedEggRect.left - objectRect.left),
+                        eggSrc,
                         updatedEggRect.right - updatedEggRect.left + 1,
                         updatedEggRect.bottom - updatedEggRect.top + 1,
                         frameWidth,
                         gObjectsWindowBuffer + gObjectsWindowPitch * updatedEggRect.top + updatedEggRect.left,
                         gObjectsWindowPitch,
-                        mask + eggWidth * (updatedEggRect.top - eggRect.top) + (updatedEggRect.left - eggRect.left),
+                        eggMask,
                         eggWidth,
                         light);
+                    objectSeeThroughMark(eggSrc, updatedEggRect.right - updatedEggRect.left + 1, updatedEggRect.bottom - updatedEggRect.top + 1, frameWidth, updatedEggRect.left, updatedEggRect.top, ObjectSeeThroughCover::Solid, eggMask, eggWidth);
                     artUnlock(eggHandle);
                     artUnlock(cacheEntry);
                     return;
@@ -5600,9 +5582,20 @@ static void _obj_render_object(Object* object, Rect* rect, int light)
     // CE: The tactical view (`objectSetSeeThrough`).
     if (objectIsSeeThrough(object, type)) {
         objectDrawSeeThrough(src, objectWidth, objectHeight, frameWidth, gObjectsWindowBuffer, objectRect.left, objectRect.top, gObjectsWindowPitch, light);
+        objectSeeThroughMark(src, objectWidth, objectHeight, frameWidth, objectRect.left, objectRect.top, ObjectSeeThroughCover::SeeThrough);
         artUnlock(cacheEntry);
         return;
     }
+
+    // CE: The tactical view: what covers the ground - the dude over the
+    // tiles, translucent objects half.
+    ObjectSeeThroughCover cover = ObjectSeeThroughCover::Solid;
+    if (object == gDude) {
+        cover = ObjectSeeThroughCover::Top;
+    } else if ((object->flags & OBJECT_FLAG_0xFC000) != 0) {
+        cover = ObjectSeeThroughCover::SeeThrough;
+    }
+    objectSeeThroughMark(src, objectWidth, objectHeight, frameWidth, objectRect.left, objectRect.top, cover);
 
     switch (object->flags & OBJECT_FLAG_0xFC000) {
     case OBJECT_TRANS_RED:
