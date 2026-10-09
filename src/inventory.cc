@@ -1066,7 +1066,7 @@ static void inventoryLootRenderPaneWeight(unsigned char* windowBuffer, int pitch
 
     ColorWithFlags color = COLOR_GREEN | DRAW_TEXT_FLAG_NONE;
     int inventoryWeight = objectGetInventoryWeight(object);
-    if (objectTypeFromPid(object->pid) == OBJ_TYPE_CRITTER) {
+    if (ProtoId(object).objectType() == OBJ_TYPE_CRITTER) {
         int currentWeight = inventoryWeight + extraWeight;
         int maxWeight = critterGetStat(object, STAT_CARRY_WEIGHT);
         int weightPercentage = maxWeight < 1 ? 0 : (int)std::ceil(currentWeight * 100 / (float)maxWeight);
@@ -1084,7 +1084,7 @@ static void inventoryLootRenderPaneWeight(unsigned char* windowBuffer, int pitch
         if (currentWeight > maxWeight) {
             color = COLOR_RED | DRAW_TEXT_FLAG_NONE;
         }
-    } else if (targetPane && objectTypeFromPid(object->pid) == OBJ_TYPE_ITEM && itemGetType(object) == ITEM_TYPE_CONTAINER) {
+    } else if (targetPane && ProtoId(object).objectType() == OBJ_TYPE_ITEM && itemGetType(object) == ITEM_TYPE_CONTAINER) {
         int currentSize = containerGetTotalSize(object);
         int maxSize = containerGetMaxSize(object);
         int sizePercentage = maxSize < 1 ? 0 : (int)std::ceil(currentSize * 100 / (float)maxSize);
@@ -1212,7 +1212,7 @@ static bool hasPartySlots()
         && partyTargetEquipped != nullptr
         && partyBaseTarget != nullptr
         && _target_stack[0] == partyBaseTarget
-        && objectTypeFromPid(partyBaseTarget->pid) == OBJ_TYPE_CRITTER
+        && ProtoId(partyBaseTarget).objectType() == OBJ_TYPE_CRITTER
         && objectIsPartyMember(partyBaseTarget);
 }
 
@@ -4005,7 +4005,7 @@ static void inventoryBuildSummary(InventorySummary* summary)
     messageListItem.num = 20;
     if (messageListGetItem(&gInventoryMessageList, &messageListItem)) {
         int inventoryWeight = inventoryGetCritterWeight();
-        if (objectTypeFromPid(_stack[0]->pid) == OBJ_TYPE_CRITTER) {
+        if (ProtoId(_stack[0]).objectType() == OBJ_TYPE_CRITTER) {
             int carryWeight = critterGetStat(_stack[0], STAT_CARRY_WEIGHT);
             snprintf(formattedText, sizeof(formattedText), "%s %d/%d", messageListItem.text, inventoryWeight, carryWeight);
             summary->encumbered = critterIsEncumbered(_stack[0]);
@@ -4168,7 +4168,7 @@ static void inventoryRenderSummary()
     }
 
     if (!summary.weight.empty()) {
-        if (objectTypeFromPid(_stack[0]->pid) == OBJ_TYPE_CRITTER) {
+        if (ProtoId(_stack[0]).objectType() == OBJ_TYPE_CRITTER) {
             fontDrawText(windowBuffer + offset + 15, summary.weight.c_str(), 120, pitch, summary.encumbered ? COLOR_RED : COLOR_GREEN);
         } else {
             fontDrawText(windowBuffer + offset + 30, summary.weight.c_str(), 80, pitch, COLOR_GREEN);
@@ -6136,7 +6136,7 @@ int inventoryOpenStealing(Object* thief, Object* target)
         return -1;
     }
 
-    _gIsSteal = objectTypeFromPid(thief->pid) == OBJ_TYPE_CRITTER && critterIsActive(target);
+    _gIsSteal = ProtoId(thief).objectType() == OBJ_TYPE_CRITTER && critterIsActive(target);
     _gStealCount = 0;
     _gStealSize = 0;
 
@@ -6462,7 +6462,7 @@ bool lootGetView(LootView* view)
     view->targetCount = gLootTargetCount;
     view->targetIndex = gLootTargetIndex;
     view->weight = inventoryGetCritterWeight();
-    view->carryWeight = objectTypeFromPid(_stack[0]->pid) == OBJ_TYPE_CRITTER ? critterGetStat(_stack[0], STAT_CARRY_WEIGHT) : 0;
+    view->carryWeight = ProtoId(_stack[0]).objectType() == OBJ_TYPE_CRITTER ? critterGetStat(_stack[0], STAT_CARRY_WEIGHT) : 0;
     return true;
 }
 

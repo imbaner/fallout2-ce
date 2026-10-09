@@ -913,7 +913,7 @@ void gameDialogEnter(Object* speaker, int mode)
         return;
     }
 
-    if (objectTypeFromPid(speaker->pid) != OBJ_TYPE_ITEM && SID_TYPE(speaker->sid) != SCRIPT_TYPE_SPATIAL) {
+    if (ProtoId(speaker).objectType() != OBJ_TYPE_ITEM && SID_TYPE(speaker->sid) != SCRIPT_TYPE_SPATIAL) {
         MessageListItem messageListItem;
 
         int rc = _action_can_talk_to(gDude, speaker);
@@ -3020,7 +3020,7 @@ static void gameDialogRenderMapInDisplayBuffer()
     bool mapRefreshed = false;
 
     if (gGameDialogSpeaker != nullptr
-        && objectTypeFromPid(gGameDialogSpeaker->pid) != OBJ_TYPE_ITEM
+        && ProtoId(gGameDialogSpeaker).objectType() != OBJ_TYPE_ITEM
         && gGameDialogSpeaker->elevation == gElevation
         && gGameDialogSpeaker->tile != oldCenterTile) {
         if (tileSetCenter(gGameDialogSpeaker->tile,
@@ -5408,7 +5408,7 @@ bool gameDialogGetHeadImage(const unsigned char** data, int* width, int* height,
 // Same check as the barter button (`gameDialogBarterButtonUpMouseUp`).
 bool gameDialogSpeakerCanBarter()
 {
-    if (gGameDialogSpeaker == nullptr || objectTypeFromPid(gGameDialogSpeaker->pid) != OBJ_TYPE_CRITTER) {
+    if (gGameDialogSpeaker == nullptr || ProtoId(gGameDialogSpeaker).objectType() != OBJ_TYPE_CRITTER) {
         return false;
     }
 
