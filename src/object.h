@@ -1,6 +1,8 @@
 #ifndef OBJECT_H
 #define OBJECT_H
 
+#include <vector>
+
 #include "art.h"
 #include "color.h"
 #include "db.h"
@@ -100,11 +102,17 @@ void objectSetTargetOutline(Object* obj);
 // with an outline shows it (target highlight aside). Drawing only - objects aren't changed (their flags
 // are saved). Redraws the map when it changes.
 void objectSetSeeThrough(bool seeThrough);
-// While see-through: what the outlines and the dude (over the outlines)
-// drew, laid out as [buffer] - the game's (0 - nothing; a pixel is still
-// there while the buffer has the same color), so the tactical view draws it
-// again over its tiles; [version] changes with it. nullptr - none.
-const unsigned char* objectSeeThroughTopLayer(const unsigned char** buffer, int* width, int* height, int* pitch, unsigned int* version);
+// While see-through: what the critters' outlines and the dude (over the
+// outlines) drew, as runs of a color along a buffer row, so the tactical
+// view draws it again over its tiles; [version] changes with it. nullptr -
+// not see-through.
+struct ObjectTopRun {
+    int x;
+    int y;
+    int length;
+    unsigned char color;
+};
+const std::vector<ObjectTopRun>* objectSeeThroughTopRuns(unsigned int* version);
 // The map scrolled by (dx, dy): the top layer moves as the buffer does.
 void objectSeeThroughScrolled(int dx, int dy);
 ObjectFlags _obj_intersects_with(Object* object, int x, int y);

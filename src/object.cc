@@ -65,6 +65,7 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect);
 static void objectDrawOutline(Object* object, Rect* rect);
 static void _obj_render_object(Object* object, Rect* rect, int light);
 static void objectRenderPreRoof(Object* object, Rect* rect, int light);
+static void objectSeeThroughTopUpdate(const Rect& rect, std::vector<std::pair<int, unsigned char>>& pixels);
 static bool objectHasDrawnOutline(Object* object);
 static int _obj_preload_sort(const void* fid1, const void* fid2);
 static Object* objectPrepareWhoHitMeForSave(CritterCombatData* combatData);
@@ -264,9 +265,9 @@ static std::vector<Object*> outlinedObjects;
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
 
-// The tactical view's top layer (`objectSeeThroughTopLayer`): what the
-// outlines and the dude drew, in the buffer's layout, 0 - nothing.
-static std::vector<unsigned char> gSeeThroughTop;
+// The tactical view's top layer (`objectSeeThroughTopRuns`): what the
+// critters' outlines and the dude drew, buffer coordinates.
+static std::vector<ObjectTopRun> gSeeThroughTop;
 static unsigned int gSeeThroughTopVersion = 0;
 
 // The dude as last drawn while see-through (`objectRenderPreRoof`): its
@@ -933,8 +934,9 @@ void _obj_render_post_roof(Rect* rect, int elevation)
     }
 
     // CE: The tactical view: the dude's pixels still showing stay over the
-    // outlines; both go to the top layer too (`objectSeeThroughTopLayer`).
+    // outlines; both go to the top layer too (`objectSeeThroughTopRuns`).
     std::vector<std::pair<int, unsigned char>> dudePixels;
+    std::vector<std::pair<int, unsigned char>> topPixels;
     if (gObjectsSeeThrough) {
         int width = gSeeThroughDudeRect.right - gSeeThroughDudeRect.left + 1;
         for (int index = 0; index < static_cast<int>(gSeeThroughDude.size()); index++) {
@@ -943,15 +945,10 @@ void _obj_render_post_roof(Rect* rect, int elevation)
                 dudePixels.push_back({ offset, gObjectsWindowBuffer[offset] });
             }
         }
-
-        gSeeThroughTop.resize(static_cast<size_t>(gObjectsWindowPitch) * gObjectsWindowHeight);
-        for (int y = updatedRect.top; y <= updatedRect.bottom; y++) {
-            memset(gSeeThroughTop.data() + gObjectsWindowPitch * y + updatedRect.left, 0, updatedRect.right - updatedRect.left + 1);
-        }
     }
 
     for (Object* object : outlinedObjects) {
-        if (!gObjectsSeeThrough) {
+        if (!gObjectsSeeThrough || FrmId(object).objectType() != OBJ_TYPE_CRITTER) {
             objectDrawOutline(object, &updatedRect);
             continue;
         }
@@ -982,7 +979,7 @@ void _obj_render_post_roof(Rect* rect, int elevation)
             int offset = gObjectsWindowPitch * (outlineRect.top + y) + outlineRect.left;
             for (int x = 0; x < width; x++) {
                 if (gObjectsWindowBuffer[offset + x] != before[width * y + x]) {
-                    gSeeThroughTop[offset + x] = gObjectsWindowBuffer[offset + x];
+                    topPixels.push_back({ offset + x, gObjectsWindowBuffer[offset + x] });
                 }
             }
         }
@@ -990,11 +987,11 @@ void _obj_render_post_roof(Rect* rect, int elevation)
 
     for (const auto& pixel : dudePixels) {
         gObjectsWindowBuffer[pixel.first] = pixel.second;
-        gSeeThroughTop[pixel.first] = pixel.second;
+        topPixels.push_back(pixel);
     }
 
     if (gObjectsSeeThrough) {
-        gSeeThroughTopVersion++;
+        objectSeeThroughTopUpdate(updatedRect, topPixels);
     }
 
     textObjectsRenderInRect(&updatedRect);
@@ -2214,15 +2211,15 @@ bool _obj_portal_is_walk_thru(Object* obj)
         return false;
     }
 
+    // CE: Doors the dude opens on the way (as walking through them does,
+    // `objectUseDoor`: the door's script runs as on a use, and may keep it
+    // shut). Locked or jammed ones - the door object's state, not the
+    // proto's - stay in the way.
     if (settings.qol.auto_open_doors) {
-        if (!isInCombat()) {
-            if (proto->scenery.type == SCENERY_TYPE_DOOR) // Door
-            {
-                // Unlocked, and has no script ID
-                if ((proto->scenery.data.door.openFlags == 0) && (obj->sid == -1)) {
-                    return true;
-                }
-            }
+        if (!isInCombat()
+            && proto->scenery.type == SCENERY_TYPE_DOOR
+            && (obj->data.scenery.door.openFlags & (DOOR_FLAG_LOCKED | DOOR_FLAG_JAMMED)) == 0) {
+            return true;
         }
     }
 
@@ -3019,18 +3016,59 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 
 // 0x48C2B4 obj_outline_object
 
-const unsigned char* objectSeeThroughTopLayer(const unsigned char** buffer, int* width, int* height, int* pitch, unsigned int* version)
+const std::vector<ObjectTopRun>* objectSeeThroughTopRuns(unsigned int* version)
 {
-    if (!gObjectsSeeThrough || gSeeThroughTop.empty()) {
+    if (!gObjectsSeeThrough) {
         return nullptr;
     }
 
-    *buffer = gObjectsWindowBuffer;
-    *width = gObjectsWindowWidth;
-    *height = gObjectsWindowHeight;
-    *pitch = gObjectsWindowPitch;
     *version = gSeeThroughTopVersion;
-    return gSeeThroughTop.data();
+    return &gSeeThroughTop;
+}
+
+// [rect] was drawn again: its part of the top layer is [pixels] (buffer
+// offsets; a later one of the same offset wins).
+static void objectSeeThroughTopUpdate(const Rect& rect, std::vector<std::pair<int, unsigned char>>& pixels)
+{
+    std::vector<ObjectTopRun> kept;
+    kept.reserve(gSeeThroughTop.size() + pixels.size() / 2);
+    for (const ObjectTopRun& run : gSeeThroughTop) {
+        int right = run.x + run.length - 1;
+        if (run.y < rect.top || run.y > rect.bottom || right < rect.left || run.x > rect.right) {
+            kept.push_back(run);
+            continue;
+        }
+        if (run.x < rect.left) {
+            kept.push_back({ run.x, run.y, rect.left - run.x, run.color });
+        }
+        if (right > rect.right) {
+            kept.push_back({ rect.right + 1, run.y, right - rect.right, run.color });
+        }
+    }
+
+    std::stable_sort(pixels.begin(), pixels.end(), [](const std::pair<int, unsigned char>& a, const std::pair<int, unsigned char>& b) {
+        return a.first < b.first;
+    });
+    for (size_t index = 0; index < pixels.size(); index++) {
+        // The last of the same offset.
+        if (index + 1 < pixels.size() && pixels[index + 1].first == pixels[index].first) {
+            continue;
+        }
+        int x = pixels[index].first % gObjectsWindowPitch;
+        int y = pixels[index].first / gObjectsWindowPitch;
+        unsigned char color = pixels[index].second;
+        if (!kept.empty()) {
+            ObjectTopRun& last = kept.back();
+            if (last.y == y && last.x + last.length == x && last.color == color) {
+                last.length++;
+                continue;
+            }
+        }
+        kept.push_back({ x, y, 1, color });
+    }
+
+    gSeeThroughTop.swap(kept);
+    gSeeThroughTopVersion++;
 }
 
 void objectSeeThroughScrolled(int dx, int dy)
@@ -3040,14 +3078,15 @@ void objectSeeThroughScrolled(int dx, int dy)
     }
 
     // As the buffer: the contents move by (-dx, -dy).
-    std::vector<unsigned char> moved(gSeeThroughTop.size(), 0);
-    int fromX = std::max(dx, 0);
-    int toX = std::max(-dx, 0);
-    int length = gObjectsWindowWidth - std::abs(dx);
-    for (int y = 0; y < gObjectsWindowHeight && length > 0; y++) {
-        int fromY = y + dy;
-        if (fromY >= 0 && fromY < gObjectsWindowHeight) {
-            memcpy(moved.data() + gObjectsWindowPitch * y + toX, gSeeThroughTop.data() + gObjectsWindowPitch * fromY + fromX, length);
+    std::vector<ObjectTopRun> moved;
+    moved.reserve(gSeeThroughTop.size());
+    for (const ObjectTopRun& run : gSeeThroughTop) {
+        int x = run.x - dx;
+        int y = run.y - dy;
+        int right = std::min(x + run.length - 1, gObjectsWindowWidth - 1);
+        x = std::max(x, 0);
+        if (y >= 0 && y < gObjectsWindowHeight && x <= right) {
+            moved.push_back({ x, y, right - x + 1, run.color });
         }
     }
     gSeeThroughTop.swap(moved);
@@ -3092,7 +3131,6 @@ void objectSetSeeThrough(bool seeThrough)
     gObjectsSeeThrough = seeThrough;
     if (!seeThrough) {
         gSeeThroughTop.clear();
-        gSeeThroughTop.shrink_to_fit();
     }
     tileWindowRefresh();
 }

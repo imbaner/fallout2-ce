@@ -147,128 +147,63 @@ namespace {
         return { static_cast<Uint8>(palette[index * 3] << 2), static_cast<Uint8>(palette[index * 3 + 1] << 2), static_cast<Uint8>(palette[index * 3 + 2] << 2), alpha };
     }
 
-    // The top layer's pixels (`objectSeeThroughTopLayer`) as runs of a
-    // color along a row, made again only when it changes: it's what the
-    // outlines and the dude drew, so only around the critters is looked at
-    // (moving the view or zooming costs nothing).
-    struct TopRun {
-        int x;
-        int y;
-        int length;
-        unsigned char color;
-    };
-
-    std::vector<TopRun> gTopRuns;
-    unsigned int gTopRunsVersion = 0;
-
-    void collectTopRuns(const unsigned char* top, const unsigned char* buffer, int width, int height, int pitch)
-    {
-        gTopRuns.clear();
-        std::vector<Rect> scanned;
-        for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
-            if (FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0) {
-                continue;
-            }
-
-            // The outline goes a pixel around the sprite.
-            Rect rect;
-            objectGetRect(object, &rect);
-            rect.left = std::max(rect.left - 1, 0);
-            rect.top = std::max(rect.top - 1, 0);
-            rect.right = std::min(rect.right + 1, width - 1);
-            rect.bottom = std::min(rect.bottom + 1, height - 1);
-            if (rect.left > rect.right || rect.top > rect.bottom) {
-                continue;
-            }
-
-            for (int y = rect.top; y <= rect.bottom; y++) {
-                const unsigned char* row = top + pitch * y;
-                const unsigned char* shown = buffer + pitch * y;
-                int x = rect.left;
-                while (x <= rect.right) {
-                    // Each pixel once where critters overlap.
-                    bool seen = false;
-                    for (const Rect& other : scanned) {
-                        if (y >= other.top && y <= other.bottom && x >= other.left && x <= other.right) {
-                            x = other.right + 1;
-                            seen = true;
-                            break;
-                        }
-                    }
-                    if (seen) {
-                        continue;
-                    }
-
-                    unsigned char color = row[x];
-                    if (color == 0 || shown[x] != color) {
-                        x++;
-                        continue;
-                    }
-                    int start = x;
-                    while (x <= rect.right && row[x] == color && shown[x] == color) {
-                        x++;
-                    }
-                    gTopRuns.push_back({ start, y, x - start, color });
-                }
-            }
-            scanned.push_back(rect);
-        }
-    }
-
     // The outlines and the dude drawn again over the tiles, pixel for pixel
-    // where the map shows them.
-    void drawTopLayer(float scale)
+    // (`objectSeeThroughTopRuns`).
+    void drawTopLayer(MuiContext& ui, float scale)
     {
-        const unsigned char* buffer;
-        int width;
-        int height;
-        int pitch;
         unsigned int version;
-        const unsigned char* top = objectSeeThroughTopLayer(&buffer, &width, &height, &pitch, &version);
+        const std::vector<ObjectTopRun>* runs = objectSeeThroughTopRuns(&version);
         SDL_Renderer* renderer = muiDrawGetRenderer();
-        if (top == nullptr || renderer == nullptr) {
-            gTopRuns.clear();
+        if (runs == nullptr || runs->empty() || renderer == nullptr) {
             return;
         }
 
-        if (version != gTopRunsVersion) {
-            gTopRunsVersion = version;
-            collectTopRuns(top, buffer, width, height, pitch);
-        }
-        if (gTopRuns.empty()) {
-            return;
-        }
+        // World to screen is a scale and an offset.
+        float originX;
+        float originY;
+        float unitX;
+        float unitY;
+        worldViewWorldToScreenF(0.0f, 0.0f, &originX, &originY);
+        worldViewWorldToScreenF(1.0f, 1.0f, &unitX, &unitY);
+        float zoomX = (unitX - originX) * scale;
+        float zoomY = (unitY - originY) * scale;
+        originX *= scale;
+        originY *= scale;
 
-        Rect visible;
-        worldViewGetVisibleRect(&visible);
-
+        MuiRect screen = ui.screenRect();
         const unsigned char* palette = directDrawGetPalette();
         static std::vector<SDL_Vertex> vertices;
         static std::vector<int> indices;
         vertices.clear();
         indices.clear();
-        for (const TopRun& run : gTopRuns) {
-            if (run.y < visible.top || run.y > visible.bottom || run.x > visible.right || run.x + run.length <= visible.left) {
+        for (const ObjectTopRun& run : *runs) {
+            float left = originX + run.x * zoomX;
+            float top = originY + run.y * zoomY;
+            float right = left + run.length * zoomX;
+            float bottom = top + zoomY;
+            if (right < screen.x || left > screen.right() || bottom < screen.y || top > screen.bottom()) {
                 continue;
             }
 
-            float left;
-            float topY;
-            float right;
-            float bottom;
-            worldViewWorldToScreenF(static_cast<float>(run.x), static_cast<float>(run.y), &left, &topY);
-            worldViewWorldToScreenF(static_cast<float>(run.x + run.length), static_cast<float>(run.y + 1), &right, &bottom);
             SDL_Color color = { static_cast<Uint8>(palette[run.color * 3] << 2), static_cast<Uint8>(palette[run.color * 3 + 1] << 2), static_cast<Uint8>(palette[run.color * 3 + 2] << 2), 255 };
             int first = static_cast<int>(vertices.size());
-            vertices.push_back({ { left * scale, topY * scale }, color, { 0.0f, 0.0f } });
-            vertices.push_back({ { right * scale, topY * scale }, color, { 0.0f, 0.0f } });
-            vertices.push_back({ { right * scale, bottom * scale }, color, { 0.0f, 0.0f } });
-            vertices.push_back({ { left * scale, bottom * scale }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { left, top }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { right, top }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { right, bottom }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { left, bottom }, color, { 0.0f, 0.0f } });
             indices.insert(indices.end(), { first, first + 1, first + 2, first, first + 2, first + 3 });
         }
         if (!indices.empty()) {
             SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
         }
+    }
+
+    // The combat's living critters (all on the map), the dude among them.
+    std::vector<Object*> gCombatCritters;
+
+    void addCombatCritter(Object* critter)
+    {
+        gCombatCritters.push_back(critter);
     }
 
     // Under the selected tile and the hit chance: a faint grid where the
@@ -313,8 +248,11 @@ namespace {
             }
         }
 
-        for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
-            if (FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0 || critterIsDead(object)) {
+        gCombatCritters.clear();
+        gCombatCritters.push_back(gDude);
+        combatForEachCritter(addCombatCritter);
+        for (Object* object : gCombatCritters) {
+            if (object->elevation != gElevation || (object->flags & OBJECT_HIDDEN) != 0) {
                 continue;
             }
 
@@ -330,7 +268,7 @@ namespace {
             }
         }
 
-        drawTopLayer(scale);
+        drawTopLayer(ui, scale);
     }
 
     float outlineRight(const std::vector<SDL_FPoint>& points)
