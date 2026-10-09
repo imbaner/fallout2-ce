@@ -248,6 +248,10 @@ enum DevAutotestAction {
     DEV_AUTOTEST_ACTION_EVENT,
     // Sets global variable [a] to [b].
     DEV_AUTOTEST_ACTION_SET_GVAR,
+    // `a` - stat, `b` - base value (the dude).
+    DEV_AUTOTEST_ACTION_SET_STAT,
+    // `a` - skill, `b` - unspent skill points put into it (the dude).
+    DEV_AUTOTEST_ACTION_ADD_SKILL,
     // Plays game movie [a] (the step completes first, the movie loop runs
     // the script on).
     DEV_AUTOTEST_ACTION_PLAY_MOVIE,
@@ -573,6 +577,63 @@ static const DevAutotestStep kDevAutotestTacticalSteps[] = {
 // tile behind it, partly covered by its sprite, chosen by a tap where it
 // shows (the critter's selection doesn't keep it) and confirmed by a tap
 // where the sprite covers it - the dude walks there.
+// Screenshots for the README (not a test): a late game character - a
+// neutral name, good stats, levels and their hit points, Advanced Power
+// Armor, late weapons - at Navarro (the Enclave's base): inventory,
+// character, the drill sergeant's welcome (his head), combat's HUD and the
+// tactical view.
+static const DevAutotestStep kDevAutotestPhotosSteps[] = {
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "p00_start" },
+    // "Избранный" in the game's charset.
+    { DEV_AUTOTEST_ACTION_SET_NAME, 0, 0, 0, 1, "p01_name", "\xC8\xE7\xE1\xF0\xE0\xED\xED\xFB\xE9" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_STRENGTH, 10, 0, 1, "p01a_st" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_PERCEPTION, 8, 0, 1, "p01b_pe" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_ENDURANCE, 8, 0, 1, "p01c_en" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_CHARISMA, 4, 0, 1, "p01d_ch" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_INTELLIGENCE, 8, 0, 1, "p01e_in" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_AGILITY, 9, 0, 1, "p01f_ag" },
+    { DEV_AUTOTEST_ACTION_SET_STAT, STAT_LUCK, 6, 0, 1, "p01g_lk" },
+    { DEV_AUTOTEST_ACTION_ADD_EXPERIENCE, 250000, 0, 0, 30, "p02_levels" },
+    // The character screen takes the levels (their skill points; the perks
+    // owed are offered first - later).
+    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Character), 0, 0, 40, "p03_perks" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "p03a_later", "character.perkpanel.later" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p03b_closed", "character.nav.back" },
+    { DEV_AUTOTEST_ACTION_ADD_SKILL, SKILL_SMALL_GUNS, 40, 0, 1, "p04a_small_guns" },
+    { DEV_AUTOTEST_ACTION_ADD_SKILL, SKILL_ENERGY_WEAPONS, 30, 0, 1, "p04b_energy" },
+    { DEV_AUTOTEST_ACTION_ADD_SKILL, SKILL_SPEECH, 15, 0, 1, "p04c_speech" },
+    { DEV_AUTOTEST_ACTION_ADD_SKILL, SKILL_REPAIR, 15, 0, 1, "p04d_repair" },
+    // Navarro's yard, by the drill sergeant (elevation 2, tile 25481): a
+    // civilian there gets his famous welcome.
+    { DEV_AUTOTEST_ACTION_MAP_TRANSITION, 2, 25881, 0, 150, "p10_navarro", "navarro.map" },
+    { DEV_AUTOTEST_ACTION_TALK_TO_PID, 250, 0, 0, 150, "p11_sergeant" },
+    { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 60, "p12_sergeant_shouts" },
+    { DEV_AUTOTEST_ACTION_LOG_DIALOG, 0, 0, 0, 1, "p12b_dialog" },
+    { DEV_AUTOTEST_ACTION_CHOOSE_OPTION, 0, 0, 0, 120, "p13_after" },
+    { DEV_AUTOTEST_ACTION_LOG_DIALOG, 0, 0, 0, 1, "p13b_dialog" },
+    // Back in the yard as a soldier: Advanced Power Armor, late weapons.
+    { DEV_AUTOTEST_ACTION_MAP_TRANSITION, 2, 25895, 0, 150, "p20_navarro_again", "navarro.map" },
+    { DEV_AUTOTEST_ACTION_EQUIP_ITEM, 349, 0, 0, 10, "p21_armor" },
+    { DEV_AUTOTEST_ACTION_EQUIP_ITEM, 392, HAND_LEFT, 0, 10, "p22_gauss" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 358, 20, 0, 1, "p23a_ammo" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 233, 0, 0, 1, "p23b_plasma" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 39, 20, 0, 1, "p23c_cells" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 350, 0, 0, 1, "p23d_bozar" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 144, 4, 0, 1, "p23e_super_stimpaks" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 40, 8, 0, 1, "p23f_stimpaks" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 110, 2, 0, 30, "p23g_psycho" },
+    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Inventory), 0, 0, 40, "p24_inventory" },
+    { DEV_AUTOTEST_ACTION_BACK, 0, 0, 0, 30, "p24b_inventory_closed" },
+    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Character), 0, 0, 40, "p25_character" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25a_later", "character.perkpanel.later" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25b_skills", "character.tab.skills" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25c_closed", "character.nav.back" },
+    { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "p30_combat_started" },
+    { DEV_AUTOTEST_ACTION_CENTER_DUDE, 0, 0, 0, 30, "p31_combat" },
+    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 40, "p32_tactical" },
+    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "p33_tactical_off" },
+};
+
 static const DevAutotestStep kDevAutotestBehindCritterSteps[] = {
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "c00_map" },
     { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "c01_combat" },
@@ -2228,6 +2289,9 @@ void devAutotestSetScenario(const char* name)
     } else if (strcmp(name, "tactical") == 0) {
         gDevAutotestSteps = kDevAutotestTacticalSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestTacticalSteps) / sizeof(kDevAutotestTacticalSteps[0]);
+    } else if (strcmp(name, "photos") == 0) {
+        gDevAutotestSteps = kDevAutotestPhotosSteps;
+        gDevAutotestStepCount = sizeof(kDevAutotestPhotosSteps) / sizeof(kDevAutotestPhotosSteps[0]);
     } else if (strcmp(name, "behindcritter") == 0) {
         gDevAutotestSteps = kDevAutotestBehindCritterSteps;
         gDevAutotestStepCount = sizeof(kDevAutotestBehindCritterSteps) / sizeof(kDevAutotestBehindCritterSteps[0]);
@@ -2583,21 +2647,36 @@ void devAutotestTick()
             break;
         }
         case DEV_AUTOTEST_ACTION_LOG_CRITTERS:
-            for (Object* object = objectFindFirstAtElevation(gDude->elevation); object != nullptr; object = objectFindNextAtElevation()) {
-                if (object != gDude && FrmId(object).objectType() == OBJ_TYPE_CRITTER) {
-                    devAutotestLog("  critter pid %d (%d): %s, tile %d, distance %d, sid %d\n",
-                        object->pid, object->pid & 0xFFFFFF, objectGetName(object), object->tile,
-                        objectGetDistanceBetween(gDude, object), object->sid);
+            // `a` - 1: every elevation (with the critters' scripts).
+            for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+                if (step->a == 0 && elevation != gDude->elevation) {
+                    continue;
+                }
+                for (Object* object = objectFindFirstAtElevation(elevation); object != nullptr; object = objectFindNextAtElevation()) {
+                    if (object != gDude && FrmId(object).objectType() == OBJ_TYPE_CRITTER) {
+                        char scriptName[COMPAT_MAX_PATH] = "-";
+                        Script* script;
+                        if (object->sid != -1 && scriptGetScript(object->sid, &script) != -1) {
+                            scriptsGetFileName(script->index & 0xFFFFFF, scriptName, sizeof(scriptName));
+                        }
+                        devAutotestLog("  critter pid %d (%d): %s, elevation %d, tile %d, distance %d, sid %d, script %s\n",
+                            object->pid, object->pid & 0xFFFFFF, objectGetName(object), elevation, object->tile,
+                            objectGetDistanceBetween(gDude, object), object->sid, scriptName);
+                    }
                 }
             }
             break;
         case DEV_AUTOTEST_ACTION_TALK_TO_PID: {
             int pid = 0x01000000 | static_cast<int>(step->a);
             Object* critter = nullptr;
-            for (Object* object = objectFindFirstAtElevation(gDude->elevation); object != nullptr; object = objectFindNextAtElevation()) {
-                if (object->pid == pid) {
-                    critter = object;
-                    break;
+            // The dude's elevation first, then the others.
+            for (int pass = 0; pass <= ELEVATION_COUNT && critter == nullptr; pass++) {
+                int elevation = pass == 0 ? gDude->elevation : pass - 1;
+                for (Object* object = objectFindFirstAtElevation(elevation); object != nullptr; object = objectFindNextAtElevation()) {
+                    if (object->pid == pid) {
+                        critter = object;
+                        break;
+                    }
                 }
             }
             if (critter != nullptr) {
@@ -2707,6 +2786,22 @@ void devAutotestTick()
             devAutotestLog("  new game windows:%s\n", windows.empty() ? " none" : windows.c_str());
             break;
         }
+        case DEV_AUTOTEST_ACTION_ADD_SKILL: {
+            int rc = 0;
+            int added = 0;
+            for (; added < static_cast<int>(step->b); added++) {
+                rc = skillAdd(gDude, static_cast<Skill>(static_cast<int>(step->a)));
+                if (rc != 0) {
+                    break;
+                }
+            }
+            devAutotestLog("  skill %d: %d points in (rc %d), %d%%, %d left\n", static_cast<int>(step->a), added, rc,
+                skillGetValue(gDude, static_cast<Skill>(static_cast<int>(step->a))), pcGetStat(PC_STAT_UNSPENT_SKILL_POINTS));
+            break;
+        }
+        case DEV_AUTOTEST_ACTION_SET_STAT:
+            critterSetBaseStat(gDude, static_cast<Stat>(static_cast<int>(step->a)), static_cast<int>(step->b));
+            break;
         case DEV_AUTOTEST_ACTION_SET_GVAR:
             gameSetGlobalVar(static_cast<GameGlobalVar>(static_cast<int>(step->a)), static_cast<int>(step->b));
             break;
@@ -3516,8 +3611,25 @@ void devAutotestTick()
         case DEV_AUTOTEST_ACTION_EQUIP_ITEM: {
             Object* item;
             if (objectCreateWithProtoId(&item, ProtoId(static_cast<int>(step->a))) == 0) {
-                itemAdd(gDude, item, 1);
+                // Off the map once carried, as `DEV_AUTOTEST_ACTION_GIVE_ITEM`.
+                if (itemAdd(gDude, item, 1) == 0) {
+                    _obj_disconnect(item, nullptr);
+                }
+                Object* oldArmor = critterGetArmor(gDude);
                 int rc = inventoryEquipFunc(gDude, item, static_cast<Hand>(static_cast<int>(step->b)), false);
+                // The dude's stats and look follow armor through the
+                // inventory screen (and an animation): at once here.
+                if (rc == 0 && itemGetType(item) == ITEM_TYPE_ARMOR) {
+                    adjustCritterStatsOnArmorChange(gDude, oldArmor, item);
+                }
+                // The dude's look follows armor through an animation (the
+                // inventory screen's), none here: at once.
+                if (rc == 0 && itemGetType(item) == ITEM_TYPE_ARMOR) {
+                    CritterFrameId look = critterGetStat(gDude, STAT_GENDER) == GENDER_FEMALE ? armorGetFemaleFrameId(item) : armorGetMaleFrameId(item);
+                    Rect rect;
+                    objectSetFrmId(gDude, CritterFrmId(look, ANIM_STAND, FrmId(gDude).weaponAnimation(), gDude->rotation + 1), &rect);
+                    tileWindowRefreshRect(&rect, gDude->elevation);
+                }
                 interfaceUpdateItems(false, INTERFACE_ITEM_ACTION_DEFAULT, INTERFACE_ITEM_ACTION_DEFAULT);
                 devAutotestLog("  equipped pid %d in hand %d: rc %d\n", static_cast<int>(step->a), static_cast<int>(step->b), rc);
             }

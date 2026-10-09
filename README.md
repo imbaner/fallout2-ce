@@ -6,6 +6,14 @@ A fork of [Fallout 2: Community Engine](https://github.com/fallout2-ce/fallout2-
 
 This is an **unofficial, fan-made, modified version** of Fallout 2 CE. It is not affiliated with or endorsed by Bethesda Softworks, ZeniMax Media or Interplay. Fallout is a trademark of its owners. The app contains **no game data**: you need your own copy of Fallout 2 ([GOG](https://www.gog.com/game/fallout_2), [Steam](https://store.steampowered.com/app/38410), [Epic Games](https://store.epicgames.com/p/fallout-2)).
 
+## Screenshots
+
+![Tactical view in combat](docs/screenshots/tactical-view.jpg)
+
+<p><img src="docs/screenshots/combat.jpg" alt="Combat" width="49%"> <img src="docs/screenshots/dialogue.jpg" alt="Dialogue: the drill sergeant at Navarro" width="49%"></p>
+
+<p><img src="docs/screenshots/inventory.jpg" alt="Inventory" width="49%"> <img src="docs/screenshots/character.jpg" alt="Character" width="49%"></p>
+
 ## What is changed (modified software notice)
 
 On top of CE (its engine, fixes and sfall compatibility are kept and updated from upstream):

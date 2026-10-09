@@ -6,6 +6,14 @@
 
 Это **неофициальная любительская изменённая версия** Fallout 2 CE. Она не связана с Bethesda Softworks, ZeniMax Media и Interplay и не одобрена ими. Fallout — товарный знак его владельцев. В приложении **нет данных игры**: нужна ваша собственная копия Fallout 2 ([GOG](https://www.gog.com/game/fallout_2), [Steam](https://store.steampowered.com/app/38410), [Epic Games](https://store.epicgames.com/p/fallout-2)).
 
+## Скриншоты
+
+![Тактический вид в бою](docs/screenshots/tactical-view.jpg)
+
+<p><img src="docs/screenshots/combat.jpg" alt="Бой" width="49%"> <img src="docs/screenshots/dialogue.jpg" alt="Диалог: разводящий сержант в Наварро" width="49%"></p>
+
+<p><img src="docs/screenshots/inventory.jpg" alt="Инвентарь" width="49%"> <img src="docs/screenshots/character.jpg" alt="Персонаж" width="49%"></p>
+
 ## Что изменено (уведомление об изменении ПО)
 
 Поверх CE (его движок, исправления и совместимость с sfall сохранены и обновляются из оригинала):
