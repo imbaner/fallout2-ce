@@ -396,6 +396,7 @@ void initSettingsRegistry(bool isMapper)
     SETTING(combat_speed_all_animations);
     SETTING(main_menu_continue);
     SETTING(worldmap_follow_party);
+    SETTING(tactical_view);
     SETTING(save_compatibility);
 #undef SECT
 

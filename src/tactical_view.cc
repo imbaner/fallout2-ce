@@ -160,7 +160,8 @@ bool tacticalViewIsOn()
 
 bool tacticalViewIsShown()
 {
-    return settings.touch.tactical_view
+    return settings.enhancements.tactical_view
+        && settings.touch.tactical_view
         && gDude != nullptr
         && isInCombat()
         && (GameMode::getCurrentGameMode() & GameMode::kPlayerTurn) != 0

@@ -94,6 +94,8 @@ namespace {
     constexpr int kTextMainMenuContinueNote = 312;
     constexpr int kTextWorldmapFollow = 322;
     constexpr int kTextWorldmapFollowNote = 323;
+    constexpr int kTextTacticalView = 373;
+    constexpr int kTextTacticalViewNote = 374;
     constexpr int kTextSaveCompatibility = 327;
     constexpr int kTextSaveCompatibilityNote = 328;
     constexpr int kTextSectionFiles = 336;
@@ -194,6 +196,7 @@ namespace {
         bool allAnimations;
         bool mainMenuContinue;
         bool worldmapFollow;
+        bool tacticalView;
         bool saveCompatibility;
         int interfaceSize;
         int mapFilter;
@@ -216,6 +219,7 @@ namespace {
         values.allAnimations = settings.enhancements.combat_speed_all_animations;
         values.mainMenuContinue = settings.enhancements.main_menu_continue;
         values.worldmapFollow = settings.enhancements.worldmap_follow_party;
+        values.tacticalView = settings.enhancements.tactical_view;
         values.saveCompatibility = settings.enhancements.save_compatibility;
         values.interfaceSize = settings.touch.hud_scale;
         values.mapFilter = settings.world_view.filter;
@@ -239,6 +243,7 @@ namespace {
         values.allAnimations = EnhancementSettings().combat_speed_all_animations;
         values.mainMenuContinue = EnhancementSettings().main_menu_continue;
         values.worldmapFollow = EnhancementSettings().worldmap_follow_party;
+        values.tacticalView = EnhancementSettings().tactical_view;
         values.saveCompatibility = EnhancementSettings().save_compatibility;
         values.interfaceSize = TouchSettings().hud_scale;
         values.mapFilter = WorldViewSettings().filter;
@@ -314,6 +319,7 @@ namespace {
         settings.enhancements.combat_speed_all_animations = values.allAnimations;
         settings.enhancements.main_menu_continue = values.mainMenuContinue;
         settings.enhancements.worldmap_follow_party = values.worldmapFollow;
+        settings.enhancements.tactical_view = values.tacticalView;
         settings.enhancements.save_compatibility = values.saveCompatibility;
         settings.touch.hud_scale = values.interfaceSize;
         settings.world_view.filter = values.mapFilter;
@@ -563,6 +569,12 @@ namespace {
             Row row { Section::Combat, RowKind::Toggle, kTextAllAnimations, "All combat animations faster", Origin::Port, kTextAllAnimationsNote, "Running, attacks, hits and their sounds, up to 2x" };
             row.get = [](const Values& values) { return values.allAnimations ? 1.0f : 0.0f; };
             row.set = [](Values& values, float value) { values.allAnimations = value != 0.0f; };
+            rows.push_back(row);
+        }
+        {
+            Row row { Section::Combat, RowKind::Toggle, kTextTacticalView, "Tactical view", Origin::Port, kTextTacticalViewNote, "Combat button: see-through figures, tiles and where you can walk" };
+            row.get = [](const Values& values) { return values.tacticalView ? 1.0f : 0.0f; };
+            row.set = [](Values& values, float value) { values.tacticalView = value != 0.0f; };
             rows.push_back(row);
         }
         preferenceToggle(Section::Combat, kTextCombatLooks, "Combat looks", &PreferenceValues::combatLooks);

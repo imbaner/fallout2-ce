@@ -1290,22 +1290,24 @@ namespace {
         metrics.insetRight = static_cast<int>(screen.w - safe.right());
         metrics.insetBottom = static_cast<int>(screen.h - safe.bottom());
 
-        // Party orders only with the mod and someone to order; without the
-        // button the column closes up.
+        // Party orders only with the mod and someone to order, the tactical
+        // view's button only with its setting; without a button the column
+        // closes up.
+        bool partyOrders = partyOrdersAvailable();
+        bool tacticalView = settings.enhancements.tactical_view;
         HudLayout layout = hudLayoutLandscape();
-        if (!partyOrdersAvailable()) {
-            for (HudGroupSpec& group : layout.groups) {
-                for (auto& line : group.lines) {
-                    line.erase(std::remove_if(line.begin(), line.end(), [](const HudElementSpec& element) {
-                        return element.id == HudElementId::PartyOrders;
-                    }),
-                        line.end());
-                }
+        for (HudGroupSpec& group : layout.groups) {
+            for (auto& line : group.lines) {
+                line.erase(std::remove_if(line.begin(), line.end(), [&](const HudElementSpec& element) {
+                    return (element.id == HudElementId::PartyOrders && !partyOrders)
+                        || (element.id == HudElementId::TacticalView && !tacticalView);
+                }),
+                    line.end());
             }
-            // Only the orders list: the same popup serves skills too.
-            if (muiIsActionListOpen("hud.orders")) {
-                muiCloseActionList();
-            }
+        }
+        // Only the orders list: the same popup serves skills too.
+        if (!partyOrders && muiIsActionListOpen("hud.orders")) {
+            muiCloseActionList();
         }
 
         std::vector<HudPlacedGroup> groups = hudLayoutPlace(layout, metrics);

@@ -312,6 +312,9 @@ struct EnhancementSettings {
     // Saves made with other game files or mods are marked on the save
     // screen, loading one likely to fail asks first (save_compatibility.h).
     bool save_compatibility = true;
+    // Touch controls: the combat's tactical view button (tactical_view.h);
+    // whether the view is on is [touch] tactical_view.
+    bool tactical_view = true;
 };
 
 // CE: Zoomable map view, see world_view.h.
