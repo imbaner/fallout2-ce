@@ -2710,15 +2710,8 @@ static void _object_move(int index)
                 nextTile = -1;
             } else {
                 objectUseDoor(object, obstacle, false);
-
-                // CE: The dude opening doors on the way (`_obj_portal_is_walk_thru`)
-                // goes on while it opens, as in combat; stops if the door's
-                // script kept it shut.
-                bool goesOn = object == gDude
-                    && settings.qol.auto_open_doors
-                    && animationIsBusy(obstacle);
                 if (sad->step == ANIM_COMPLETE
-                    || (!isInCombat() && !goesOn && (obstacle->data.scenery.door.openFlags & DOOR_FLAG_OPEN) == 0)) {
+                    || (!isInCombat() && (obstacle->data.scenery.door.openFlags & DOOR_FLAG_OPEN) == 0)) {
                     sad->step = ANIM_COMPLETE;
                     nextTile = -1;
                 }

@@ -2211,15 +2211,15 @@ bool _obj_portal_is_walk_thru(Object* obj)
         return false;
     }
 
-    // CE: Doors the dude opens on the way (as walking through them does,
-    // `objectUseDoor`: the door's script runs as on a use, and may keep it
-    // shut). Locked or jammed ones - the door object's state, not the
-    // proto's - stay in the way.
     if (settings.qol.auto_open_doors) {
-        if (!isInCombat()
-            && proto->scenery.type == SCENERY_TYPE_DOOR
-            && (obj->data.scenery.door.openFlags & (DOOR_FLAG_LOCKED | DOOR_FLAG_JAMMED)) == 0) {
-            return true;
+        if (!isInCombat()) {
+            if (proto->scenery.type == SCENERY_TYPE_DOOR) // Door
+            {
+                // Unlocked, and has no script ID
+                if ((proto->scenery.data.door.openFlags == 0) && (obj->sid == -1)) {
+                    return true;
+                }
+            }
         }
     }
 
