@@ -139,6 +139,161 @@ namespace {
         return points;
     }
 
+    // MARK: Tactical view
+
+    MuiColor paletteColor(int index, Uint8 alpha = 255)
+    {
+        const unsigned char* palette = directDrawGetPalette();
+        return { static_cast<Uint8>(palette[index * 3] << 2), static_cast<Uint8>(palette[index * 3 + 1] << 2), static_cast<Uint8>(palette[index * 3 + 2] << 2), alpha };
+    }
+
+    // The top layer's pixels in view (`objectSeeThroughTopLayer`) as runs
+    // of a color along a row, made again when it or the view changes.
+    struct TopRun {
+        int x;
+        int y;
+        int length;
+        unsigned char color;
+    };
+
+    std::vector<TopRun> gTopRuns;
+    unsigned int gTopRunsVersion = 0;
+    Rect gTopRunsRect = { 0, 0, -1, -1 };
+
+    // The outlines and the dude drawn again over the tiles, pixel for pixel
+    // where the map shows them.
+    void drawTopLayer(float scale)
+    {
+        const unsigned char* buffer;
+        int width;
+        int height;
+        int pitch;
+        unsigned int version;
+        const unsigned char* top = objectSeeThroughTopLayer(&buffer, &width, &height, &pitch, &version);
+        SDL_Renderer* renderer = muiDrawGetRenderer();
+        if (top == nullptr || renderer == nullptr) {
+            return;
+        }
+
+        Rect visible;
+        worldViewGetVisibleRect(&visible);
+        visible.left = std::max(visible.left, 0);
+        visible.top = std::max(visible.top, 0);
+        visible.right = std::min(visible.right, width - 1);
+        visible.bottom = std::min(visible.bottom, height - 1);
+
+        if (version != gTopRunsVersion || visible.left != gTopRunsRect.left || visible.top != gTopRunsRect.top || visible.right != gTopRunsRect.right || visible.bottom != gTopRunsRect.bottom) {
+            gTopRunsVersion = version;
+            gTopRunsRect = visible;
+            gTopRuns.clear();
+            for (int y = visible.top; y <= visible.bottom; y++) {
+                const unsigned char* row = top + pitch * y;
+                const unsigned char* shown = buffer + pitch * y;
+                int x = visible.left;
+                while (x <= visible.right) {
+                    unsigned char color = row[x];
+                    if (color == 0 || shown[x] != color) {
+                        x++;
+                        continue;
+                    }
+                    int start = x;
+                    while (x <= visible.right && row[x] == color && shown[x] == color) {
+                        x++;
+                    }
+                    gTopRuns.push_back({ start, y, x - start, color });
+                }
+            }
+        }
+
+        if (gTopRuns.empty()) {
+            return;
+        }
+
+        const unsigned char* palette = directDrawGetPalette();
+        std::vector<SDL_Vertex> vertices;
+        std::vector<int> indices;
+        vertices.reserve(gTopRuns.size() * 4);
+        indices.reserve(gTopRuns.size() * 6);
+        for (const TopRun& run : gTopRuns) {
+            float left;
+            float topY;
+            float right;
+            float bottom;
+            worldViewWorldToScreenF(static_cast<float>(run.x), static_cast<float>(run.y), &left, &topY);
+            worldViewWorldToScreenF(static_cast<float>(run.x + run.length), static_cast<float>(run.y + 1), &right, &bottom);
+            SDL_Color color = { static_cast<Uint8>(palette[run.color * 3] << 2), static_cast<Uint8>(palette[run.color * 3 + 1] << 2), static_cast<Uint8>(palette[run.color * 3 + 2] << 2), 255 };
+            int first = static_cast<int>(vertices.size());
+            vertices.push_back({ { left * scale, topY * scale }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { right * scale, topY * scale }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { right * scale, bottom * scale }, color, { 0.0f, 0.0f } });
+            vertices.push_back({ { left * scale, bottom * scale }, color, { 0.0f, 0.0f } });
+            indices.insert(indices.end(), { first, first + 1, first + 2, first, first + 2, first + 3 });
+        }
+        SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+    }
+
+    // Under the selected tile and the hit chance: a faint grid where the
+    // dude can walk, the area's border, everyone's tile in the color the
+    // game outlines them with in combat (the dude's and the selected
+    // enemy's thicker), then the outlines and the dude over all of it.
+    void drawTacticalView(MuiContext& ui, float scale)
+    {
+        const TacticalViewReach& reach = tacticalViewGetReach();
+        if (!reach.reachable.empty()) {
+            std::unordered_set<int> area(reach.reachable.begin(), reach.reachable.end());
+            area.insert(gDude->tile);
+
+            // Fainter zoomed out (tiles get small).
+            float zoom = std::clamp(worldViewGetZoom(), 0.5f, 1.0f);
+            MuiColor grid = muiRgb(0xD9C79A, static_cast<Uint8>(22.0f + 26.0f * (zoom - 0.5f) * 2.0f));
+            MuiColor border = muiTheme().accent.withAlpha(190);
+            for (int pass = 0; pass < 2; pass++) {
+                for (int tile : area) {
+                    std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
+                    if (outline.empty()) {
+                        continue;
+                    }
+                    // Corner `k` is between the neighbours `k` and `k + 1`,
+                    // the edge towards neighbour `d` from corner `d - 1` to
+                    // `d`. An edge inside is drawn by the tile on its side
+                    // towards neighbours 0-2, once.
+                    for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                        bool inside = area.count(tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1)) != 0;
+                        if (pass == 0 ? !inside || rotation >= 3 : inside) {
+                            continue;
+                        }
+                        const SDL_FPoint& from = outline[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
+                        const SDL_FPoint& to = outline[rotation];
+                        if (pass == 0) {
+                            muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.0f), grid);
+                        } else {
+                            muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.6f), border);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
+            if (FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0 || critterIsDead(object)) {
+                continue;
+            }
+
+            int color;
+            bool thick;
+            if (!tacticalViewTileLook(object, &color, &thick)) {
+                continue;
+            }
+
+            std::vector<SDL_FPoint> outline = tileOutline(object->tile, scale);
+            if (!outline.empty()) {
+                muiDrawPolyline(outline, ui.dp(thick ? 2.6f : 1.6f), paletteColor(color), true);
+            }
+        }
+
+        drawTopLayer(scale);
+    }
+
     float outlineRight(const std::vector<SDL_FPoint>& points)
     {
         float right = points.front().x;
@@ -188,7 +343,7 @@ namespace {
         {
             validate();
 
-            bool anything = gAttackTarget != nullptr || gMoveTile != -1 || gDestination != -1;
+            bool anything = gAttackTarget != nullptr || gMoveTile != -1 || gDestination != -1 || tacticalViewIsShown();
             return anything
                 && touchControlsIsEnabled()
                 && (GameMode::getCurrentGameMode() & kScreenGameModes) == 0
@@ -240,6 +395,10 @@ namespace {
     {
         const MuiTheme& theme = muiTheme();
         float scale = ui.screenRect().w / screenGetWidth();
+
+        if (tacticalViewIsShown()) {
+            drawTacticalView(ui, scale);
+        }
 
         if (gDestination != -1) {
             std::vector<SDL_FPoint> outline = tileOutline(gDestination, scale);

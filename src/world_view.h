@@ -106,6 +106,8 @@ void worldViewGetVisibleSize(int* width, int* height);
 // view is disabled these are identity transforms.
 void worldViewScreenToWorld(int screenX, int screenY, int* worldX, int* worldY);
 void worldViewWorldToScreen(int worldX, int worldY, int* screenX, int* screenY);
+// Where the corner of world pixel ([worldX], [worldY]) is on the screen.
+void worldViewWorldToScreenF(float worldX, float worldY, float* screenX, float* screenY);
 
 float worldViewGetZoom();
 

@@ -695,6 +695,7 @@ int mapScrollImmediate(int dx, int dy)
     // CE: The world view's GPU copy follows the move instead of being
     // uploaded again (only the strips drawn below are).
     worldViewScrolled(screenDx, screenDy);
+    objectSeeThroughScrolled(screenDx, screenDy);
 
     Rect r1;
     rectCopy(&r1, &gIsoWindowRect);

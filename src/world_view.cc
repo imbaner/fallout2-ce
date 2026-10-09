@@ -425,6 +425,20 @@ void worldViewWorldToScreen(int worldX, int worldY, int* screenX, int* screenY)
     *screenY = static_cast<int>(floorf((worldY + 0.5f - centerY) * gZoom + gViewHeight / 2));
 }
 
+void worldViewWorldToScreenF(float worldX, float worldY, float* screenX, float* screenY)
+{
+    if (!gWorldViewEnabled) {
+        *screenX = worldX;
+        *screenY = worldY;
+        return;
+    }
+
+    float centerX = gWorldWidth / 2 + gPanX;
+    float centerY = gWorldHeight / 2 + gPanY;
+    *screenX = (worldX - centerX) * gZoom + gViewWidth / 2;
+    *screenY = (worldY - centerY) * gZoom + gViewHeight / 2;
+}
+
 void worldViewGetVisibleRect(Rect* rect)
 {
     if (!gWorldViewEnabled) {

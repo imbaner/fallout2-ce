@@ -263,7 +263,11 @@ static std::vector<Object*> outlinedObjects;
 // halfway between them (built from the game's palette once).
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
-static ObjectOverlayProc* gSeeThroughOverlay = nullptr;
+
+// The tactical view's top layer (`objectSeeThroughTopLayer`): what the
+// outlines and the dude drew, in the buffer's layout, 0 - nothing.
+static std::vector<unsigned char> gSeeThroughTop;
+static unsigned int gSeeThroughTopVersion = 0;
 
 // The dude as last drawn while see-through (`objectRenderPreRoof`): its
 // pixels' colors in [gSeeThroughDudeRect], -1 - not the dude's. Kept over
@@ -928,8 +932,8 @@ void _obj_render_post_roof(Rect* rect, int elevation)
         return;
     }
 
-    // CE: The tactical view's tiles, over the see-through objects, under
-    // the outlines; the dude's pixels still showing stay over both.
+    // CE: The tactical view: the dude's pixels still showing stay over the
+    // outlines; both go to the top layer too (`objectSeeThroughTopLayer`).
     std::vector<std::pair<int, unsigned char>> dudePixels;
     if (gObjectsSeeThrough) {
         int width = gSeeThroughDudeRect.right - gSeeThroughDudeRect.left + 1;
@@ -940,17 +944,57 @@ void _obj_render_post_roof(Rect* rect, int elevation)
             }
         }
 
-        if (gSeeThroughOverlay != nullptr) {
-            gSeeThroughOverlay(gObjectsWindowBuffer, gObjectsWindowPitch, updatedRect, elevation);
+        gSeeThroughTop.resize(static_cast<size_t>(gObjectsWindowPitch) * gObjectsWindowHeight);
+        for (int y = updatedRect.top; y <= updatedRect.bottom; y++) {
+            memset(gSeeThroughTop.data() + gObjectsWindowPitch * y + updatedRect.left, 0, updatedRect.right - updatedRect.left + 1);
         }
     }
 
     for (Object* object : outlinedObjects) {
+        if (!gObjectsSeeThrough) {
+            objectDrawOutline(object, &updatedRect);
+            continue;
+        }
+
+        // What drawing the outline changed (it goes a pixel around the
+        // object).
+        Rect outlineRect;
+        objectGetRect(object, &outlineRect);
+        outlineRect.left--;
+        outlineRect.top--;
+        outlineRect.right++;
+        outlineRect.bottom++;
+        if (rectIntersection(&outlineRect, &updatedRect, &outlineRect) != 0) {
+            objectDrawOutline(object, &updatedRect);
+            continue;
+        }
+
+        int width = outlineRect.right - outlineRect.left + 1;
+        int height = outlineRect.bottom - outlineRect.top + 1;
+        std::vector<unsigned char> before(width * height);
+        for (int y = 0; y < height; y++) {
+            memcpy(before.data() + width * y, gObjectsWindowBuffer + gObjectsWindowPitch * (outlineRect.top + y) + outlineRect.left, width);
+        }
+
         objectDrawOutline(object, &updatedRect);
+
+        for (int y = 0; y < height; y++) {
+            int offset = gObjectsWindowPitch * (outlineRect.top + y) + outlineRect.left;
+            for (int x = 0; x < width; x++) {
+                if (gObjectsWindowBuffer[offset + x] != before[width * y + x]) {
+                    gSeeThroughTop[offset + x] = gObjectsWindowBuffer[offset + x];
+                }
+            }
+        }
     }
 
     for (const auto& pixel : dudePixels) {
         gObjectsWindowBuffer[pixel.first] = pixel.second;
+        gSeeThroughTop[pixel.first] = pixel.second;
+    }
+
+    if (gObjectsSeeThrough) {
+        gSeeThroughTopVersion++;
     }
 
     textObjectsRenderInRect(&updatedRect);
@@ -2975,9 +3019,42 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 
 // 0x48C2B4 obj_outline_object
 
-void objectSetSeeThroughOverlay(ObjectOverlayProc* proc)
+const unsigned char* objectSeeThroughTopLayer(const unsigned char** buffer, int* width, int* height, int* pitch, unsigned int* version)
 {
-    gSeeThroughOverlay = proc;
+    if (!gObjectsSeeThrough || gSeeThroughTop.empty()) {
+        return nullptr;
+    }
+
+    *buffer = gObjectsWindowBuffer;
+    *width = gObjectsWindowWidth;
+    *height = gObjectsWindowHeight;
+    *pitch = gObjectsWindowPitch;
+    *version = gSeeThroughTopVersion;
+    return gSeeThroughTop.data();
+}
+
+void objectSeeThroughScrolled(int dx, int dy)
+{
+    if (gSeeThroughTop.empty()) {
+        return;
+    }
+
+    // As the buffer: the contents move by (-dx, -dy).
+    std::vector<unsigned char> moved(gSeeThroughTop.size(), 0);
+    for (int y = 0; y < gObjectsWindowHeight; y++) {
+        int fromY = y + dy;
+        if (fromY < 0 || fromY >= gObjectsWindowHeight) {
+            continue;
+        }
+        for (int x = 0; x < gObjectsWindowWidth; x++) {
+            int fromX = x + dx;
+            if (fromX >= 0 && fromX < gObjectsWindowWidth) {
+                moved[gObjectsWindowPitch * y + x] = gSeeThroughTop[gObjectsWindowPitch * fromY + fromX];
+            }
+        }
+    }
+    gSeeThroughTop.swap(moved);
+    gSeeThroughTopVersion++;
 }
 
 // The game's visible outlines; in the tactical view every critter the game
@@ -2987,7 +3064,7 @@ static bool objectHasDrawnOutline(Object* object)
     if (objectHasVisibleOutline(object)) {
         return true;
     }
-    return gObjectsSeeThrough && objectHasOutline(object) && FrmId(object).objectType() == OBJ_TYPE_CRITTER;
+    return gObjectsSeeThrough && objectHasOutline(object) && FrmId(object).objectType() == OBJ_TYPE_CRITTER && !critterIsDead(object);
 }
 
 static bool objectIsSeeThrough(Object* object, ObjectType type)
@@ -3016,6 +3093,10 @@ void objectSetSeeThrough(bool seeThrough)
     }
 
     gObjectsSeeThrough = seeThrough;
+    if (!seeThrough) {
+        gSeeThroughTop.clear();
+        gSeeThroughTop.shrink_to_fit();
+    }
     tileWindowRefresh();
 }
 
