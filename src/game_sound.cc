@@ -31,8 +31,8 @@
 #include "stat.h"
 #include "svga.h"
 #include "window_manager.h"
-#include "worldmap.h"
 #include "world_view.h"
+#include "worldmap.h"
 #include "xfile.h"
 
 namespace fallout {

@@ -20,6 +20,7 @@
 #include "cycle.h"
 #include "debug.h"
 #include "delay.h"
+#include "dev_autotest.h"
 #include "dialog.h"
 #include "display_monitor.h"
 #include "draw.h"
@@ -34,10 +35,9 @@
 #include "lips.h"
 #include "map.h"
 #include "memory.h"
-#include "dev_autotest.h"
+#include "mouse.h"
 #include "mui.h"
 #include "mui_notify.h"
-#include "mouse.h"
 #include "object.h"
 #include "party_member.h"
 #include "perk.h"
@@ -2312,7 +2312,6 @@ static void gameDialogRunWindowLoop()
         renderPresent();
         sharedFpsLimiter.throttle();
     }
-
 }
 
 // CE: The mobile UI's talk: its screen shows the reply and the options (it

@@ -15,9 +15,9 @@
 #include "platform/ios/quick_toolbar.h"
 #include "svga.h"
 #include "touch.h"
+#include "touch_controls.h"
 #include "window_manager.h"
 #include "world_view.h"
-#include "touch_controls.h"
 
 namespace fallout {
 

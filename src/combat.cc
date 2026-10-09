@@ -14,6 +14,7 @@
 #include "critter.h"
 #include "db.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "display_monitor.h"
 #include "draw.h"
 #include "elevator.h"
@@ -49,10 +50,9 @@
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
+#include "touch_controls.h"
 #include "trait.h"
 #include "window_manager.h"
-#include "dev_autotest.h"
-#include "touch_controls.h"
 
 namespace fallout {
 
@@ -6888,7 +6888,6 @@ static void damageModInit()
 
     gBonusHthDamageFix = true;
     configGetBool(&gContentConfig, CONTENT_CONFIG_COMBAT_SECTION, "bonus_hth_damage_fix", &gBonusHthDamageFix);
-
 }
 
 bool damageModGetBonusHthDamageFix()

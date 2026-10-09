@@ -44,8 +44,8 @@
 #include "map.h"
 #include "memory.h"
 #include "message.h"
-#include "mui.h"
 #include "mouse.h"
+#include "mui.h"
 #include "object.h"
 #include "palette.h"
 #include "party_member.h"
@@ -77,8 +77,8 @@
 #include "version.h"
 #include "window_manager.h"
 #include "word_wrap.h"
-#include "worldmap.h"
 #include "world_view.h"
+#include "worldmap.h"
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #endif
@@ -1289,12 +1289,7 @@ int lsgLoadGame(int mode)
         _slot_cursor = sessionSlot;
         int quickSaveWindowX = (screenGetWidth() - LS_WINDOW_WIDTH) / 2;
         int quickSaveWindowY = (screenGetHeight() - LS_WINDOW_HEIGHT) / 2;
-        int window = muiIsEnabled() ? -1 : windowCreate(quickSaveWindowX,
-            quickSaveWindowY,
-            LS_WINDOW_WIDTH,
-            LS_WINDOW_HEIGHT,
-            static_cast<ColorWithFlags>(256),
-            WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
+        int window = muiIsEnabled() ? -1 : windowCreate(quickSaveWindowX, quickSaveWindowY, LS_WINDOW_WIDTH, LS_WINDOW_HEIGHT, static_cast<ColorWithFlags>(256), WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
         if (window != -1) {
             unsigned char* windowBuffer = windowGetBuffer(window);
             bufferFill(windowBuffer, LS_WINDOW_WIDTH, LS_WINDOW_HEIGHT, LS_WINDOW_WIDTH, COLOR_BLACK);

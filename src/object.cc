@@ -32,8 +32,8 @@
 #include "svga.h"
 #include "text_object.h"
 #include "tile.h"
-#include "worldmap.h"
 #include "world_view.h"
+#include "worldmap.h"
 
 namespace fallout {
 
@@ -1656,7 +1656,6 @@ int objectSetFrmId(Object* obj, const FrmId& frmId, Rect* dirtyRect)
     if (obj == nullptr) {
         return -1;
     }
-
 
     if (frmId.valid()) {
         assert(frmId.hasFid() && "objectSetFrmId(Object* obj, const FrmId& frmId, Rect* dirtyRect) called with path based FrmId which is not supported!");

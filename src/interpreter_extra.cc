@@ -48,8 +48,8 @@
 #include "text_object.h"
 #include "tile.h"
 #include "trait.h"
-#include "worldmap.h"
 #include "world_view.h"
+#include "worldmap.h"
 
 namespace fallout {
 

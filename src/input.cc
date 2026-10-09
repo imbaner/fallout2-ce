@@ -6,6 +6,7 @@
 #include <SDL.h>
 #include <lodepng.h>
 
+#include "action_log.h"
 #include "audio_engine.h"
 #include "color.h"
 #include "debug.h"
@@ -16,19 +17,18 @@
 #include "game_commands.h"
 #include "kb.h"
 #include "loadsave.h"
-#include "mui.h"
 #include "memory.h"
 #include "mouse.h"
-#include "touch_controls.h"
-#include "action_log.h"
-#include "touch_log.h"
 #include "movie.h"
-#include "sfall_kb_helpers.h"
+#include "mui.h"
 #include "settings.h"
+#include "sfall_kb_helpers.h"
 #include "sfall_script_hooks.h"
 #include "svga.h"
 #include "text_font.h"
 #include "touch.h"
+#include "touch_controls.h"
+#include "touch_log.h"
 #include "win32.h"
 #include "window_manager.h"
 

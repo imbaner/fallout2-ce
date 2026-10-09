@@ -1,8 +1,8 @@
 #include "animation.h"
 
 #include <algorithm>
-#include <cmath>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <stdio.h>
 #include <string.h>

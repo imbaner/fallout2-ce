@@ -4,8 +4,8 @@
 #include "debug.h"
 #include "game_config.h"
 #include "platform_compat.h"
-#include "touch.h"
 #include "sound.h"
+#include "touch.h"
 
 #include <algorithm>
 #include <cassert>

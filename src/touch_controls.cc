@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "action_log.h"
 #include "actions.h"
 #include "art.h"
 #include "color.h"
@@ -17,18 +18,17 @@
 #include "input.h"
 #include "map.h"
 #include "map_hints.h"
+#include "mouse.h"
 #include "mui.h"
 #include "mui_icons.h"
-#include "mouse.h"
 #include "object.h"
 #include "party_member.h"
 #include "player_commands.h"
 #include "settings.h"
 #include "svga.h"
-#include "tile.h"
 #include "tactical_view.h"
+#include "tile.h"
 #include "touch_hud.h"
-#include "action_log.h"
 #include "touch_log.h"
 #include "window_manager.h"
 #include "world_view.h"

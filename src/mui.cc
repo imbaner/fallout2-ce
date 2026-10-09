@@ -113,7 +113,7 @@ namespace {
         float lastDistance = 0.0f;
         // A second finger joined during this touch (not a tap).
         bool pinched = false;
-};
+    };
 
     std::unordered_map<std::string, PanZoomState> gPanZooms;
 

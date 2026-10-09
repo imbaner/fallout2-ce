@@ -51,8 +51,8 @@
 #include "svga.h"
 #include "tile.h"
 #include "window_manager.h"
-#include "worldmap.h"
 #include "world_view.h"
+#include "worldmap.h"
 
 namespace fallout {
 

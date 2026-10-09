@@ -24,6 +24,7 @@
 #include "db.h"
 #include "dbox.h"
 #include "debug.h"
+#include "dev_autotest.h"
 #include "display_monitor.h"
 #include "draw.h"
 #include "game.h"
@@ -55,9 +56,8 @@
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
-#include "window_manager.h"
 #include "touch_controls.h"
-#include "dev_autotest.h"
+#include "window_manager.h"
 
 namespace fallout {
 

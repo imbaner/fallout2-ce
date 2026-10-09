@@ -73,7 +73,6 @@ namespace {
         void build(MuiContext& ui) override;
         void back() override { lootRequestClose(); }
 
-
     private:
         bool wasActive = false;
         MuiItemFilterState filters[SIDE_COUNT];

@@ -13,10 +13,10 @@
 #include "loadsave.h"
 #include "map.h"
 #include "message.h"
-#include "worldmap.h"
 #include "preferences.h"
 #include "scripts.h"
 #include "svga.h"
+#include "worldmap.h"
 
 namespace fallout {
 

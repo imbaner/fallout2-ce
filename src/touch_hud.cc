@@ -3,8 +3,8 @@
 #include <string.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <string>
 #include <unordered_map>
@@ -18,31 +18,31 @@
 #include "display_monitor.h"
 #include "game.h"
 #include "game_commands.h"
+#include "game_mouse.h"
 #include "game_sound.h"
 #include "input.h"
 #include "interface.h"
 #include "inventory.h"
 #include "item.h"
 #include "kb.h"
-#include "map_defs.h"
 #include "map.h"
+#include "map_defs.h"
 #include "message.h"
 #include "mui.h"
 #include "mui_icons.h"
 #include "mui_notify.h"
-#include "object.h"
-#include "settings.h"
-#include "tactical_view.h"
 #include "mui_screens.h"
+#include "object.h"
 #include "party_member.h"
 #include "pipboy.h"
 #include "proto_types.h"
+#include "settings.h"
 #include "sfall_ini.h"
 #include "sfall_kb_helpers.h"
-#include "game_mouse.h"
 #include "skill.h"
 #include "stat.h"
 #include "svga.h"
+#include "tactical_view.h"
 #include "tile.h"
 #include "window_manager.h"
 

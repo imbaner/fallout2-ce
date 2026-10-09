@@ -14,8 +14,8 @@
 #include <lodepng.h>
 
 #include "actions.h"
-#include "art.h"
 #include "animation.h"
+#include "art.h"
 #include "character_editor.h"
 #include "combat.h"
 #include "critter.h"
@@ -24,39 +24,39 @@
 #include "game.h"
 #include "game_commands.h"
 #include "game_dialog.h"
-#include "game_movie.h"
 #include "game_mouse.h"
+#include "game_movie.h"
 #include "game_sound.h"
+#include "input.h"
 #include "interface.h"
 #include "inventory.h"
-#include "loadsave.h"
-#include "map_hints.h"
-#include "map.h"
-#include "movie.h"
-#include "scripts.h"
-#include "platform_compat.h"
-#include "save_storage.h"
-#include "input.h"
 #include "item.h"
 #include "kb.h"
+#include "loadsave.h"
+#include "map.h"
+#include "map_hints.h"
 #include "mouse.h"
+#include "movie.h"
 #include "mui.h"
 #include "object.h"
 #include "party_member.h"
 #include "perf_monitor.h"
 #include "perk.h"
+#include "platform_compat.h"
 #include "player_commands.h"
-#include "tactical_view.h"
 #include "preferences.h"
+#include "save_storage.h"
+#include "scripts.h"
 #include "settings.h"
 #include "skill.h"
 #include "sound.h"
 #include "stat.h"
 #include "svga.h"
+#include "tactical_view.h"
 #include "text_object.h"
 #include "tile.h"
-#include "touch_controls.h"
 #include "touch.h"
+#include "touch_controls.h"
 #include "touch_hud.h"
 #include "touch_log.h"
 #include "window_manager.h"
@@ -1601,13 +1601,15 @@ static const DevAutotestStep kDevAutotestCalledShotSteps[] = {
 // back, the time logged when each ends) with the game's rule, with
 // `combat_speed_all_animations`, and so on a slow device (animations catch
 // up on frames the game's loop was late for).
-#define COMBAT_SPEED_ROUND(prefix, speed, all)                                                          \
-    { DEV_AUTOTEST_ACTION_SET_COMBAT_SPEED, speed, 1, all, 1, prefix "_settings" },                    \
-        { DEV_AUTOTEST_ACTION_SET_ACTION_POINTS, 99, 0, 0, 1, prefix "_ap" },                          \
-        { DEV_AUTOTEST_ACTION_TIME_DUDE_ANIMATION, 0, 4, ROTATION_SW, 200, prefix "_walk" },           \
-        { DEV_AUTOTEST_ACTION_TIME_DUDE_ANIMATION, 1, 4, ROTATION_NE, 200, prefix "_run" },            \
-        { DEV_AUTOTEST_ACTION_TIME_DUDE_ANIMATION, 2, ANIM_THROW_PUNCH, 0, 120, prefix "_punch" },         \
-        { DEV_AUTOTEST_ACTION_LOG_ANIMATION_SOUND, 0, 0, 0, 1, prefix "_burst_sound", "WAH2XXX2" }
+#define COMBAT_SPEED_ROUND(prefix, speed, all)                                                     \
+    { DEV_AUTOTEST_ACTION_SET_COMBAT_SPEED, speed, 1, all, 1, prefix "_settings" },                \
+        { DEV_AUTOTEST_ACTION_SET_ACTION_POINTS, 99, 0, 0, 1, prefix "_ap" },                      \
+        { DEV_AUTOTEST_ACTION_TIME_DUDE_ANIMATION, 0, 4, ROTATION_SW, 200, prefix "_walk" },       \
+        { DEV_AUTOTEST_ACTION_TIME_DUDE_ANIMATION, 1, 4, ROTATION_NE, 200, prefix "_run" },        \
+        { DEV_AUTOTEST_ACTION_TIME_DUDE_ANIMATION, 2, ANIM_THROW_PUNCH, 0, 120, prefix "_punch" }, \
+    {                                                                                              \
+        DEV_AUTOTEST_ACTION_LOG_ANIMATION_SOUND, 0, 0, 0, 1, prefix "_burst_sound", "WAH2XXX2"     \
+    }
 
 static const DevAutotestStep kDevAutotestCombatSpeedSteps[] = {
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "v00_start" },
@@ -2013,9 +2015,8 @@ static void devAutotestPrepareSaves()
             exit(EXIT_FAILURE);
         }
 
-        devAutotestLog("  own SAVEGAME%s\n", gDevAutotestSaves == DevAutotestSaves::Empty ? ", empty"
-                : gDevAutotestSaves == DevAutotestSaves::QuickRing ? " with the test save in slots 1, 11-25"
-                                                                   : " with the test save in slot 1");
+        devAutotestLog("  own SAVEGAME%s\n", gDevAutotestSaves == DevAutotestSaves::Empty ? ", empty" : gDevAutotestSaves == DevAutotestSaves::QuickRing ? " with the test save in slots 1, 11-25"
+                                                                                                                                                         : " with the test save in slot 1");
     }
 
     lsgMobileRefreshSlots();
@@ -3304,12 +3305,14 @@ void devAutotestTick()
             break;
         case DEV_AUTOTEST_ACTION_QUICK_SAVE:
             if (lsgSaveGame(LOAD_SAVE_MODE_QUICK) != 1) {
-                devAutotestLog("FAIL: quick save\n"); exit(EXIT_FAILURE);
+                devAutotestLog("FAIL: quick save\n");
+                exit(EXIT_FAILURE);
             }
             break;
         case DEV_AUTOTEST_ACTION_QUICK_LOAD:
             if (lsgLoadGame(LOAD_SAVE_MODE_QUICK) != 1) {
-                devAutotestLog("FAIL: quick load\n"); exit(EXIT_FAILURE);
+                devAutotestLog("FAIL: quick load\n");
+                exit(EXIT_FAILURE);
             }
             break;
         case DEV_AUTOTEST_ACTION_CHECK_SAVE_SESSION: {
@@ -3627,8 +3630,7 @@ void devAutotestTick()
                 devAutotestLog("  placed item %s\n", onGround ? "on the ground" : "PICKED UP");
             }
             break;
-        case DEV_AUTOTEST_ACTION_LOG_SLOT:
-        {
+        case DEV_AUTOTEST_ACTION_LOG_SLOT: {
             char path[64];
             snprintf(path, sizeof(path), "SAVEGAME\\SLOT%.2d\\SAVE.DAT", static_cast<int>(step->a));
             int size;

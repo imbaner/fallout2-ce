@@ -26,13 +26,13 @@
 #include "memory.h"
 #include "message.h"
 #include "mouse.h"
-#include "player_commands.h"
 #include "object.h"
 #include "opcode_context.h"
 #include "options.h"
 #include "party_member.h"
 #include "pipboy.h"
 #include "platform_compat.h"
+#include "player_commands.h"
 #include "proto_instance.h"
 #include "reaction.h"
 #include "scripts.h"
@@ -49,8 +49,8 @@
 #include "tile.h"
 #include "window.h"
 #include "window_manager.h"
-#include "worldmap.h"
 #include "world_view.h"
+#include "worldmap.h"
 
 #include <assert.h>
 #include <cstddef>

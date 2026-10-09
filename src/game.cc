@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "action_log.h"
 #include "actions.h"
 #include "animation.h"
 #include "art.h"
@@ -24,8 +25,8 @@
 #include "draw.h"
 #include "endgame.h"
 #include "font_manager.h"
-#include "game_commands.h"
 #include "game.h"
+#include "game_commands.h"
 #include "game_dialog.h"
 #include "game_memory.h"
 #include "game_mouse.h"
@@ -73,16 +74,15 @@
 #include "text_font.h"
 #include "tile.h"
 #include "touch.h"
+#include "touch_controls.h"
+#include "touch_hud.h"
+#include "touch_log.h"
 #include "trait.h"
 #include "version.h"
 #include "win32.h"
 #include "window_manager.h"
-#include "worldmap.h"
 #include "world_view.h"
-#include "touch_controls.h"
-#include "touch_hud.h"
-#include "action_log.h"
-#include "touch_log.h"
+#include "worldmap.h"
 
 #if __APPLE__
 #include <TargetConditionals.h>

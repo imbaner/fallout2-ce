@@ -1,8 +1,8 @@
 #include "map_hints.h"
 
 #include <algorithm>
-#include <unordered_set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "animation.h"

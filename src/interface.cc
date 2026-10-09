@@ -26,6 +26,7 @@
 #include "inventory.h"
 #include "item.h"
 #include "kb.h"
+#include "map_hints.h"
 #include "memory.h"
 #include "mouse.h"
 #include "mui_floating_text.h"
@@ -41,7 +42,6 @@
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
-#include "map_hints.h"
 #include "touch_hud.h"
 #include "window_manager.h"
 
@@ -1110,7 +1110,6 @@ void interfaceRenderHitPoints(bool animate)
 
     gInterfaceLastRenderedHitPoints = hp;
     gInterfaceLastRenderedHitPointsColor = color;
-
 }
 
 // Render armor class.

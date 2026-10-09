@@ -17,16 +17,16 @@
 #include "game.h"
 #include "game_sound.h"
 #include "input.h"
-#include "loadsave.h"
-#include "platform_compat.h"
 #include "kb.h"
+#include "loadsave.h"
 #include "message.h"
+#include "platform/git_version.h"
+#include "platform_compat.h"
 #include "preferences.h"
 #include "settings.h"
 #include "svga.h"
 #include "world_view.h"
 #include "xfile.h"
-#include "platform/git_version.h"
 
 #include <SDL.h>
 
@@ -275,9 +275,7 @@ namespace {
         int over = lsgQuickSavesOverCount(values.quickSaves);
         char text[512];
         if (over > 0) {
-            snprintf(text, sizeof(text), values.quickSaves == 0
-                    ? muiText(kTextQuickSavesAll, "All quick saves (%d) become permanent and stay where they are in the list.")
-                    : muiText(kTextQuickSavesOldest, "The oldest quick saves (%d) become permanent: they stay where they are in the list but are no longer replaced by new ones."),
+            snprintf(text, sizeof(text), values.quickSaves == 0 ? muiText(kTextQuickSavesAll, "All quick saves (%d) become permanent and stay where they are in the list.") : muiText(kTextQuickSavesOldest, "The oldest quick saves (%d) become permanent: they stay where they are in the list but are no longer replaced by new ones."),
                 over);
             lines.push_back(text);
         }

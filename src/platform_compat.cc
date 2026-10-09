@@ -30,7 +30,6 @@
 
 #include <SDL.h>
 
-
 namespace fallout {
 
 static bool compatIsPathSeparator(char ch)

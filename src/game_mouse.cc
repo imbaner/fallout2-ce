@@ -39,9 +39,9 @@
 #include "svga.h"
 #include "text_font.h"
 #include "tile.h"
+#include "touch_controls.h"
 #include "window_manager.h"
 #include "world_view.h"
-#include "touch_controls.h"
 
 namespace fallout {
 

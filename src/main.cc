@@ -563,12 +563,7 @@ static void showDeath()
     int deathWindowY = 0;
     // CE: Mobile UI: the picture and the subtitle show in its scene screen.
     bool mobile = muiIsEnabled();
-    int win = mobile ? -1 : windowCreate(deathWindowX,
-        deathWindowY,
-        screenWidth,
-        screenHeight,
-        COLOR_FIRST,
-        WINDOW_MOVE_ON_TOP);
+    int win = mobile ? -1 : windowCreate(deathWindowX, deathWindowY, screenWidth, screenHeight, COLOR_FIRST, WINDOW_MOVE_ON_TOP);
     if (win != -1 || mobile) {
         do {
             unsigned char* windowBuffer = mobile ? nullptr : windowGetBuffer(win);

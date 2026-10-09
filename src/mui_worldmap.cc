@@ -14,9 +14,9 @@
 #include "fps_limiter.h"
 #include "game.h"
 #include "game_sound.h"
-#include "scripts.h"
 #include "input.h"
 #include "kb.h"
+#include "scripts.h"
 #include "settings.h"
 #include "svga.h"
 #include "worldmap.h"
@@ -193,7 +193,6 @@ namespace {
                 muiDrawTexture(texture, rect);
             }
         }
-
     }
 
     void WorldmapScreen::drawFog(const MuiRect& screen)

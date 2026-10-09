@@ -15,10 +15,10 @@
 #include "input.h"
 #include "interface.h"
 #include "memory.h"
+#include "mui_notify.h"
 #include "settings.h"
 #include "svga.h"
 #include "text_font.h"
-#include "mui_notify.h"
 #include "touch_hud.h"
 #include "window_manager.h"
 

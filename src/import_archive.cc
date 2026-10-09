@@ -1066,7 +1066,10 @@ std::unique_ptr<ImportArchive> ImportArchive::open(int fd, const ImportArchivePr
     bool otherStart = memcmp(start, "7z\xBC\xAF\x27\x1C", 6) == 0
         || memcmp(start, "Rar!\x1A\x07", 6) == 0
         || (start[0] == 0x1F && start[1] == 0x8B)
-        || memcmp(start, "\xFD" "7zXZ", 6) == 0
+        || memcmp(start, "\xFD"
+                         "7zXZ",
+               6)
+            == 0
         || memcmp(start + 257, "ustar", 5) == 0;
 
     ImportArchiveError zipError = ImportArchiveError::kUnreadable;

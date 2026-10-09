@@ -7,7 +7,6 @@
 #include <string.h>
 
 #include "art.h"
-#include "mui.h"
 #include "automap.h"
 #include "color.h"
 #include "combat.h"
@@ -17,8 +16,8 @@
 #include "cycle.h"
 #include "dbox.h"
 #include "debug.h"
-#include "dev_autotest.h"
 #include "delay.h"
+#include "dev_autotest.h"
 #include "draw.h"
 #include "game.h"
 #include "game_mouse.h"
@@ -32,6 +31,7 @@
 #include "memory.h"
 #include "message.h"
 #include "mouse.h"
+#include "mui.h"
 #include "object.h"
 #include "party_member.h"
 #include "platform_compat.h"

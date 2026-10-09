@@ -8,8 +8,8 @@
 #if !FALLOUT_TOUCH_ONLY
 #include "mouse.h"
 #endif
-#include "svga.h"
 #include "hud_layout.h"
+#include "svga.h"
 #include "touch_controls.h"
 
 #ifdef __ANDROID__
