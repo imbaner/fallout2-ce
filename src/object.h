@@ -97,7 +97,7 @@ int objectClearOutline(Object* obj, Rect* rect);
 // nullptr - none. Only compared with, never read (it may be gone).
 void objectSetTargetOutline(Object* obj);
 // CE: The tactical view (touch controls): critters (the dude aside) and
-// items on the ground are drawn half see-through, so the tiles under them show; every critter
+// items on the ground are drawn see-through (65% opaque), so the tiles under them show; every critter
 // with an outline shows it (target highlight aside). Drawing only - objects aren't changed (their flags
 // are saved). Redraws the map when it changes.
 void objectSetSeeThrough(bool seeThrough);

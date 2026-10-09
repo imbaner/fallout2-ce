@@ -3137,14 +3137,15 @@ void objectSetSeeThrough(bool seeThrough)
     }
 
     if (seeThrough && gSeeThroughMix.empty()) {
-        // The palette's 6-bit components averaged, the nearest color by the
-        // game's 15-bit lookup.
+        // The palette's 6-bit components mixed (`kSeeThroughOpacity` of the
+        // object), the nearest color by the game's 15-bit lookup.
+        constexpr int kSeeThroughOpacity = 65;
         gSeeThroughMix.resize(COLOR_COUNT * COLOR_COUNT);
         for (int source = 0; source < COLOR_COUNT; source++) {
             for (int destination = 0; destination < COLOR_COUNT; destination++) {
-                int red = (_cmap[source * 3] + _cmap[destination * 3]) / 2;
-                int green = (_cmap[source * 3 + 1] + _cmap[destination * 3 + 1]) / 2;
-                int blue = (_cmap[source * 3 + 2] + _cmap[destination * 3 + 2]) / 2;
+                int red = (_cmap[source * 3] * kSeeThroughOpacity + _cmap[destination * 3] * (100 - kSeeThroughOpacity)) / 100;
+                int green = (_cmap[source * 3 + 1] * kSeeThroughOpacity + _cmap[destination * 3 + 1] * (100 - kSeeThroughOpacity)) / 100;
+                int blue = (_cmap[source * 3 + 2] * kSeeThroughOpacity + _cmap[destination * 3 + 2] * (100 - kSeeThroughOpacity)) / 100;
                 gSeeThroughMix[source * COLOR_COUNT + destination] = _colorTable[((red >> 1) << 10) | ((green >> 1) << 5) | (blue >> 1)];
             }
         }
@@ -3161,7 +3162,7 @@ void objectSetSeeThrough(bool seeThrough)
     tileWindowRefresh();
 }
 
-// As `_dark_trans_buf_to_buf` (the object's light), then halfway to what is
+// As `_dark_trans_buf_to_buf` (the object's light), then mixed with what is
 // under it.
 static void objectDrawSeeThrough(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destX, int destY, int destPitch, int intensity)
 {
