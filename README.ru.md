@@ -28,6 +28,8 @@
 
 Проверено на Redmi 15C (Android 16). Android 7.0 и новее, arm64.
 
+**Рекомендуемый набор: Fallout 2 + [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) 2.4.34.** Порт играется и проверяется именно с ним. RPU опирается на sfall, который этот движок воспроизводит: Fallout 2: Community Engine — продолжение оригинального Fallout 2 Community Edition. Установите RPU в папку игры на компьютере, затем скопируйте папку на телефон.
+
 ## Известные ограничения
 
 - Только альбомная ориентация, портретная в планах.

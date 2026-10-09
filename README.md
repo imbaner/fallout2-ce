@@ -28,6 +28,8 @@ The full list of changes is the git history over upstream.
 
 Tested on a Redmi 15C (Android 16). Android 7.0 or newer, arm64.
 
+**Recommended setup: Fallout 2 + [Restoration Project (RPU)](https://github.com/BGforgeNet/Fallout2_Restoration_Project) 2.4.34.** The port is played and tested with it. RPU relies on sfall, which this engine reimplements: Fallout 2: Community Engine, the continuation of the original Fallout 2 Community Edition. Install RPU into the game folder on a computer, then copy the folder to the phone.
+
 ## Known limitations
 
 - Landscape only; portrait is planned.
