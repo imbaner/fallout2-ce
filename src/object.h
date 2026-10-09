@@ -101,7 +101,8 @@ void objectSetTargetOutline(Object* obj);
 // are saved). Redraws the map when it changes.
 void objectSetSeeThrough(bool seeThrough);
 // Drawn into the game's buffer while see-through (the tactical view's
-// tiles): over every object, under the outlines; [rect] - the part redrawn.
+// tiles): over every object, under the outlines; the dude stays over both.
+// [rect] - the part redrawn.
 typedef void ObjectOverlayProc(unsigned char* buffer, int pitch, const Rect& rect, int elevation);
 void objectSetSeeThroughOverlay(ObjectOverlayProc* proc);
 ObjectFlags _obj_intersects_with(Object* object, int x, int y);

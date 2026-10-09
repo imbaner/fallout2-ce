@@ -64,6 +64,7 @@ static int _obj_connect_to_tile(ObjectListNode* node, int tile_index, int elev, 
 static int _obj_adjust_light(Object* obj, int a2, Rect* rect);
 static void objectDrawOutline(Object* object, Rect* rect);
 static void _obj_render_object(Object* object, Rect* rect, int light);
+static void objectRenderPreRoof(Object* object, Rect* rect, int light);
 static bool objectHasDrawnOutline(Object* object);
 static int _obj_preload_sort(const void* fid1, const void* fid2);
 static Object* objectPrepareWhoHitMeForSave(CritterCombatData* combatData);
@@ -263,6 +264,12 @@ static std::vector<Object*> outlinedObjects;
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
 static ObjectOverlayProc* gSeeThroughOverlay = nullptr;
+
+// The dude as last drawn while see-through (`objectRenderPreRoof`): its
+// pixels' colors in [gSeeThroughDudeRect], -1 - not the dude's. Kept over
+// the tactical view's tiles and the outlines.
+static Rect gSeeThroughDudeRect;
+static std::vector<int> gSeeThroughDude;
 
 // 0x639D90 updateAreaPixelBounds
 static Rect gObjectsUpdateAreaPixelBounds;
@@ -830,6 +837,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
     int parity = gCenterTile & 1;
 
     outlinedObjects.clear();
+    gSeeThroughDude.clear();
 
     int renderCount = 0;
     for (int i = 0; i < gObjectsUpdateAreaHexSize; i++) {
@@ -857,7 +865,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
                     }
 
                     if ((objectListNode->obj->flags & OBJECT_HIDDEN) == OBJECT_NONE) {
-                        _obj_render_object(objectListNode->obj, &updatedRect, lightIntensity);
+                        objectRenderPreRoof(objectListNode->obj, &updatedRect, lightIntensity);
 
                         if (objectHasDrawnOutline(objectListNode->obj)) {
                             outlinedObjects.push_back(objectListNode->obj);
@@ -893,7 +901,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
 
             if (elevation == objectListNode->obj->elevation) {
                 if ((objectListNode->obj->flags & OBJECT_HIDDEN) == OBJECT_NONE) {
-                    _obj_render_object(object, &updatedRect, lightIntensity);
+                    objectRenderPreRoof(object, &updatedRect, lightIntensity);
 
                     if (objectHasDrawnOutline(objectListNode->obj)) {
                         outlinedObjects.push_back(objectListNode->obj);
@@ -921,13 +929,28 @@ void _obj_render_post_roof(Rect* rect, int elevation)
     }
 
     // CE: The tactical view's tiles, over the see-through objects, under
-    // the outlines.
-    if (gObjectsSeeThrough && gSeeThroughOverlay != nullptr) {
-        gSeeThroughOverlay(gObjectsWindowBuffer, gObjectsWindowPitch, updatedRect, elevation);
+    // the outlines; the dude's pixels still showing stay over both.
+    std::vector<std::pair<int, unsigned char>> dudePixels;
+    if (gObjectsSeeThrough) {
+        int width = gSeeThroughDudeRect.right - gSeeThroughDudeRect.left + 1;
+        for (int index = 0; index < static_cast<int>(gSeeThroughDude.size()); index++) {
+            int offset = gObjectsWindowPitch * (gSeeThroughDudeRect.top + index / width) + gSeeThroughDudeRect.left + index % width;
+            if (gSeeThroughDude[index] == gObjectsWindowBuffer[offset]) {
+                dudePixels.push_back({ offset, gObjectsWindowBuffer[offset] });
+            }
+        }
+
+        if (gSeeThroughOverlay != nullptr) {
+            gSeeThroughOverlay(gObjectsWindowBuffer, gObjectsWindowPitch, updatedRect, elevation);
+        }
     }
 
     for (Object* object : outlinedObjects) {
         objectDrawOutline(object, &updatedRect);
+    }
+
+    for (const auto& pixel : dudePixels) {
+        gObjectsWindowBuffer[pixel.first] = pixel.second;
     }
 
     textObjectsRenderInRect(&updatedRect);
@@ -5091,6 +5114,40 @@ static void objectDrawOutline(Object* object, Rect* rect)
     }
 
     artUnlock(cacheEntry);
+}
+
+// CE: As `_obj_render_object`; while see-through the dude's pixels are
+// remembered (`gSeeThroughDude`): what drawing it changed.
+static void objectRenderPreRoof(Object* object, Rect* rect, int light)
+{
+    Rect dudeRect;
+    if (gObjectsSeeThrough && object == gDude) {
+        objectGetRect(object, &dudeRect);
+    }
+    if (!gObjectsSeeThrough || object != gDude || rectIntersection(&dudeRect, rect, &dudeRect) != 0) {
+        _obj_render_object(object, rect, light);
+        return;
+    }
+
+    int width = dudeRect.right - dudeRect.left + 1;
+    int height = dudeRect.bottom - dudeRect.top + 1;
+    std::vector<unsigned char> before(width * height);
+    for (int y = 0; y < height; y++) {
+        memcpy(before.data() + width * y, gObjectsWindowBuffer + gObjectsWindowPitch * (dudeRect.top + y) + dudeRect.left, width);
+    }
+
+    _obj_render_object(object, rect, light);
+
+    gSeeThroughDudeRect = dudeRect;
+    gSeeThroughDude.assign(width * height, -1);
+    for (int y = 0; y < height; y++) {
+        unsigned char* row = gObjectsWindowBuffer + gObjectsWindowPitch * (dudeRect.top + y) + dudeRect.left;
+        for (int x = 0; x < width; x++) {
+            if (row[x] != before[width * y + x]) {
+                gSeeThroughDude[width * y + x] = row[x];
+            }
+        }
+    }
 }
 
 // 0x48F1B0 obj_render_object
