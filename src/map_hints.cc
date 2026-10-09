@@ -1,7 +1,9 @@
 #include "map_hints.h"
 
 #include <algorithm>
+#include <array>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -9,6 +11,7 @@
 #include "combat.h"
 #include "critter.h"
 #include "game.h"
+#include "ground_lines.h"
 #include "map.h"
 #include "mui.h"
 #include "mui_draw.h"
@@ -64,8 +67,9 @@ namespace {
         return false;
     }
 
-    // The attack target: its outline pulses (`objectSetTargetOutline`), the
-    // game's buffer is drawn again where it changes.
+    // The attack target: in the tactical view its outline alone cycles
+    // (`objectSetTargetOutline`), the game's buffer is drawn again where it
+    // changes.
     void setAttackTarget(Object* target)
     {
         if (target == gAttackTarget) {
@@ -147,57 +151,6 @@ namespace {
         return { static_cast<Uint8>(palette[index * 3] << 2), static_cast<Uint8>(palette[index * 3 + 1] << 2), static_cast<Uint8>(palette[index * 3 + 2] << 2), alpha };
     }
 
-    // The outlines and the dude drawn again over the tiles, pixel for pixel
-    // (`objectSeeThroughTopRuns`).
-    void drawTopLayer(MuiContext& ui, float scale)
-    {
-        unsigned int version;
-        const std::vector<ObjectTopRun>* runs = objectSeeThroughTopRuns(&version);
-        SDL_Renderer* renderer = muiDrawGetRenderer();
-        if (runs == nullptr || runs->empty() || renderer == nullptr) {
-            return;
-        }
-
-        // World to screen is a scale and an offset.
-        float originX;
-        float originY;
-        float unitX;
-        float unitY;
-        worldViewWorldToScreenF(0.0f, 0.0f, &originX, &originY);
-        worldViewWorldToScreenF(1.0f, 1.0f, &unitX, &unitY);
-        float zoomX = (unitX - originX) * scale;
-        float zoomY = (unitY - originY) * scale;
-        originX *= scale;
-        originY *= scale;
-
-        MuiRect screen = ui.screenRect();
-        const unsigned char* palette = directDrawGetPalette();
-        static std::vector<SDL_Vertex> vertices;
-        static std::vector<int> indices;
-        vertices.clear();
-        indices.clear();
-        for (const ObjectTopRun& run : *runs) {
-            float left = originX + run.x * zoomX;
-            float top = originY + run.y * zoomY;
-            float right = left + run.length * zoomX;
-            float bottom = top + zoomY;
-            if (right < screen.x || left > screen.right() || bottom < screen.y || top > screen.bottom()) {
-                continue;
-            }
-
-            SDL_Color color = { static_cast<Uint8>(palette[run.color * 3] << 2), static_cast<Uint8>(palette[run.color * 3 + 1] << 2), static_cast<Uint8>(palette[run.color * 3 + 2] << 2), 255 };
-            int first = static_cast<int>(vertices.size());
-            vertices.push_back({ { left, top }, color, { 0.0f, 0.0f } });
-            vertices.push_back({ { right, top }, color, { 0.0f, 0.0f } });
-            vertices.push_back({ { right, bottom }, color, { 0.0f, 0.0f } });
-            vertices.push_back({ { left, bottom }, color, { 0.0f, 0.0f } });
-            indices.insert(indices.end(), { first, first + 1, first + 2, first, first + 2, first + 3 });
-        }
-        if (!indices.empty()) {
-            SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
-        }
-    }
-
     // The combat's living critters (all on the map), the dude among them.
     std::vector<Object*> gCombatCritters;
 
@@ -206,12 +159,63 @@ namespace {
         gCombatCritters.push_back(critter);
     }
 
-    // Under the selected tile and the hit chance: a faint grid where the
-    // dude can walk, the area's border, everyone's tile in the color the
-    // game outlines them with in combat (the dude's and the selected
-    // enemy's thicker), then the outlines and the dude over all of it.
+    // A tile's center in the game's buffer, times 3 (corners are sums of
+    // three centers: exact, the same from each tile around them).
+    bool tileCenter3(int tile, int* x, int* y)
+    {
+        int worldX;
+        int worldY;
+        if (!tileIsValid(tile) || tileToScreenXY(tile, &worldX, &worldY) != 0) {
+            return false;
+        }
+        *x = (worldX + 16) * 3;
+        *y = (worldY + 8) * 3;
+        return true;
+    }
+
+    // Corner `k` of [tile]'s hex is where it meets neighbours `k` and
+    // `k + 1`: the sum of the three centers (world, times 3).
+    bool tileCorners3(int tile, std::array<SDL_Point, ROTATION_COUNT>* corners)
+    {
+        int centerX;
+        int centerY;
+        if (!tileCenter3(tile, &centerX, &centerY)) {
+            return false;
+        }
+
+        std::array<SDL_Point, ROTATION_COUNT> neighbours;
+        for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+            if (!tileCenter3(tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1), &(neighbours[rotation].x), &(neighbours[rotation].y))) {
+                return false;
+            }
+        }
+
+        for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+            const SDL_Point& next = neighbours[(rotation + 1) % ROTATION_COUNT];
+            (*corners)[rotation] = { (centerX + neighbours[rotation].x + next.x) / 3, (centerY + neighbours[rotation].y + next.y) / 3 };
+        }
+        return true;
+    }
+
+    // A corner (times 3) in the game's buffer, at the pixel's middle.
+    SDL_FPoint cornerPoint(const SDL_Point& corner)
+    {
+        return { corner.x / 3.0f + 0.5f, corner.y / 3.0f + 0.5f };
+    }
+
+    long long cornerKey(const SDL_Point& corner)
+    {
+        return (static_cast<long long>(corner.x) << 32) ^ static_cast<unsigned int>(corner.y);
+    }
+
+    // Under the selected tile and the hit chance, lying on the ground
+    // (ground_lines.h): a faint grid where the dude can walk, the area's
+    // border, everyone's tile in their outline's color (the dude's and the
+    // selected enemy's thicker).
     void drawTacticalView(MuiContext& ui, float scale)
     {
+        groundLinesBegin(scale);
+
         const TacticalViewReach& reach = tacticalViewGetReach();
         if (!reach.reachable.empty()) {
             std::unordered_set<int> area(reach.reachable.begin(), reach.reachable.end());
@@ -220,37 +224,61 @@ namespace {
             // Fainter zoomed out (tiles get small).
             float zoom = std::clamp(worldViewGetZoom(), 0.5f, 1.0f);
             MuiColor grid = muiRgb(0xD9C79A, static_cast<Uint8>(22.0f + 26.0f * (zoom - 0.5f) * 2.0f));
-            MuiColor border = muiTheme().accent.withAlpha(190);
-            for (int pass = 0; pass < 2; pass++) {
-                for (int tile : area) {
-                    std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
-                    if (outline.empty()) {
-                        continue;
-                    }
-                    // Corner `k` is between the neighbours `k` and `k + 1`,
-                    // the edge towards neighbour `d` from corner `d - 1` to
-                    // `d`. An edge inside is drawn by the tile on its side
-                    // towards neighbours 0-2, once.
-                    for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
-                        bool inside = area.count(tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1)) != 0;
-                        if (pass == 0 ? !inside || rotation >= 3 : inside) {
-                            continue;
-                        }
-                        const SDL_FPoint& from = outline[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
-                        const SDL_FPoint& to = outline[rotation];
-                        if (pass == 0) {
-                            muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.0f), grid);
-                        } else {
-                            muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.6f), border);
-                        }
+
+            // The area's border: its tiles' edges towards tiles outside it,
+            // each from corner `d - 1` to `d` (the same way round for every
+            // tile), joined into closed loops.
+            std::unordered_map<long long, SDL_Point> borderNext;
+            std::unordered_map<long long, SDL_Point> borderFrom;
+            std::array<SDL_Point, ROTATION_COUNT> corners;
+            for (int tile : area) {
+                if (!tileCorners3(tile, &corners)) {
+                    continue;
+                }
+                for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                    const SDL_Point& from = corners[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
+                    const SDL_Point& to = corners[rotation];
+                    if (area.count(tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1)) == 0) {
+                        borderNext[cornerKey(from)] = to;
+                        borderFrom[cornerKey(from)] = from;
+                    } else if (rotation < 3) {
+                        // An edge inside: drawn by the tile on its side
+                        // towards neighbours 0-2, once.
+                        groundLinesAddPath({ cornerPoint(from), cornerPoint(to) }, false, ui.dp(1.0f), grid);
                     }
                 }
+            }
+
+            std::vector<std::vector<SDL_FPoint>> loops;
+            while (!borderNext.empty()) {
+                std::vector<SDL_FPoint> loop;
+                SDL_Point corner = borderFrom.begin()->second;
+                while (true) {
+                    auto it = borderNext.find(cornerKey(corner));
+                    if (it == borderNext.end()) {
+                        break;
+                    }
+                    loop.push_back(cornerPoint(corner));
+                    corner = it->second;
+                    borderFrom.erase(it->first);
+                    borderNext.erase(it);
+                }
+                loops.push_back(std::move(loop));
+            }
+
+            // A dark edge under the line keeps it apart from the ground.
+            for (const std::vector<SDL_FPoint>& loop : loops) {
+                groundLinesAddPath(loop, true, ui.dp(1.4f) + ui.dp(2.0f), muiRgb(0x000000, 70));
+            }
+            for (const std::vector<SDL_FPoint>& loop : loops) {
+                groundLinesAddPath(loop, true, ui.dp(1.4f), muiTheme().accent.withAlpha(140));
             }
         }
 
         gCombatCritters.clear();
         gCombatCritters.push_back(gDude);
         combatForEachCritter(addCombatCritter);
+        std::array<SDL_Point, ROTATION_COUNT> corners;
         for (Object* object : gCombatCritters) {
             if (object->elevation != gElevation || (object->flags & OBJECT_HIDDEN) != 0) {
                 continue;
@@ -258,17 +286,18 @@ namespace {
 
             int color;
             bool thick;
-            if (!tacticalViewTileLook(object, &color, &thick)) {
+            if (!tacticalViewTileLook(object, &color, &thick) || !tileCorners3(object->tile, &corners)) {
                 continue;
             }
 
-            std::vector<SDL_FPoint> outline = tileOutline(object->tile, scale);
-            if (!outline.empty()) {
-                muiDrawPolyline(outline, ui.dp(thick ? 2.6f : 1.6f), paletteColor(color), true);
+            std::vector<SDL_FPoint> outline;
+            for (const SDL_Point& corner : corners) {
+                outline.push_back(cornerPoint(corner));
             }
+            groundLinesAddPath(outline, true, ui.dp(thick ? 2.6f : 1.6f), paletteColor(color));
         }
 
-        drawTopLayer(ui, scale);
+        groundLinesEnd();
     }
 
     float outlineRight(const std::vector<SDL_FPoint>& points)

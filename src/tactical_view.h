@@ -27,9 +27,10 @@ bool tacticalViewIsShown();
 // Game loop: off when the combat is over, see-through drawing while shown.
 void tacticalViewUpdate();
 
-// How a critter's tile is drawn: [color] - palette entry of the game's
-// combat outline (cycled as it is), [thick] - the dude's and the selected
-// enemy's; false - not drawn (the game doesn't see it: no outline).
+// How a critter's tile is drawn: [color] - palette entry of its outline's
+// color (still, but the selected enemy's, which cycles as its outline),
+// [thick] - the dude's and the selected enemy's; false - not drawn (the
+// game doesn't see it: no outline).
 bool tacticalViewTileLook(Object* critter, int* color, bool* thick);
 
 // Living critter standing on [tile] (shown on the map), nullptr - none.

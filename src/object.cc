@@ -65,7 +65,8 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect);
 static void objectDrawOutline(Object* object, Rect* rect);
 static void _obj_render_object(Object* object, Rect* rect, int light);
 static void objectRenderPreRoof(Object* object, Rect* rect, int light);
-static void objectSeeThroughTopUpdate(const Rect& rect, std::vector<std::pair<int, unsigned char>>& pixels);
+static void objectSeeThroughGroundTaken(const Rect& rect);
+static void objectSeeThroughCoverRect(const Rect& rect);
 static bool objectHasDrawnOutline(Object* object);
 static int _obj_preload_sort(const void* fid1, const void* fid2);
 static Object* objectPrepareWhoHitMeForSave(CritterCombatData* combatData);
@@ -265,10 +266,16 @@ static std::vector<Object*> outlinedObjects;
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
 
-// The tactical view's top layer (`objectSeeThroughTopRuns`): what the
-// critters' outlines and the dude drew, buffer coordinates.
-static std::vector<ObjectTopRun> gSeeThroughTop;
-static unsigned int gSeeThroughTopVersion = 0;
+// The tactical view: what covers each pixel of the buffer
+// (`ObjectSeeThroughCover`), laid out as the buffer.
+static std::vector<unsigned char> gSeeThroughCover;
+
+// The part being redrawn as it was before anything standing was drawn (the
+// floor, flat objects); see-through objects draw into it too, so what
+// differs from it at the end is covered by something solid.
+static std::vector<unsigned char> gSeeThroughGround;
+static Rect gSeeThroughGroundRect;
+static bool gSeeThroughGroundValid = false;
 
 // The dude as last drawn while see-through (`objectRenderPreRoof`): its
 // pixels' colors in [gSeeThroughDudeRect], -1 - not the dude's. Kept over
@@ -844,6 +851,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
 
     outlinedObjects.clear();
     gSeeThroughDude.clear();
+    gSeeThroughGroundValid = false;
 
     int renderCount = 0;
     for (int i = 0; i < gObjectsUpdateAreaHexSize; i++) {
@@ -886,6 +894,11 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
                 _renderTable[renderCount++] = objectListNode;
             }
         }
+    }
+
+    // CE: The tactical view: the ground as it is now.
+    if (gObjectsSeeThrough) {
+        objectSeeThroughGroundTaken(updatedRect);
     }
 
     tileRenderEdgeBlackSquares(&updatedRect, elevation, false);
@@ -934,11 +947,14 @@ void _obj_render_post_roof(Rect* rect, int elevation)
         return;
     }
 
-    // CE: The tactical view: the dude's pixels still showing stay over the
-    // outlines; both go to the top layer too (`objectSeeThroughTopRuns`).
+    // CE: The tactical view: what covers the ground here; the dude's
+    // pixels still showing stay over the outlines (and both over the view's
+    // tiles, `ObjectSeeThroughCover::Top`).
     std::vector<std::pair<int, unsigned char>> dudePixels;
-    std::vector<std::pair<int, unsigned char>> topPixels;
+    std::vector<int> topPixels;
     if (gObjectsSeeThrough) {
+        objectSeeThroughCoverRect(updatedRect);
+
         int width = gSeeThroughDudeRect.right - gSeeThroughDudeRect.left + 1;
         for (int index = 0; index < static_cast<int>(gSeeThroughDude.size()); index++) {
             int offset = gObjectsWindowPitch * (gSeeThroughDudeRect.top + index / width) + gSeeThroughDudeRect.left + index % width;
@@ -980,7 +996,7 @@ void _obj_render_post_roof(Rect* rect, int elevation)
             int offset = gObjectsWindowPitch * (outlineRect.top + y) + outlineRect.left;
             for (int x = 0; x < width; x++) {
                 if (gObjectsWindowBuffer[offset + x] != before[width * y + x]) {
-                    topPixels.push_back({ offset + x, gObjectsWindowBuffer[offset + x] });
+                    topPixels.push_back(offset + x);
                 }
             }
         }
@@ -988,11 +1004,11 @@ void _obj_render_post_roof(Rect* rect, int elevation)
 
     for (const auto& pixel : dudePixels) {
         gObjectsWindowBuffer[pixel.first] = pixel.second;
-        topPixels.push_back(pixel);
+        topPixels.push_back(pixel.first);
     }
 
-    if (gObjectsSeeThrough) {
-        objectSeeThroughTopUpdate(updatedRect, topPixels);
+    for (int offset : topPixels) {
+        gSeeThroughCover[offset] = static_cast<unsigned char>(ObjectSeeThroughCover::Top);
     }
 
     textObjectsRenderInRect(&updatedRect);
@@ -3016,81 +3032,87 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 
 // 0x48C2B4 obj_outline_object
 
-const std::vector<ObjectTopRun>* objectSeeThroughTopRuns(unsigned int* version)
+const unsigned char* objectSeeThroughCover(int* width, int* height, int* pitch)
 {
-    if (!gObjectsSeeThrough) {
+    if (!gObjectsSeeThrough || gSeeThroughCover.empty()) {
         return nullptr;
     }
 
-    *version = gSeeThroughTopVersion;
-    return &gSeeThroughTop;
+    *width = gObjectsWindowWidth;
+    *height = gObjectsWindowHeight;
+    *pitch = gObjectsWindowPitch;
+    return gSeeThroughCover.data();
 }
 
-// [rect] was drawn again: its part of the top layer is [pixels] (buffer
-// offsets; a later one of the same offset wins).
-static void objectSeeThroughTopUpdate(const Rect& rect, std::vector<std::pair<int, unsigned char>>& pixels)
+// Before anything standing on the ground in [rect] is drawn: nothing covers
+// it yet.
+static void objectSeeThroughGroundTaken(const Rect& rect)
 {
-    std::vector<ObjectTopRun> kept;
-    kept.reserve(gSeeThroughTop.size() + pixels.size() / 2);
-    for (const ObjectTopRun& run : gSeeThroughTop) {
-        int right = run.x + run.length - 1;
-        if (run.y < rect.top || run.y > rect.bottom || right < rect.left || run.x > rect.right) {
-            kept.push_back(run);
-            continue;
-        }
-        if (run.x < rect.left) {
-            kept.push_back({ run.x, run.y, rect.left - run.x, run.color });
-        }
-        if (right > rect.right) {
-            kept.push_back({ rect.right + 1, run.y, right - rect.right, run.color });
-        }
+    gSeeThroughCover.resize(static_cast<size_t>(gObjectsWindowPitch) * gObjectsWindowHeight);
+
+    int width = rect.right - rect.left + 1;
+    int height = rect.bottom - rect.top + 1;
+    gSeeThroughGround.resize(static_cast<size_t>(width) * height);
+    for (int y = 0; y < height; y++) {
+        int offset = gObjectsWindowPitch * (rect.top + y) + rect.left;
+        memcpy(gSeeThroughGround.data() + width * y, gObjectsWindowBuffer + offset, width);
+        memset(gSeeThroughCover.data() + offset, static_cast<int>(ObjectSeeThroughCover::None), width);
+    }
+    gSeeThroughGroundRect = rect;
+    gSeeThroughGroundValid = true;
+}
+
+// After the roofs of [rect]: what differs from the ground (see-through
+// objects drew into it) is covered by something solid.
+static void objectSeeThroughCoverRect(const Rect& rect)
+{
+    if (!gSeeThroughGroundValid
+        || rect.left != gSeeThroughGroundRect.left || rect.top != gSeeThroughGroundRect.top
+        || rect.right != gSeeThroughGroundRect.right || rect.bottom != gSeeThroughGroundRect.bottom) {
+        return;
     }
 
-    std::stable_sort(pixels.begin(), pixels.end(), [](const std::pair<int, unsigned char>& a, const std::pair<int, unsigned char>& b) {
-        return a.first < b.first;
-    });
-    for (size_t index = 0; index < pixels.size(); index++) {
-        // The last of the same offset.
-        if (index + 1 < pixels.size() && pixels[index + 1].first == pixels[index].first) {
-            continue;
-        }
-        int x = pixels[index].first % gObjectsWindowPitch;
-        int y = pixels[index].first / gObjectsWindowPitch;
-        unsigned char color = pixels[index].second;
-        if (!kept.empty()) {
-            ObjectTopRun& last = kept.back();
-            if (last.y == y && last.x + last.length == x && last.color == color) {
-                last.length++;
-                continue;
+    int width = rect.right - rect.left + 1;
+    int height = rect.bottom - rect.top + 1;
+    for (int y = 0; y < height; y++) {
+        int offset = gObjectsWindowPitch * (rect.top + y) + rect.left;
+        const unsigned char* ground = gSeeThroughGround.data() + width * y;
+        const unsigned char* shown = gObjectsWindowBuffer + offset;
+        unsigned char* cover = gSeeThroughCover.data() + offset;
+        for (int x = 0; x < width; x++) {
+            if (shown[x] != ground[x]) {
+                cover[x] = static_cast<unsigned char>(ObjectSeeThroughCover::Solid);
             }
         }
-        kept.push_back({ x, y, 1, color });
     }
-
-    gSeeThroughTop.swap(kept);
-    gSeeThroughTopVersion++;
+    gSeeThroughGroundValid = false;
 }
 
 void objectSeeThroughScrolled(int dx, int dy)
 {
-    if (gSeeThroughTop.empty()) {
+    if (gSeeThroughCover.empty()) {
         return;
     }
 
-    // As the buffer: the contents move by (-dx, -dy).
-    std::vector<ObjectTopRun> moved;
-    moved.reserve(gSeeThroughTop.size());
-    for (const ObjectTopRun& run : gSeeThroughTop) {
-        int x = run.x - dx;
-        int y = run.y - dy;
-        int right = std::min(x + run.length - 1, gObjectsWindowWidth - 1);
-        x = std::max(x, 0);
-        if (y >= 0 && y < gObjectsWindowHeight && x <= right) {
-            moved.push_back({ x, y, right - x + 1, run.color });
+    // As the buffer: the contents move by (-dx, -dy); what comes into view
+    // is drawn (and covered) again.
+    int length = gObjectsWindowWidth - std::abs(dx);
+    for (int step = 0; step < gObjectsWindowHeight; step++) {
+        int y = dy >= 0 ? step : gObjectsWindowHeight - 1 - step;
+        unsigned char* row = gSeeThroughCover.data() + static_cast<size_t>(gObjectsWindowPitch) * y;
+        int fromY = y + dy;
+        if (fromY < 0 || fromY >= gObjectsWindowHeight || length <= 0) {
+            memset(row, 0, gObjectsWindowWidth);
+            continue;
+        }
+        unsigned char* from = gSeeThroughCover.data() + static_cast<size_t>(gObjectsWindowPitch) * fromY;
+        memmove(row + std::max(-dx, 0), from + std::max(dx, 0), length);
+        if (dx > 0) {
+            memset(row + length, 0, dx);
+        } else if (dx < 0) {
+            memset(row, 0, -dx);
         }
     }
-    gSeeThroughTop.swap(moved);
-    gSeeThroughTopVersion++;
 }
 
 // The game's visible outlines; in the tactical view every critter the game
@@ -3130,7 +3152,11 @@ void objectSetSeeThrough(bool seeThrough)
 
     gObjectsSeeThrough = seeThrough;
     if (!seeThrough) {
-        gSeeThroughTop.clear();
+        gSeeThroughCover.clear();
+        gSeeThroughCover.shrink_to_fit();
+        gSeeThroughGround.clear();
+        gSeeThroughGround.shrink_to_fit();
+        gSeeThroughGroundValid = false;
     }
     tileWindowRefresh();
 }
@@ -3150,6 +3176,19 @@ static void objectDrawSeeThrough(unsigned char* src, int srcWidth, int srcHeight
                     color = intensityColorTable[color][intensityIndex];
                 }
                 dp[x] = gSeeThroughMix[color * COLOR_COUNT + dp[x]];
+
+                // Still the ground for the cover (`objectSeeThroughCoverRect`),
+                // seen through it.
+                if (gSeeThroughGroundValid) {
+                    int bufferX = destX + x;
+                    int bufferY = destY + y;
+                    if (bufferX >= gSeeThroughGroundRect.left && bufferX <= gSeeThroughGroundRect.right
+                        && bufferY >= gSeeThroughGroundRect.top && bufferY <= gSeeThroughGroundRect.bottom) {
+                        int width = gSeeThroughGroundRect.right - gSeeThroughGroundRect.left + 1;
+                        gSeeThroughGround[width * (bufferY - gSeeThroughGroundRect.top) + bufferX - gSeeThroughGroundRect.left] = dp[x];
+                        gSeeThroughCover[gObjectsWindowPitch * bufferY + bufferX] = static_cast<unsigned char>(ObjectSeeThroughCover::SeeThrough);
+                    }
+                }
             }
         }
         sp += srcPitch;
@@ -3157,15 +3196,54 @@ static void objectDrawSeeThrough(unsigned char* src, int srcWidth, int srcHeight
     }
 }
 
-// The palette's pulsing red (`colorCycleTicker`'s bobber).
-static const Color kTargetOutlineColor = Color(254);
-
 // See `objectSetTargetOutline`.
 static Object* gObjectTargetOutline = nullptr;
 
 void objectSetTargetOutline(Object* obj)
 {
     gObjectTargetOutline = obj;
+}
+
+// The palette entry nearest to [red], [green], [blue] (8-bit) among those
+// the palette doesn't cycle (229 and up do).
+static Color objectStaticColor(int red, int green, int blue)
+{
+    int best = -1;
+    int bestDistance = 0;
+    for (int index = 1; index < 229; index++) {
+        int dr = _cmap[index * 3] * 4 - red;
+        int dg = _cmap[index * 3 + 1] * 4 - green;
+        int db = _cmap[index * 3 + 2] * 4 - blue;
+        int distance = dr * dr + dg * dg + db * db;
+        if (best == -1 || distance < bestDistance) {
+            best = index;
+            bestDistance = distance;
+        }
+    }
+    return Color(best);
+}
+
+Color objectStillOutlineColor(OutlineType outlineType)
+{
+    // The cycled outlines' middle colors (cycle.cc: slime, fire_fast).
+    static const Color kFriendly = objectStaticColor(27, 123, 15);
+    static const Color kHostile = objectStaticColor(150, 0, 0);
+    return outlineType == OUTLINE_TYPE_HOSTILE ? kHostile : kFriendly;
+}
+
+bool objectSeeThroughOutlineColor(Object* object, Color* color)
+{
+    if (!gObjectsSeeThrough || object == gObjectTargetOutline) {
+        return false;
+    }
+
+    OutlineType outlineType = object->outline & OUTLINE_TYPE_MAX;
+    if (outlineType != OUTLINE_TYPE_HOSTILE && outlineType != OUTLINE_TYPE_FRIENDLY) {
+        return false;
+    }
+
+    *color = objectStillOutlineColor(outlineType);
+    return true;
 }
 
 int objectSetOutline(Object* obj, OutlineType outlineType, Rect* rect)
@@ -5089,9 +5167,11 @@ static void objectDrawOutline(Object* object, Rect* rect)
             break;
         }
 
-        // CE: The picked target pulses (see `objectSetTargetOutline`).
-        if (object == gObjectTargetOutline && outlineType == OUTLINE_TYPE_HOSTILE) {
-            color = kTargetOutlineColor;
+        // CE: The tactical view: still outlines, only the picked target's
+        // cycles (see `objectSeeThroughOutlineColor`).
+        Color staticColor;
+        if (objectSeeThroughOutlineColor(object, &staticColor)) {
+            color = staticColor;
             isOutlinePalleted = 0;
             animatedColorBandHeight = 0;
         }

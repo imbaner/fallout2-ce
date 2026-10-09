@@ -92,28 +92,38 @@ void _dark_translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int sr
 void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destPitch, unsigned char* mask, int maskPitch, int light);
 int objectSetOutline(Object* obj, OutlineType outlineType, Rect* rect);
 int objectClearOutline(Object* obj, Rect* rect);
-// CE: The enemy picked as the target (touch controls); its hostile outline
-// pulses with the palette's "bobber" color (cycle.cc) instead of the moving
-// red bands, so it stands out among the others. nullptr - none. Only
-// compared with, never read (it may be gone).
+// CE: The enemy picked as the target (touch controls): in the tactical view
+// its outline is the only one cycling (`objectSeeThroughOutlineColor`).
+// nullptr - none. Only compared with, never read (it may be gone).
 void objectSetTargetOutline(Object* obj);
 // CE: The tactical view (touch controls): critters (the dude aside) and
 // items on the ground are drawn half see-through, so the tiles under them show; every critter
 // with an outline shows it (target highlight aside). Drawing only - objects aren't changed (their flags
 // are saved). Redraws the map when it changes.
 void objectSetSeeThrough(bool seeThrough);
-// While see-through: what the critters' outlines and the dude (over the
-// outlines) drew, as runs of a color along a buffer row, so the tactical
-// view draws it again over its tiles; [version] changes with it. nullptr -
-// not see-through.
-struct ObjectTopRun {
-    int x;
-    int y;
-    int length;
-    unsigned char color;
+// While see-through: what covers each pixel of the game's buffer (laid out
+// as it is), so the tactical view's tiles drawn over the map show as lying
+// on the ground. nullptr - not see-through.
+enum class ObjectSeeThroughCover : unsigned char {
+    // The floor, flat objects.
+    None,
+    // A see-through critter or item.
+    SeeThrough,
+    // Anything else standing there (scenery, walls, roofs).
+    Solid,
+    // The dude, the critters' outlines: over the tiles.
+    Top,
 };
-const std::vector<ObjectTopRun>* objectSeeThroughTopRuns(unsigned int* version);
-// The map scrolled by (dx, dy): the top layer moves as the buffer does.
+const unsigned char* objectSeeThroughCover(int* width, int* height, int* pitch);
+// While see-through the critters' outlines (and the tactical view's tiles)
+// don't cycle, but the picked target's (`objectSetTargetOutline`): the
+// palette entry [object]'s outline is drawn with; false - as the game draws
+// it.
+bool objectSeeThroughOutlineColor(Object* object, Color* color);
+// The still color of a friendly or hostile outline: a palette entry the
+// palette doesn't cycle.
+Color objectStillOutlineColor(OutlineType outlineType);
+// The map scrolled by (dx, dy): the cover moves as the buffer does.
 void objectSeeThroughScrolled(int dx, int dy);
 ObjectFlags _obj_intersects_with(Object* object, int x, int y);
 int _obj_create_intersect_list(int x, int y, int elevation, ObjectType objectType, ObjectWithFlags** entriesPtr);

@@ -50,12 +50,10 @@ namespace {
         }
     };
 
-    // Palette entries of the game's combat outlines (object.cc), cycled by
-    // the palette (cycle.cc): tiles drawn with them pulse as outlines do.
-    constexpr int kFriendlyColor = 229; // slime
-    constexpr int kHostileColor = 243; // fire_fast
+    // The game's combat outlines' colors (object.cc): still ones, but the
+    // target's, which cycles (cycle.cc's fire_fast) as its outline does.
     constexpr int kBlockedColor = 61;
-    constexpr int kTargetColor = 254; // bobber
+    constexpr int kTargetColor = 243;
 
     TacticalViewReach gReach;
     ReachKey gReachKey;
@@ -123,7 +121,7 @@ bool tacticalViewTileLook(Object* critter, int* color, bool* thick)
 {
     *thick = false;
     if (critter == gDude) {
-        *color = kFriendlyColor;
+        *color = objectStillOutlineColor(OUTLINE_TYPE_FRIENDLY);
         *thick = true;
         return true;
     }
@@ -134,11 +132,11 @@ bool tacticalViewTileLook(Object* critter, int* color, bool* thick)
     }
     switch (critter->outline & OUTLINE_TYPE_MAX) {
     case OUTLINE_TYPE_HOSTILE:
-        *color = kHostileColor;
+        *color = objectStillOutlineColor(OUTLINE_TYPE_HOSTILE);
         return true;
     case OUTLINE_TYPE_FRIENDLY:
     case OUTLINE_TYPE_SAME_TEAM:
-        *color = kFriendlyColor;
+        *color = objectStillOutlineColor(OUTLINE_TYPE_FRIENDLY);
         return true;
     case OUTLINE_TYPE_BLOCKED:
         *color = kBlockedColor;

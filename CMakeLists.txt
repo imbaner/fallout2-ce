@@ -398,6 +398,8 @@ set(FALLOUT_PLATFORM_SOURCES
     "src/map_hints.cc"
     "src/tactical_view.cc"
     "src/tactical_view.h"
+    "src/ground_lines.cc"
+    "src/ground_lines.h"
     "src/map_hints.h"
     "src/player_commands.cc"
     "src/player_commands.h"
