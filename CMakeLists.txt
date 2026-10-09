@@ -630,8 +630,9 @@ target_include_directories(${EXECUTABLE_NAME} PRIVATE ${SDL2_INCLUDE_DIRS})
 # The game's import on Android reads the archive the player chose
 # (src/import_archive.cc): .zip itself (zlib; Deflate64 through zlib's
 # contrib/infback9), .7z, .rar and .tar through libarchive (liblzma for .7z).
-# Its library for the app's Java side; ce-import-tool tries it on a computer.
-if(FALLOUT_VENDORED AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
+# Its library for the app's Java side; ce-import-tool tries it on a computer
+# (macOS, Linux: the vendored libarchive is configured for those).
+if(FALLOUT_VENDORED AND (NOT IOS) AND (NOT WIN32) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
     add_subdirectory("third_party/xz")
     add_subdirectory("third_party/libarchive")
 

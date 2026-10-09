@@ -1,10 +1,16 @@
 #include "action_log.h"
 
-#include <dlfcn.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
+
+// Where the dude's look changed from (`actionLogDudeLook`): the stack, where
+// the unwinder and dladdr are (not Windows, not the browser).
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#define ACTION_LOG_BACKTRACE 1
+#include <dlfcn.h>
 #include <unwind.h>
+#endif
 
 #include <chrono>
 #include <cstring>
@@ -339,6 +345,7 @@ namespace {
         gPartyLooks = std::move(looks);
     }
 
+#if ACTION_LOG_BACKTRACE
     struct Backtrace {
         void* frames[kBacktraceFrames];
         int count;
@@ -387,6 +394,12 @@ namespace {
         }
         return text;
     }
+#else
+    std::string backtraceText()
+    {
+        return " (no stack here)";
+    }
+#endif
 
     void watchView(Uint32 now)
     {

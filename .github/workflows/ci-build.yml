@@ -91,7 +91,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: 11
+          java-version: 17
           cache: gradle
 
       - name: Cache cmake build
@@ -159,9 +159,10 @@ jobs:
           path: out
           key: ios-cmake-v101
 
+      # Unsigned: the build only checks it compiles (signing needs a team).
       - name: Configure
         run: |
-          cmake --preset ios
+          cmake --preset ios -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
 
       - name: Build
         run: |
