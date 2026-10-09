@@ -1,9 +1,11 @@
 name: Release
 
+# Fork: run by hand only. It's upstream's and out of date (a missing iOS
+# toolchain file, retired Ubuntu 20.04 runners); the Continuous Build has
+# every platform's build, and the Android APK is signed off GitHub with the
+# port's key and attached to releases by hand.
 on:
-  release:
-    types:
-      - published
+  workflow_dispatch:
 
 permissions:
   contents: read
