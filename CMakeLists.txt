@@ -24,6 +24,14 @@ if(MSVC)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
 endif()
 
+# CE: Source paths in the binaries (`__FILE__` in asserts, debug info)
+# relative to the source and build folders, not the builder's own paths.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(
+        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}/="
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}/=")
+endif()
+
 option(FALLOUT_VENDORED "Use vendored third-party libraries" ON)
 option(FALLOUT_AUDIO_OGG "Enable OGG decoding with stb_vorbis when available" ON)
 # The touch recorder and the game journal always on in the touch-only build
