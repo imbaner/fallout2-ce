@@ -1,5 +1,6 @@
 #include "mui_icons.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <tuple>

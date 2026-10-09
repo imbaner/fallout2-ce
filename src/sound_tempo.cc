@@ -11,6 +11,9 @@ namespace {
     // enough for the pitch to hold.
     constexpr int kPieceMs = 30;
 
+    // M_PI isn't standard (MSVC wants _USE_MATH_DEFINES).
+    constexpr float kPi = 3.14159265358979323846f;
+
     // How far a piece may move from its place to continue the previous one
     // best.
     constexpr int kSearchMs = 10;
@@ -122,7 +125,7 @@ namespace {
 
             size_t fadeStart = result.size() / channels - overlap;
             for (size_t offset = 0; offset < overlap; offset++) {
-                float weight = 0.5f - 0.5f * std::cos(static_cast<float>(M_PI) * (offset + 0.5f) / overlap);
+                float weight = 0.5f - 0.5f * std::cos(kPi * (offset + 0.5f) / overlap);
                 for (int channel = 0; channel < channels; channel++) {
                     float& out = result[(fadeStart + offset) * channels + channel];
                     out = out * (1.0f - weight) + pcm.samples[(from + best + offset) * channels + channel] * weight;

@@ -764,17 +764,17 @@ static void touchControlsStickToSelection(int x, int y, int worldX, int worldY, 
             return;
         }
 
-        bool near = fingerTile == gPendingTile;
-        if (!near) {
+        bool close = fingerTile == gPendingTile;
+        if (!close) {
             int tileX;
             int tileY;
             touchControlsGetTileScreenCenter(gPendingTile, &tileX, &tileY);
             float radius = kTileSnapRadiusDp * hudGetPixelsPerDp();
             float dx = static_cast<float>(tileX - x);
             float dy = static_cast<float>(tileY - y);
-            near = dx * dx + dy * dy <= radius * radius;
+            close = dx * dx + dy * dy <= radius * radius;
         }
-        if (near) {
+        if (close) {
             *action = TOUCH_ACTION_MOVE;
             *tile = gPendingTile;
             *target = nullptr;

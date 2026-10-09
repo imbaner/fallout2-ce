@@ -1,5 +1,6 @@
 #include "mainmenu.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <ctype.h>
 #include <string.h>
