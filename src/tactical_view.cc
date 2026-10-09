@@ -7,8 +7,10 @@
 #include <deque>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "art.h"
+#include "color.h"
 #include "combat.h"
 #include "critter.h"
 #include "game.h"
@@ -143,11 +145,91 @@ namespace {
         return true;
     }
 
-    // Everyone's tile under them (`objectSetSeeThroughUnderlay`): a corner
-    // of a hex is the middle of its center and two neighbours' (as the map
-    // hints' outlines).
+    // Corners of [tile]'s hex: corner `k` is the middle of the center and
+    // the neighbours `k` and `k + 1` (as the map hints' outlines), the edge
+    // towards neighbour `d` from corner `d - 1` to `d`.
+    bool tileCorners(int tile, int* cornerX, int* cornerY)
+    {
+        int centerX;
+        int centerY;
+        if (!tileCenter(tile, &centerX, &centerY)) {
+            return false;
+        }
+
+        int neighbourX[ROTATION_COUNT];
+        int neighbourY[ROTATION_COUNT];
+        for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+            if (!tileCenter(tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1), &(neighbourX[rotation]), &(neighbourY[rotation]))) {
+                return false;
+            }
+        }
+
+        for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+            int next = (rotation + 1) % ROTATION_COUNT;
+            cornerX[rotation] = (centerX + neighbourX[rotation] + neighbourX[next]) / 3;
+            cornerY[rotation] = (centerY + neighbourY[rotation] + neighbourY[next]) / 3;
+        }
+        return true;
+    }
+
+    // The palette's color nearest to the map hints' accent (#5CFF5C), not
+    // one the palette cycles.
+    Color walkColor()
+    {
+        static int color = -1;
+        if (color == -1) {
+            int best = 0x7FFFFFFF;
+            for (int index = 1; index < 229; index++) {
+                int red = _cmap[index * 3] - 0x5C / 4;
+                int green = _cmap[index * 3 + 1] - 0xFF / 4;
+                int blue = _cmap[index * 3 + 2] - 0x5C / 4;
+                int distance = red * red + green * green + blue * blue;
+                if (distance < best) {
+                    best = distance;
+                    color = index;
+                }
+            }
+        }
+        return Color(color);
+    }
+
+    // Where the dude can walk, its border only.
+    void drawWalkBorder(unsigned char* buffer, int pitch, const Rect& rect)
+    {
+        const TacticalViewReach& reach = tacticalViewGetReach();
+        if (reach.reachable.empty()) {
+            return;
+        }
+
+        std::unordered_set<int> area(reach.reachable.begin(), reach.reachable.end());
+        area.insert(gDude->tile);
+        Color color = walkColor();
+        for (int tile : area) {
+            int cornerX[ROTATION_COUNT];
+            int cornerY[ROTATION_COUNT];
+            if (!tileCorners(tile, cornerX, cornerY)) {
+                continue;
+            }
+            for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                if (area.count(tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1)) == 0) {
+                    int previous = (rotation + ROTATION_COUNT - 1) % ROTATION_COUNT;
+                    drawLine(buffer, pitch, rect, cornerX[previous], cornerY[previous], cornerX[rotation], cornerY[rotation], 2, color);
+                }
+            }
+        }
+    }
+
+    // `objectSetSeeThroughOverlay`: over the see-through objects the walk
+    // border, then everyone's tile over it; the outlines go over both (a
+    // critter's tile and outline are one color - one shape).
     void drawTiles(unsigned char* buffer, int pitch, const Rect& rect, int elevation)
     {
+        if (elevation != gElevation || gDude == nullptr) {
+            return;
+        }
+
+        drawWalkBorder(buffer, pitch, rect);
+
         for (Object* object = objectFindFirstAtElevation(elevation); object != nullptr; object = objectFindNextAtElevation()) {
             Color color;
             int width;
@@ -155,28 +237,10 @@ namespace {
                 continue;
             }
 
-            int centerX;
-            int centerY;
-            if (!tileCenter(object->tile, &centerX, &centerY)) {
-                continue;
-            }
-
-            int neighbourX[ROTATION_COUNT];
-            int neighbourY[ROTATION_COUNT];
-            bool complete = true;
-            for (int rotation = 0; rotation < ROTATION_COUNT && complete; rotation++) {
-                complete = tileCenter(tileGetTileInDirection(object->tile, static_cast<Rotation>(rotation), 1), &(neighbourX[rotation]), &(neighbourY[rotation]));
-            }
-            if (!complete) {
-                continue;
-            }
-
             int cornerX[ROTATION_COUNT];
             int cornerY[ROTATION_COUNT];
-            for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
-                int next = (rotation + 1) % ROTATION_COUNT;
-                cornerX[rotation] = (centerX + neighbourX[rotation] + neighbourX[next]) / 3;
-                cornerY[rotation] = (centerY + neighbourY[rotation] + neighbourY[next]) / 3;
+            if (!tileCorners(object->tile, cornerX, cornerY)) {
+                continue;
             }
             for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
                 int next = (rotation + 1) % ROTATION_COUNT;
@@ -196,6 +260,9 @@ namespace {
             if (isShownCritter(object, gElevation) && tileLook(object, &color, &width)) {
                 signature = signature * 31 + static_cast<std::size_t>(object->tile) * 7 + color * 3 + width;
             }
+        }
+        for (int tile : tacticalViewGetReach().reachable) {
+            signature = signature * 31 + static_cast<std::size_t>(tile);
         }
         return signature;
     }
@@ -283,7 +350,7 @@ bool tacticalViewIsShown()
 
 void tacticalViewUpdate()
 {
-    objectSetSeeThroughUnderlay(drawTiles);
+    objectSetSeeThroughOverlay(drawTiles);
 
     bool shown = tacticalViewIsShown();
     if (!shown) {

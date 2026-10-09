@@ -139,40 +139,6 @@ namespace {
         return points;
     }
 
-    // MARK: Tactical view
-
-    // Where the dude can walk (tactical_view.h): the border of the area,
-    // edges of its tiles with a neighbour outside it - inside it stays
-    // clear. Everyone's tile is drawn under the objects (the critters'
-    // outlines go over it), see `objectSetSeeThroughUnderlay`.
-    void drawTacticalView(MuiContext& ui, float scale)
-    {
-        const TacticalViewReach& reach = tacticalViewGetReach();
-        if (reach.reachable.empty()) {
-            return;
-        }
-
-        std::unordered_set<int> area(reach.reachable.begin(), reach.reachable.end());
-        area.insert(gDude->tile);
-        MuiColor border = muiTheme().accent.withAlpha(190);
-        for (int tile : area) {
-            std::vector<SDL_FPoint> outline = tileOutline(tile, scale);
-            if (outline.empty()) {
-                continue;
-            }
-            // Corner `k` is between the neighbours `k` and `k + 1`, the edge
-            // towards neighbour `d` from corner `d - 1` to `d`.
-            for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
-                int neighbour = tileGetTileInDirection(tile, static_cast<Rotation>(rotation), 1);
-                if (area.count(neighbour) == 0) {
-                    const SDL_FPoint& from = outline[(rotation + ROTATION_COUNT - 1) % ROTATION_COUNT];
-                    const SDL_FPoint& to = outline[rotation];
-                    muiDrawLine(from.x, from.y, to.x, to.y, ui.dp(1.6f), border);
-                }
-            }
-        }
-    }
-
     float outlineRight(const std::vector<SDL_FPoint>& points)
     {
         float right = points.front().x;
@@ -222,7 +188,7 @@ namespace {
         {
             validate();
 
-            bool anything = gAttackTarget != nullptr || gMoveTile != -1 || gDestination != -1 || tacticalViewIsShown();
+            bool anything = gAttackTarget != nullptr || gMoveTile != -1 || gDestination != -1;
             return anything
                 && touchControlsIsEnabled()
                 && (GameMode::getCurrentGameMode() & kScreenGameModes) == 0
@@ -274,11 +240,6 @@ namespace {
     {
         const MuiTheme& theme = muiTheme();
         float scale = ui.screenRect().w / screenGetWidth();
-
-        bool tactical = tacticalViewIsShown();
-        if (tactical) {
-            drawTacticalView(ui, scale);
-        }
 
         if (gDestination != -1) {
             std::vector<SDL_FPoint> outline = tileOutline(gDestination, scale);

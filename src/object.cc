@@ -262,7 +262,7 @@ static std::vector<Object*> outlinedObjects;
 // halfway between them (built from the game's palette once).
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
-static ObjectUnderlayProc* gSeeThroughUnderlay = nullptr;
+static ObjectOverlayProc* gSeeThroughOverlay = nullptr;
 
 // 0x639D90 updateAreaPixelBounds
 static Rect gObjectsUpdateAreaPixelBounds;
@@ -819,11 +819,6 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
         return;
     }
 
-    // CE: The tactical view's tiles, under everything standing on them.
-    if (gObjectsSeeThrough && gSeeThroughUnderlay != nullptr) {
-        gSeeThroughUnderlay(gObjectsWindowBuffer, gObjectsWindowPitch, updatedRect, elevation);
-    }
-
     int ambientIntensity = lightGetAmbientIntensity();
     int minX = updatedRect.left - 320;
     int minY = updatedRect.top - 240;
@@ -923,6 +918,12 @@ void _obj_render_post_roof(Rect* rect, int elevation)
     Rect updatedRect;
     if (rectIntersection(rect, &gObjectsWindowRect, &updatedRect) != 0) {
         return;
+    }
+
+    // CE: The tactical view's tiles, over the see-through objects, under
+    // the outlines.
+    if (gObjectsSeeThrough && gSeeThroughOverlay != nullptr) {
+        gSeeThroughOverlay(gObjectsWindowBuffer, gObjectsWindowPitch, updatedRect, elevation);
     }
 
     for (Object* object : outlinedObjects) {
@@ -2951,9 +2952,9 @@ void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight,
 
 // 0x48C2B4 obj_outline_object
 
-void objectSetSeeThroughUnderlay(ObjectUnderlayProc* proc)
+void objectSetSeeThroughOverlay(ObjectOverlayProc* proc)
 {
-    gSeeThroughUnderlay = proc;
+    gSeeThroughOverlay = proc;
 }
 
 // The game's visible outlines; in the tactical view every critter the game

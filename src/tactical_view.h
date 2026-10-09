@@ -9,11 +9,12 @@ namespace fallout {
 
 // CE: Combat's tactical view (touch controls). A HUD button in combat turns
 // it on: on the player's turns critters and items are drawn see-through
-// with every critter's outline (`objectSetSeeThrough`), the map hints draw
-// the tiles - where the dude can walk with the action points left (filled,
-// a grid), everyone's tile in the game's combat outline colors - and taps
-// and long presses pick tiles: a critter by the tile it stands on, items
-// and corpses not at all. Hidden on other turns, off when the combat ends.
+// with every critter's outline (`objectSetSeeThrough`), over them the
+// border of where the dude can walk with the action points left and
+// everyone's tile in the game's combat outline colors, the outlines on top;
+// taps and long presses pick tiles: a critter by the tile it stands on,
+// items and corpses not at all. Hidden on other turns; kept on (a setting)
+// until the button turns it off.
 
 // The button.
 void tacticalViewToggle();
@@ -29,12 +30,9 @@ void tacticalViewUpdate();
 Object* tacticalViewCritterAt(int tile);
 
 // Where the dude can walk now: tiles reachable with the action points left
-// (and the combat's free move), the dude's tile not included; tiles within
-// that many steps something stands on that nobody can walk through
-// (critters' tiles aren't - they have their own colors).
+// (and the combat's free move), the dude's tile not included.
 struct TacticalViewReach {
     std::vector<int> reachable;
-    std::vector<int> blocked;
 };
 const TacticalViewReach& tacticalViewGetReach();
 
