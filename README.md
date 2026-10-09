@@ -12,6 +12,7 @@ On top of CE (its engine, fixes and sfall compatibility are kept and updated fro
 
 - **Touch UI.** The game's screens are replaced with screens made for fingers and the phone's resolution: dialogue, barter, inventory, loot, character and level-up, character creation, Pip-Boy (quests, holodisks with their voice, maps, videos, rest), automap, world map and town maps, skills, game menu, settings, save/load, main menu, dialog boxes, called shots. No cursor: tap to act, long press for the action menu, drag to move items, two fingers to zoom the map.
 - **HUD.** Buttons anchored to the screen's edges (sized in dp), the attack modes with reload, the message log, end turn/combat.
+- **Tactical view in combat** (a button, can be turned off in the settings): figures turn see-through, the hexes you can reach and everyone's hex are drawn on the ground, so a tile behind an enemy can be picked and an enemy chosen by its hex.
 - **Mod features built in** where the mods can't run on CE: Inventory Filter's filters and party tabs in loot and barter.
 - **Saves.** A save list sorted by when saves were made, quick saves that never overwrite manual ones (their number is a setting), "Continue" in the main menu, saves interrupted midway are restored, optional marks for saves made with other game files or mods.
 - **Android app.** The game's files are imported from a folder or any archive (.zip, .7z, .rar, .tar...) copied from a computer, with RPU and other mods and the saves; "Replace game" for new builds and mod updates; export and import of saves.
