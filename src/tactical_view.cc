@@ -33,9 +33,17 @@ namespace {
     int gOutlinesTile = -1;
     bool gOutlinesEnabled = false;
 
+    // The game changes outlines without drawing the map again (its callers
+    // redraw it all): a critter whose outline changed is drawn again.
     void updateOutline(Object* critter)
     {
+        int outline = critter->outline;
         _combat_update_critter_outline_for_los(critter, gOutlinesEnabled);
+        if (critter->outline != outline) {
+            Rect rect;
+            objectGetRect(critter, &rect);
+            tileWindowRefreshRect(&rect, critter->elevation);
+        }
     }
 
     struct ReachKey {

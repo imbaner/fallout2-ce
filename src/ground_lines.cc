@@ -14,7 +14,7 @@ namespace {
     // (`ObjectSeeThroughCover`).
     constexpr float kShownOverGround = 1.0f;
     constexpr float kShownThroughSeeThrough = 0.45f;
-    constexpr float kShownBehindSolid = 0.22f;
+    constexpr float kShownBehindSolid = 0.4f;
     constexpr float kShownUnderTop = 0.0f;
 
     // Soft edge on each side, output pixels.

@@ -266,6 +266,12 @@ static std::vector<Object*> outlinedObjects;
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
 
+// How much of a see-through object shows (the rest is what is under it),
+// and of an outline where what it outlines is behind something.
+static constexpr int kSeeThroughOpacity = 65;
+static constexpr int kHiddenOutlineOpacity = 40;
+static std::vector<Color> gSeeThroughHiddenOutlineMix;
+
 // The tactical view: what covers each pixel of the buffer
 // (`ObjectSeeThroughCover`), laid out as the buffer.
 static std::vector<unsigned char> gSeeThroughCover;
@@ -992,13 +998,58 @@ void _obj_render_post_roof(Rect* rect, int elevation)
 
         objectDrawOutline(object, &updatedRect);
 
+        // The outline goes behind what stands in front of the critter: next
+        // to its pixels something else covers (not one of its own seen),
+        // it's mixed with what is there.
+        CacheEntry* cacheEntry;
+        Art* art = artLock(FrmId(object), &cacheEntry);
+        unsigned char* frame = art != nullptr ? artGetFrameData(art, object->frame, object->rotation) : nullptr;
+        int frameWidth = 0;
+        int frameHeight = 0;
+        if (art != nullptr) {
+            artGetSize(art, object->frame, object->rotation, &frameWidth, &frameHeight);
+        }
+        auto isSprite = [&](int bufferX, int bufferY) {
+            int x = bufferX - object->sx;
+            int y = bufferY - object->sy;
+            return frame != nullptr && x >= 0 && y >= 0 && x < frameWidth && y < frameHeight && frame[frameWidth * y + x] != 0;
+        };
+
         for (int y = 0; y < height; y++) {
             int offset = gObjectsWindowPitch * (outlineRect.top + y) + outlineRect.left;
             for (int x = 0; x < width; x++) {
-                if (gObjectsWindowBuffer[offset + x] != before[width * y + x]) {
+                unsigned char under = before[width * y + x];
+                if (gObjectsWindowBuffer[offset + x] == under) {
+                    continue;
+                }
+
+                int bufferX = outlineRect.left + x;
+                int bufferY = outlineRect.top + y;
+                bool beside = false;
+                bool seen = false;
+                for (const SDL_Point& step : { SDL_Point { -1, 0 }, SDL_Point { 1, 0 }, SDL_Point { 0, -1 }, SDL_Point { 0, 1 } }) {
+                    int nextX = bufferX + step.x;
+                    int nextY = bufferY + step.y;
+                    if (nextX < 0 || nextY < 0 || nextX >= gObjectsWindowWidth || nextY >= gObjectsWindowHeight || !isSprite(nextX, nextY)) {
+                        continue;
+                    }
+                    beside = true;
+                    if (gSeeThroughCover[gObjectsWindowPitch * nextY + nextX] == static_cast<unsigned char>(ObjectSeeThroughCover::SeeThrough)) {
+                        seen = true;
+                        break;
+                    }
+                }
+
+                if (beside && !seen) {
+                    gObjectsWindowBuffer[offset + x] = gSeeThroughHiddenOutlineMix[gObjectsWindowBuffer[offset + x] * COLOR_COUNT + under];
+                } else {
                     topPixels.push_back(offset + x);
                 }
             }
+        }
+
+        if (art != nullptr) {
+            artUnlock(cacheEntry);
         }
     }
 
@@ -3130,6 +3181,22 @@ static bool objectIsSeeThrough(Object* object, ObjectType type)
     return gObjectsSeeThrough && object != gEgg && object != gDude && (type == OBJ_TYPE_CRITTER || type == OBJ_TYPE_ITEM);
 }
 
+// [table][source][destination]: [opacity] percent of source over
+// destination - the palette's 6-bit components mixed, the nearest color by
+// the game's 15-bit lookup.
+static void objectBuildMix(std::vector<Color>* table, int opacity)
+{
+    table->resize(COLOR_COUNT * COLOR_COUNT);
+    for (int source = 0; source < COLOR_COUNT; source++) {
+        for (int destination = 0; destination < COLOR_COUNT; destination++) {
+            int red = (_cmap[source * 3] * opacity + _cmap[destination * 3] * (100 - opacity)) / 100;
+            int green = (_cmap[source * 3 + 1] * opacity + _cmap[destination * 3 + 1] * (100 - opacity)) / 100;
+            int blue = (_cmap[source * 3 + 2] * opacity + _cmap[destination * 3 + 2] * (100 - opacity)) / 100;
+            (*table)[source * COLOR_COUNT + destination] = _colorTable[((red >> 1) << 10) | ((green >> 1) << 5) | (blue >> 1)];
+        }
+    }
+}
+
 void objectSetSeeThrough(bool seeThrough)
 {
     if (seeThrough == gObjectsSeeThrough) {
@@ -3137,18 +3204,8 @@ void objectSetSeeThrough(bool seeThrough)
     }
 
     if (seeThrough && gSeeThroughMix.empty()) {
-        // The palette's 6-bit components mixed (`kSeeThroughOpacity` of the
-        // object), the nearest color by the game's 15-bit lookup.
-        constexpr int kSeeThroughOpacity = 65;
-        gSeeThroughMix.resize(COLOR_COUNT * COLOR_COUNT);
-        for (int source = 0; source < COLOR_COUNT; source++) {
-            for (int destination = 0; destination < COLOR_COUNT; destination++) {
-                int red = (_cmap[source * 3] * kSeeThroughOpacity + _cmap[destination * 3] * (100 - kSeeThroughOpacity)) / 100;
-                int green = (_cmap[source * 3 + 1] * kSeeThroughOpacity + _cmap[destination * 3 + 1] * (100 - kSeeThroughOpacity)) / 100;
-                int blue = (_cmap[source * 3 + 2] * kSeeThroughOpacity + _cmap[destination * 3 + 2] * (100 - kSeeThroughOpacity)) / 100;
-                gSeeThroughMix[source * COLOR_COUNT + destination] = _colorTable[((red >> 1) << 10) | ((green >> 1) << 5) | (blue >> 1)];
-            }
-        }
+        objectBuildMix(&gSeeThroughMix, kSeeThroughOpacity);
+        objectBuildMix(&gSeeThroughHiddenOutlineMix, kHiddenOutlineOpacity);
     }
 
     gObjectsSeeThrough = seeThrough;
