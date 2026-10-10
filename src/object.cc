@@ -271,7 +271,7 @@ static Object* gObjectTargetOutline = nullptr;
 // How much of a see-through object shows (the rest is what is under it),
 // and of an outline where what it outlines is behind something.
 static constexpr int kSeeThroughOpacity = 65;
-static constexpr int kHiddenOutlineOpacity = 55;
+static constexpr int kHiddenOutlineOpacity = 62;
 static std::vector<Color> gSeeThroughHiddenOutlineMix;
 
 // The tactical view: what covers each pixel of the buffer
@@ -3264,9 +3264,9 @@ Color objectStillOutlineColor(OutlineType outlineType)
 {
     // Near the cycled outlines' colors (cycle.cc: slime, fire_fast), a bit
     // brighter: they show dimmed behind what stands in front. The palette's
-    // reds go 144, 168, 196, 224, 252: 196.
+    // reds go 144, 168, 196, 224, 252: 168.
     static const Color kFriendly = objectStaticColor(43, 150, 30);
-    static const Color kHostile = objectStaticColor(185, 0, 0);
+    static const Color kHostile = objectStaticColor(168, 0, 0);
     return outlineType == OUTLINE_TYPE_HOSTILE ? kHostile : kFriendly;
 }
 
