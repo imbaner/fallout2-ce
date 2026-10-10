@@ -28,7 +28,7 @@
 
 ## Установка на Android
 
-1. Скачайте APK в [Releases](https://github.com/imbaner/fallout2-ce/releases) и установите.
+1. Скачайте APK в [Releases](https://github.com/imbaner/fallout2-ce-mobile/releases) и установите.
 2. Скопируйте папку Fallout 2 с компьютера на телефон: как есть или одним архивом (по кабелю, через облачный диск, мессенджер). Установленные моды (например, [RPU](https://github.com/BGforgeNet/Fallout2_Restoration_Project)) и сохранения перенесутся вместе с ней.
 3. Запустите приложение и выберите эту папку или архив.
 

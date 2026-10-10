@@ -137,7 +137,7 @@ namespace {
     constexpr int kTextAboutLicenses = 372;
 
     // Where the port's source is (the about section, README).
-    constexpr const char* kSourceUrl = "https://github.com/imbaner/fallout2-ce";
+    constexpr const char* kSourceUrl = "https://github.com/imbaner/fallout2-ce-mobile";
 
     // The engine's and its components' licenses (ce.dat), shown in full: the
     // engine's license asks every copy to come with it.

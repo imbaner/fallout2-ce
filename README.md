@@ -28,7 +28,7 @@ The full list of changes is the git history over upstream.
 
 ## Install on Android
 
-1. Download the APK from [Releases](https://github.com/imbaner/fallout2-ce/releases) and install it.
+1. Download the APK from [Releases](https://github.com/imbaner/fallout2-ce-mobile/releases) and install it.
 2. Copy your Fallout 2 folder from a computer to the phone: as is, or as one archive (cable, cloud drive, messenger). Mods installed there (for example [RPU](https://github.com/BGforgeNet/Fallout2_Restoration_Project)) and saves come along.
 3. Start the app and choose that folder or archive.
 
