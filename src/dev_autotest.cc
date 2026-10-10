@@ -578,10 +578,11 @@ static const DevAutotestStep kDevAutotestTacticalSteps[] = {
 // shows (the critter's selection doesn't keep it) and confirmed by a tap
 // where the sprite covers it - the dude walks there.
 // Screenshots for the README (not a test): a late game character - a
-// neutral name, good stats, levels and their hit points, Advanced Power
-// Armor, late weapons - at Navarro (the Enclave's base): inventory,
-// character, the drill sergeant's welcome (his head), combat's HUD and the
-// tactical view.
+// neutral name, good stats, levels and their hit points, skill points
+// spent, Advanced Power Armor, late weapons - at Navarro (the Enclave's
+// base): the drill sergeant's welcome to a civilian (his head), then as a
+// soldier with Marcus and Sulik: inventory with an item's action menu,
+// character, normal combat with an enemy picked (its hit chance).
 static const DevAutotestStep kDevAutotestPhotosSteps[] = {
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 30, "p00_start" },
     // "Избранный" in the game's charset.
@@ -608,10 +609,9 @@ static const DevAutotestStep kDevAutotestPhotosSteps[] = {
     { DEV_AUTOTEST_ACTION_MAP_TRANSITION, 2, 25881, 0, 150, "p10_navarro", "navarro.map" },
     { DEV_AUTOTEST_ACTION_TALK_TO_PID, 250, 0, 0, 150, "p11_sergeant" },
     { DEV_AUTOTEST_ACTION_NONE, 0, 0, 0, 60, "p12_sergeant_shouts" },
-    { DEV_AUTOTEST_ACTION_LOG_DIALOG, 0, 0, 0, 1, "p12b_dialog" },
     { DEV_AUTOTEST_ACTION_CHOOSE_OPTION, 0, 0, 0, 120, "p13_after" },
-    { DEV_AUTOTEST_ACTION_LOG_DIALOG, 0, 0, 0, 1, "p13b_dialog" },
-    // Back in the yard as a soldier: Advanced Power Armor, late weapons.
+    // Back in the yard as a soldier: Advanced Power Armor, late weapons,
+    // Marcus (a minigun) and Sulik (a spear).
     { DEV_AUTOTEST_ACTION_MAP_TRANSITION, 2, 25895, 0, 150, "p20_navarro_again", "navarro.map" },
     { DEV_AUTOTEST_ACTION_EQUIP_ITEM, 349, 0, 0, 10, "p21_armor" },
     { DEV_AUTOTEST_ACTION_EQUIP_ITEM, 392, HAND_LEFT, 0, 10, "p22_gauss" },
@@ -621,17 +621,23 @@ static const DevAutotestStep kDevAutotestPhotosSteps[] = {
     { DEV_AUTOTEST_ACTION_GIVE_ITEM, 350, 0, 0, 1, "p23d_bozar" },
     { DEV_AUTOTEST_ACTION_GIVE_ITEM, 144, 4, 0, 1, "p23e_super_stimpaks" },
     { DEV_AUTOTEST_ACTION_GIVE_ITEM, 40, 8, 0, 1, "p23f_stimpaks" },
-    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 110, 2, 0, 30, "p23g_psycho" },
-    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Inventory), 0, 0, 40, "p24_inventory" },
-    { DEV_AUTOTEST_ACTION_BACK, 0, 0, 0, 30, "p24b_inventory_closed" },
-    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Character), 0, 0, 40, "p25_character" },
-    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25a_later", "character.perkpanel.later" },
-    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25b_skills", "character.tab.skills" },
-    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25c_closed", "character.nav.back" },
+    { DEV_AUTOTEST_ACTION_GIVE_ITEM, 110, 2, 0, 1, "p23g_psycho" },
+    { DEV_AUTOTEST_ACTION_ADD_PARTY_MEMBER, 161, 3, ROTATION_W, 10, "p24a_marcus", "HCMARCUS.int" },
+    { DEV_AUTOTEST_ACTION_GIVE_PARTY_ITEM, 12, 0, 0, 1, "p24b_minigun" },
+    { DEV_AUTOTEST_ACTION_WIELD_PARTY_ITEM, 12, 0, 0, 1, "p24c_marcus_wields" },
+    { DEV_AUTOTEST_ACTION_ADD_PARTY_MEMBER, 97, 3, ROTATION_SW, 10, "p24d_sulik", "Kcsulik.int" },
+    { DEV_AUTOTEST_ACTION_GIVE_PARTY_ITEM, 7, 0, 0, 1, "p24e_spear" },
+    { DEV_AUTOTEST_ACTION_WIELD_PARTY_ITEM, 7, 0, 0, 30, "p24f_sulik_wields" },
+    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Inventory), 0, 0, 40, "p25_inventory" },
+    { DEV_AUTOTEST_ACTION_MUI_LONG_PRESS, 45, 0, 0, 30, "p25a_item_menu", "inventory.pid.233" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 20, "p25b_menu_closed", "inventory.info" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p25c_inventory_closed", "inventory.back" },
+    { DEV_AUTOTEST_ACTION_COMMAND, static_cast<int>(GameCommandType::Character), 0, 0, 40, "p26_character" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p26a_later", "character.perkpanel.later" },
+    { DEV_AUTOTEST_ACTION_MUI_TAP, 0, 0, 0, 30, "p26b_closed", "character.nav.back" },
     { DEV_AUTOTEST_ACTION_START_COMBAT, 0, 0, 0, 60, "p30_combat_started" },
     { DEV_AUTOTEST_ACTION_CENTER_DUDE, 0, 0, 0, 30, "p31_combat" },
-    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 40, "p32_tactical" },
-    { DEV_AUTOTEST_ACTION_HUD_TAP, HUD_ELEMENT(TacticalView), 0, 0, 20, "p33_tactical_off" },
+    { DEV_AUTOTEST_ACTION_TOUCH_TAP_CRITTER, 0, 1, 0, 40, "p32_enemy_picked" },
 };
 
 static const DevAutotestStep kDevAutotestBehindCritterSteps[] = {
@@ -1018,6 +1024,26 @@ static Object* devAutotestFindNearestCritter()
     int bestDistance = 0;
     for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
         if (object == gDude || FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0 || critterIsDead(object)) {
+            continue;
+        }
+
+        int distance = objectGetDistanceBetween(gDude, object);
+        if (critter == nullptr || distance < bestDistance) {
+            critter = object;
+            bestDistance = distance;
+        }
+    }
+    return critter;
+}
+
+// The nearest living critter not in the party the dude can shoot at.
+static Object* devAutotestFindNearestEnemyInSight()
+{
+    Object* critter = nullptr;
+    int bestDistance = 0;
+    for (Object* object = objectFindFirstAtElevation(gElevation); object != nullptr; object = objectFindNextAtElevation()) {
+        if (object == gDude || FrmId(object).objectType() != OBJ_TYPE_CRITTER || (object->flags & OBJECT_HIDDEN) != 0 || critterIsDead(object)
+            || objectIsPartyMember(object) || _combat_is_shot_blocked(gDude, gDude->tile, object->tile, object, nullptr)) {
             continue;
         }
 
@@ -3243,7 +3269,8 @@ void devAutotestTick()
             break;
         case DEV_AUTOTEST_ACTION_TOUCH_LONG_PRESS_CRITTER:
         case DEV_AUTOTEST_ACTION_TOUCH_TAP_CRITTER: {
-            Object* critter = devAutotestFindNearestCritter();
+            // `b` - 1: the nearest enemy in the line of fire.
+            Object* critter = step->b == 1 ? devAutotestFindNearestEnemyInSight() : devAutotestFindNearestCritter();
             if (critter != nullptr) {
                 float x;
                 float y;

@@ -8,11 +8,9 @@ This is an **unofficial, fan-made, modified version** of Fallout 2 CE. It is not
 
 ## Screenshots
 
-![Tactical view in combat](docs/screenshots/tactical-view.jpg)
+<p><img src="docs/screenshots/combat.jpg" alt="Combat: an enemy picked, its hit chance" width="49%"> <img src="docs/screenshots/dialogue.jpg" alt="Dialogue: the drill sergeant at Navarro" width="49%"></p>
 
-<p><img src="docs/screenshots/combat.jpg" alt="Combat" width="49%"> <img src="docs/screenshots/dialogue.jpg" alt="Dialogue: the drill sergeant at Navarro" width="49%"></p>
-
-<p><img src="docs/screenshots/inventory.jpg" alt="Inventory" width="49%"> <img src="docs/screenshots/character.jpg" alt="Character" width="49%"></p>
+<p><img src="docs/screenshots/inventory.jpg" alt="Inventory: an item's action menu" width="49%"> <img src="docs/screenshots/character.jpg" alt="Character" width="49%"></p>
 
 ## What is changed (modified software notice)
 

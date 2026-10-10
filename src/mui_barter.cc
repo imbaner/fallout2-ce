@@ -224,9 +224,8 @@ namespace {
         muiDrawTextAligned(prefix + number(view.offerValue), { offerX, tableInfoY, unit, infoHeight }, ui.dp(13.0f), theme.text, MuiAlign::Center, MuiAlign::Center);
         muiDrawTextAligned(prefix + number(view.requestValue), { requestX, tableInfoY, unit, infoHeight }, ui.dp(13.0f), theme.text, MuiAlign::Center, MuiAlign::Center);
 
-        if (bartererFilter.filter != MuiItemFilter::All) {
-            muiDrawTextAligned(weightLabel + U" " + number(muiItemsWeight(lists[LIST_BARTERER])), { bartererX, sideInfoY, sideWidth, infoHeight }, infoSize, theme.textDim, MuiAlign::Start, MuiAlign::Center);
-        }
+        // The trader's shown items' weight, every filter ("All" too).
+        muiDrawTextAligned(weightLabel + U" " + number(muiItemsWeight(lists[LIST_BARTERER])), { bartererX, sideInfoY, sideWidth, infoHeight }, infoSize, theme.textDim, MuiAlign::Start, MuiAlign::Center);
 
         // Offer under both tables.
         MuiRect offerRect = { offerX, buttonY, requestX + unit - offerX, buttonHeight };

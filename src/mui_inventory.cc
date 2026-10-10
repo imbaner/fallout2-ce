@@ -384,17 +384,17 @@ namespace {
         muiPopClip();
     }
 
-    // Weight of the shown category, "Drop all" of the shown items.
+    // Weight of the shown items, "Drop all" of them.
     void InventoryScreen::buildBottom(MuiContext& ui, const MuiRect& rect)
     {
         const MuiTheme& theme = muiTheme();
 
-        if (filter.filter != MuiItemFilter::All) {
-            float iconSize = ui.dp(15.0f);
-            muiDrawIcon(MuiIcon::Weight, rect.x + iconSize / 2.0f + ui.dp(2.0f), rect.centerY(), iconSize, ui.dp(1.5f), theme.textDim);
-            MuiRect label = { rect.x + iconSize + ui.dp(8.0f), rect.y, rect.w * 0.4f, rect.h };
-            muiDrawTextAligned(number(muiItemsWeight(items)), label, ui.dp(14.0f), theme.textDim, MuiAlign::Start, MuiAlign::Center);
-        }
+        // Every filter, "All" too: the bottom always tells what the shown
+        // items weigh (the total with what is worn and held is on the right).
+        float iconSize = ui.dp(15.0f);
+        muiDrawIcon(MuiIcon::Weight, rect.x + iconSize / 2.0f + ui.dp(2.0f), rect.centerY(), iconSize, ui.dp(1.5f), theme.textDim);
+        MuiRect weightRect = { rect.x + iconSize + ui.dp(8.0f), rect.y, rect.w * 0.4f, rect.h };
+        muiDrawTextAligned(number(muiItemsWeight(items)), weightRect, ui.dp(14.0f), theme.textDim, MuiAlign::Start, MuiAlign::Center);
 
         bool confirming = dropAllTime != 0 && ui.now - dropAllTime < kConfirmMs;
         MuiRect button = { rect.right() - rect.w * 0.55f, rect.y, rect.w * 0.55f, rect.h };
