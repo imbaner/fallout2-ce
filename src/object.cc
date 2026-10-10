@@ -265,6 +265,9 @@ static std::vector<Object*> outlinedObjects;
 static bool gObjectsSeeThrough = false;
 static std::vector<Color> gSeeThroughMix;
 
+// See `objectSetTargetOutline`.
+static Object* gObjectTargetOutline = nullptr;
+
 // How much of a see-through object shows (the rest is what is under it),
 // and of an outline where what it outlines is behind something.
 static constexpr int kSeeThroughOpacity = 65;
@@ -1036,7 +1039,9 @@ void _obj_render_post_roof(Rect* rect, int elevation)
                     }
                 }
 
-                if (beside && !seen) {
+                // The picked target's outline shows whole: it's aimed at, and
+                // its cycling colors mixed would stop on one shade.
+                if (beside && !seen && object != gObjectTargetOutline) {
                     gObjectsWindowBuffer[offset + x] = gSeeThroughHiddenOutlineMix[gObjectsWindowBuffer[offset + x] * COLOR_COUNT + under];
                 } else {
                     topPixels.push_back(offset + x);
@@ -3231,9 +3236,6 @@ static void objectDrawSeeThrough(unsigned char* src, int srcWidth, int srcHeight
     }
 }
 
-// See `objectSetTargetOutline`.
-static Object* gObjectTargetOutline = nullptr;
-
 void objectSetTargetOutline(Object* obj)
 {
     gObjectTargetOutline = obj;
@@ -3260,10 +3262,10 @@ static Color objectStaticColor(int red, int green, int blue)
 
 Color objectStillOutlineColor(OutlineType outlineType)
 {
-    // Near the cycled outlines' colors (cycle.cc: slime - a bit brighter -
-    // and fire_fast).
+    // Near the cycled outlines' colors (cycle.cc: slime, fire_fast), a bit
+    // brighter: they show dimmed behind what stands in front.
     static const Color kFriendly = objectStaticColor(43, 150, 30);
-    static const Color kHostile = objectStaticColor(150, 0, 0);
+    static const Color kHostile = objectStaticColor(210, 0, 0);
     return outlineType == OUTLINE_TYPE_HOSTILE ? kHostile : kFriendly;
 }
 
